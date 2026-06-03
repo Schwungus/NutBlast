@@ -1,0 +1,14 @@
+[package]
+name = "nutblaster"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+color-eyre = "0.6.5"
+env_logger = "0.11.10"
+futures-util = "0.3.32"
+log = "0.4.31"
+serde = { version = "1.0.228", features = ["alloc", "derive"] }
+serde_json = { version = "1.0.150", features = ["alloc"] }
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-tungstenite = "0.29.0"

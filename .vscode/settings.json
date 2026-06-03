@@ -1,0 +1,27 @@
+{
+    "editor.formatOnSave": true,
+    "editor.formatOnSaveMode": "file",
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "clangd.enable": true,
+    "clangd.enableCodeCompletion": true,
+    "clangd.arguments": [
+        "--header-insertion=never"
+    ],
+    "cmake.generator": "Ninja",
+    "cmake.exportCompileCommandsFile": true,
+    "files.exclude": {
+        ".cache": true,
+        "__cmake*": true
+    },
+    "files.associations": {
+        "*.h": "c",
+        "*.h.in": "c",
+        ".clang*": "yaml"
+    },
+    "[c]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "yaml.schemas": {
+        "https://www.schemastore.org/clangd.json": ".clangd"
+    },
+}

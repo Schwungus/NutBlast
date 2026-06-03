@@ -1,0 +1,4 @@
+Completion:
+  HeaderInsertion: Never
+Diagnostics:
+  Suppress: [c23-extensions]

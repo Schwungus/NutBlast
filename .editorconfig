@@ -1,0 +1,21 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{c,h}]
+indent_size = 4
+indent_style = space
+
+[CMakeLists.txt]
+indent_size = 4
+
+[{*.json,.prettierrc}]
+indent_size = 4
+
+[{*.yml,.clang*}]
+indent_size = 2
