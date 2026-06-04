@@ -33,7 +33,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-#define NUTBLAST_DEFAULT_SERVER "wss://nutblast.schwung.us"
+#define NUTBLAST_DEFAULT_SERVER "wss://nutblast.schwung.us/v1"
 
 #define NUTBLAST_MAX_PLAYERS (16)
 
