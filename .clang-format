@@ -31,6 +31,8 @@ SortIncludes: CaseSensitive
 IncludeCategories:
   - Regex: "^<std"
     Priority: 0
+  - Regex: "^<ray"
+    Priority: 10
   - Regex: "^<S_"
     Priority: 20
   - Regex: "^<"

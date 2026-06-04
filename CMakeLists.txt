@@ -45,7 +45,8 @@ set(NO_TESTS ON CACHE INTERNAL "")
 if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     FetchContent_Declare(datachannel
         GIT_REPOSITORY https://github.com/paullouisageneau/datachannel-wasm.git
-        GIT_TAG v0.4.0)
+        GIT_TAG v0.4.0
+        EXCLUDE_FROM_ALL)
     list(APPEND LIBS datachannel-wasm)
 
     target_link_options(NutBlast PUBLIC -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPU32,HEAPU8)
@@ -53,7 +54,8 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
 else()
     FetchContent_Declare(datachannel
         GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
-        GIT_TAG v0.24.2)
+        GIT_TAG v0.24.2
+        EXCLUDE_FROM_ALL)
     list(APPEND LIBS datachannel-static)
 endif()
 
@@ -63,11 +65,13 @@ target_link_libraries(NutBlast PUBLIC ${LIBS})
 if(NUTBLAST_BUILD_TEST)
     FetchContent_Declare(raylib
         GIT_REPOSITORY https://github.com/raysan5/raylib.git
-        GIT_TAG 5.5)
+        GIT_TAG 5.5
+        EXCLUDE_FROM_ALL)
 
     FetchContent_Declare(S_tructures
         GIT_REPOSITORY https://github.com/Schwungus/S_tructures.git
-        GIT_TAG dbb1697c102d17f8da67887a6fe85f2d1c94e512)
+        GIT_TAG dbb1697c102d17f8da67887a6fe85f2d1c94e512
+        EXCLUDE_FROM_ALL)
 
     FetchContent_MakeAvailable(raylib S_tructures)
 
