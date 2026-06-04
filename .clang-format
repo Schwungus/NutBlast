@@ -20,6 +20,7 @@ AllowShortEnumsOnASingleLine: false
 AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: Empty
 AlwaysBreakAfterReturnType: None
 IndentCaseBlocks: false
 IndentCaseLabels: false
@@ -31,19 +32,19 @@ SortIncludes: CaseSensitive
 IncludeCategories:
   - Regex: "^<std"
     Priority: 5
+  - Regex: "^<rtc/"
+    Priority: 7
   - Regex: "^<ray"
     Priority: 10
   - Regex: "^<nloh"
-    Priority: 10
+    Priority: 15
   - Regex: "^<S_"
     Priority: 20
+  - Regex: "^<Nut"
+    Priority: 50
   - Regex: "[^.][^h]>$"
     Priority: 0
   - Regex: "^<"
-    Priority: 15
-  - Regex: '^".+/S_'
-    Priority: 60
-  - Regex: '^"S_'
-    Priority: 50
+    Priority: 40
   - Regex: ".*"
     Priority: 100

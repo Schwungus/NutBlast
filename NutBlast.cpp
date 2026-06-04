@@ -26,25 +26,44 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+
+#include <rtc/rtc.hpp>
+#include <rtc/websocket.hpp>
 
 #include <nlohmann/json.hpp>
 
 #include <NutBlast.h>
 
-struct Peer {};
+using Metadata = std::unordered_map<std::string, std::string>;
+
+struct Peer {
+    Metadata meta;
+
+    Peer() {}
+
+    ~Peer() {}
+};
 
 static std::string gid = "", pid = "";
 static std::optional<std::string> blaster, lid;
-static bool host = false;
+static bool hosting = false;
 
 static Peer self;
 static std::unordered_map<std::string, Peer> peers;
 
+static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
+static std::vector<std::string> ws_in;
+
+static Metadata lobby_meta;
+
 template <typename... T> static inline void info(const char* fmt, T... args) {
-    std::printf(fmt, args...);
+    static char buf[1024] = "";
+    std::snprintf(buf, sizeof(buf), "%s\n", fmt);
+    std::printf(buf, args...);
 }
 
-static std::string_view get_pid() {
+static std::string get_pid() {
     if (pid.empty())
         for (size_t i = 0; i < sizeof(NutBlast_PlayerID); i++)
             pid.push_back(static_cast<char>('A' + std::rand() % ('Z' - 'A' + 1)));
@@ -52,7 +71,7 @@ static std::string_view get_pid() {
     return pid;
 }
 
-static std::string_view get_blaster() {
+static std::string get_blaster() {
     if (blaster == std::nullopt) {
         info("Using the default NutBlaster server as none was explicitly specified: %s", NUTBLAST_DEFAULT_SERVER);
         blaster = NUTBLAST_DEFAULT_SERVER;
@@ -76,9 +95,43 @@ extern "C" void NutBlast_SetMaxPlayers(int max) {
         ::max_players = max;
 }
 
+static bool is_connected() {
+    return blaster_ws != nullptr && blaster_ws->isOpen();
+}
+
 static void join_pro(const char* id, bool host) {
+    if (is_connected()) {
+        info("You're already in a lobby!");
+        return;
+    }
+
     get_pid(), get_blaster();
-    ::lid = id, ::host = host;
+    ::lid = id, ::hosting = host;
+
+    blaster_ws = std::make_shared<rtc::WebSocket>();
+
+    blaster_ws->onMessage([](const auto& _msg) {
+        if (!std::holds_alternative<std::string>(_msg))
+            return;
+
+        const auto msg = std::get<std::string>(_msg);
+        ws_in.push_back(std::move(msg));
+    });
+
+    blaster_ws->onClosed([]() {
+        info("NutBlaster out!");
+        NutBlast_Disconnect();
+    });
+
+    blaster_ws->open(get_blaster());
+
+    info("Trying to %s '%s'", host ? "host" : "join", id);
+}
+
+extern "C" void NutBlast_Disconnect() {
+    ::lid = std::nullopt;
+    ::blaster_ws = nullptr;
+    ::peers.clear();
 }
 
 extern "C" void NutBlast_Join(const char* id) {
@@ -90,10 +143,72 @@ extern "C" void NutBlast_Host(const char* id, int max) {
     join_pro(id, true);
 }
 
-extern "C" int NutBlast_GetPlayerCount() {}
+extern "C" int NutBlast_GetPlayerCount() {
+    if (!is_connected())
+        return 0;
+    return static_cast<int>(1 + peers.size());
+}
 
-extern "C" const char* NutBlast_GetPlayerID(int idx) {}
+extern "C" const char** NutBlast_GetPlayerIDs() {
+    static const char* buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
 
-extern "C" bool NutBlast_IsPlayerAlive(const char*) {}
+    size_t i = 0;
 
-extern "C" void NutBlast_Update() {}
+    for (const auto& [key, player] : peers)
+        buf[i++] = key.c_str();
+    buf[i] = NULL;
+
+    return buf;
+}
+
+extern "C" const char* NutBlast_GetOurID() {
+    get_pid();
+    return ::pid.c_str();
+}
+
+extern "C" bool NutBlast_IsPlayerAlive(const char* id) {
+    if (!is_connected())
+        return false;
+
+    if (id == get_pid())
+        return true;
+
+    for (const auto& [key, player] : peers)
+        if (id == key)
+            return true;
+
+    return false;
+}
+
+extern "C" void NutBlast_Update() {
+    if (!is_connected())
+        return;
+
+    for (const auto& msg : ws_in) {
+        const auto obj = nlohmann::json::parse(msg);
+
+        if (obj.contains("peers")) {
+            std::unordered_set<std::string> present_peers;
+
+            for (const auto& [id, peer] : obj["peers"].items())
+                if (id != get_pid())
+                    present_peers.insert(id);
+
+            std::erase_if(::peers, [present_peers](const auto& pair) {
+                return present_peers.contains(pair.first);
+            });
+
+            for (auto& [id, peer] : ::peers) {
+                const auto& as_recv = obj["peers"][id];
+
+                if (id != get_pid())
+                    peer.meta = as_recv["meta"];
+            }
+        }
+
+        if (obj.contains("meta"))
+            lobby_meta = obj["meta"];
+    }
+
+    ws_in.clear();
+}

@@ -33,7 +33,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-#define NUTBLAST_DEFAULT_SERVER "nutblast.schwung.us"
+#define NUTBLAST_DEFAULT_SERVER "wss://nutblast.schwung.us"
 
 #define NUTBLAST_MAX_PLAYERS (16)
 
@@ -60,14 +60,17 @@ void NutBlast_Join(const char* id);
 /// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
 void NutBlast_Host(const char* id, int players);
 
+/// Disconnects you from the lobby if you are in one, and resets the networking state.
+void NutBlast_Disconnect();
+
 /// Returns the amount of players that are in the lobby, including yourself.
 int NutBlast_GetPlayerCount();
 
-/// Returns the ID of the player out of the total player count, or NULL if there is no such player.
-///
-/// You should use player IDs instead of indices for linking players to the entities they are in control of (i.e.
-/// their pawns & characters). Player indices could change at any time while player IDs are stable.
-const char* NutBlast_GetPlayerID(int);
+/// Returns your player's ID.
+const char* NutBlast_GetOurID();
+
+/// Returns a NULL-terminated array of IDs of the players that are in the lobby.
+const char** NutBlast_GetPlayerIDs();
 
 /// Returns true if the player identified by their ID is in the lobby, and false otherwise.
 bool NutBlast_IsPlayerAlive(const char*);

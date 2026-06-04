@@ -27,6 +27,8 @@
 
 #include <raylib.h>
 
+#include <NutBlast.h>
+
 #define TICKRATE (60)
 
 #ifdef __EMSCRIPTEN__
@@ -38,14 +40,37 @@
 int main(int argc, char* argv[]) {
     (void)argc, (void)argv;
 
+    if (true) // set to true to use the localhost NutBlaster
+        NutBlast_SetNutBlaster("ws://localhost:36900");
+    NutBlast_SetGameID("NutBlast Test");
+
     InitWindow(800, 600, "NutBlast Test");
 
     SetTargetFPS(TICKRATE);
     SetExitKey(EMS ? KEY_NULL : KEY_ESCAPE);
 
     while (!WindowShouldClose()) {
+        if (IsKeyPressed(KEY_H))
+            NutBlast_Host("test", 2);
+        else if (IsKeyPressed(KEY_J))
+            NutBlast_Join("test");
+        else if (IsKeyPressed(KEY_K))
+            NutBlast_Disconnect();
+
+        NutBlast_Update();
+
         BeginDrawing();
+
         ClearBackground(RAYWHITE);
+
+        const int fs = 28;
+        int i = 0;
+
+        for (const char** ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++)
+            DrawText(*ptr, GetScreenWidth() - fs * (int)sizeof(NutBlast_PlayerID), fs * i, fs, BLACK);
+
+        DrawText("H to host, J to join, K to reset", 0, GetScreenHeight() - fs, fs, BLACK);
+
         EndDrawing();
     }
 
