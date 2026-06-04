@@ -21,6 +21,7 @@ set(CMAKE_COMPILE_WARNING_AS_ERROR OFF) # libjuice won't build otherwise, damn i
 
 if(NUTBLAST_BUILD_TEST AND CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     set(CMAKE_EXECUTABLE_SUFFIX ".html")
+    set(PLATFORM Web CACHE INTERNAL "")
 endif()
 
 include(FetchContent)
@@ -70,6 +71,6 @@ if(NUTBLAST_BUILD_TEST)
 
     FetchContent_MakeAvailable(raylib S_tructures)
 
-    add_executable(NutBlast-test ${SOURCE_DIR}/NutBlast-test.c)
+    add_executable(NutBlast-test ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast-test.c)
     target_link_libraries(NutBlast-test PRIVATE NutBlast raylib S_tructures)
 endif()
