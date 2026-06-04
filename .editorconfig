@@ -7,14 +7,14 @@ insert_final_newline = true
 trim_trailing_whitespace = true
 indent_style = space
 
-[*.{c,h}]
+[*.{cpp,c,h}]
 indent_size = 4
 indent_style = space
 
 [CMakeLists.txt]
 indent_size = 4
 
-[{*.json,.prettierrc}]
+[*.json]
 indent_size = 4
 
 [{*.yml,.clang*}]

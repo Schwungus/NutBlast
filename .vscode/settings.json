@@ -15,11 +15,23 @@
     },
     "files.associations": {
         "*.h": "c",
-        "*.h.in": "c",
         ".clang*": "yaml"
     },
+    "prettier.enable": false,
     "[c]": {
         "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "[cpp]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "[json]": {
+        "editor.defaultFormatter": "vscode.json-language-features",
+    },
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features",
+    },
+    "[yaml]": {
+        "editor.defaultFormatter": "redhat.vscode-yaml",
     },
     "yaml.schemas": {
         "https://www.schemastore.org/clangd.json": ".clangd"
