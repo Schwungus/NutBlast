@@ -30,11 +30,15 @@ IncludeIsMainRegex: "a{999}" # no main includes
 SortIncludes: CaseSensitive
 IncludeCategories:
   - Regex: "^<std"
-    Priority: 0
+    Priority: 5
   - Regex: "^<ray"
+    Priority: 10
+  - Regex: "^<nloh"
     Priority: 10
   - Regex: "^<S_"
     Priority: 20
+  - Regex: "[^.][^h]>$"
+    Priority: 0
   - Regex: "^<"
     Priority: 15
   - Regex: '^".+/S_'

@@ -26,4 +26,54 @@
 #ifndef NUTBLAST_H
 #define NUTBLAST_H
 
-#endif
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define NUTBLAST_DEFAULT_SERVER "nutblast.schwung.us"
+
+#define NUTBLAST_MAX_PLAYERS (16)
+
+// NOTE: make sure to sync this with `src/main.rs`.
+typedef char NutBlast_PlayerID[4], NutBlast_GameID[16], NutBlast_LobbyID[32];
+
+/// Sets the NutBlaster address.
+void NutBlast_SetNutBlaster(const char*);
+
+/// Call this every frame to send, receive, and process data from the NutBlaster and the peers.
+void NutBlast_Update();
+
+/// Sets a game-id which is used to differentiate the lobbies between different games.
+void NutBlast_SetGameID(const char*);
+
+/// Sets a maximum player-count accepted by the lobby. No effect if you aren't the lobby's master.
+void NutBlast_SetMaxPlayers(int);
+
+/// Joins a lobby by its ID. Note that different games have different sets of lobbies.
+void NutBlast_Join(const char* id);
+
+/// Hosts a lobby with a given ID and maximum player count.
+///
+/// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
+void NutBlast_Host(const char* id, int players);
+
+/// Returns the amount of players that are in the lobby, including yourself.
+int NutBlast_GetPlayerCount();
+
+/// Returns the ID of the player out of the total player count, or NULL if there is no such player.
+///
+/// You should use player IDs instead of indices for linking players to the entities they are in control of (i.e.
+/// their pawns & characters). Player indices could change at any time while player IDs are stable.
+const char* NutBlast_GetPlayerID(int);
+
+/// Returns true if the player identified by their ID is in the lobby, and false otherwise.
+bool NutBlast_IsPlayerAlive(const char*);
+
+#ifdef __cplusplus
+}
+#endif // __cplusplus
+
+#endif // NUTBLAST_H
