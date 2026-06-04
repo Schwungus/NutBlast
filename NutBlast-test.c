@@ -40,7 +40,8 @@
 static const char* names[] = {"Ninja", "Marsoyob", "Trollga", "Ficus", "Caccus", "jrb012345", "Utley"};
 
 int main(int argc, char* argv[]) {
-    (void)argc, (void)argv;
+    if (argc > 1)
+        NutBlast_SetNutBlaster(argv[1]);
 
     if (true) // set to true to use the localhost NutBlaster
         NutBlast_SetNutBlaster("ws://localhost:36900");
