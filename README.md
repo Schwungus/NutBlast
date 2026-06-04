@@ -4,4 +4,4 @@ TODO: explain.
 
 ## Random Notes
 
-1. Connect to a locally running instance by setting the NutBlaster address to <ws://localhost:36900>.
+1. Connect to a locally running instance by setting the NutBlaster address to [ws://localhost:36900](ws://localhost:36900).
