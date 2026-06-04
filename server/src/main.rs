@@ -50,13 +50,14 @@ struct Payload {
     lobby_meta: Option<HashMap<String, String>>,
 }
 
+#[derive(Serialize)]
 struct ResponsePeer {
     meta: HashMap<String, String>,
 }
 
 #[derive(Serialize)]
 struct Response {
-    peers: HashMap<String, String>,
+    peers: HashMap<String, ResponsePeer>,
     meta: HashMap<String, String>,
 }
 
@@ -108,7 +109,7 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
         }
     };
 
-    info!("accept: {}", peer_addr);
+    info!("hi {}", peer_addr);
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
@@ -118,7 +119,6 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
 
     let mut handle = |msg: Message| {
         if msg.is_close() {
-            info!("bye {}", peer_addr);
             return None;
         }
 
@@ -134,7 +134,13 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
             }
         };
 
-        let payload: Payload = match serde_json::from_str(text) {
+        let Payload {
+            pid: r_pid,
+            gid: r_gid,
+            lid: r_lid,
+            peer_meta,
+            lobby_meta,
+        } = match serde_json::from_str(text) {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", peer_addr, err);
@@ -142,21 +148,23 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
             }
         };
 
+        let lobby_meta = lobby_meta.unwrap_or_else(HashMap::new);
+
         match pid {
             None => {
-                if payload.pid.len() != PLAYER_ID_LEN {
+                if r_pid.len() != PLAYER_ID_LEN {
                     return None;
                 }
 
                 // no pid spoofing!!!
-                if state.players.read().unwrap().contains_key(&payload.pid) {
+                if state.players.read().unwrap().contains_key(&r_pid) {
                     return None;
                 }
 
-                pid = Some(payload.pid);
+                pid = Some(r_pid.to_string());
             }
             Some(ref real) => {
-                if payload.pid != *real {
+                if r_pid != *real {
                     return None;
                 }
             }
@@ -164,15 +172,15 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
 
         match lid {
             None => {
-                if payload.lid.len() > LOBBY_ID_LEN {
+                if r_lid.len() > LOBBY_ID_LEN {
                     return None;
                 }
 
                 // no lobby-hopping!!!
-                lid = Some(payload.lid);
+                lid = Some(r_lid.to_string());
             }
             Some(ref real) => {
-                if payload.lid != *real {
+                if r_lid != *real {
                     return None;
                 }
             }
@@ -180,43 +188,66 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
 
         match gid {
             None => {
-                if payload.gid.len() > GAME_ID_LEN {
+                if r_gid.len() > GAME_ID_LEN {
                     return None;
                 }
 
                 // no game-hopping either!!!
-                gid = Some(payload.gid);
+                gid = Some(r_gid.to_string());
             }
             Some(ref real) => {
-                if payload.gid != *real {
+                if r_gid != *real {
                     return None;
                 }
             }
         }
 
         let lobby_id = LobbyId {
-            game: gid.as_ref().unwrap().to_string(),
-            name: lid.as_ref().unwrap().to_string(),
+            game: r_gid.to_string(),
+            name: r_lid.to_string(),
         };
+
+        if state.players.read().unwrap().contains_key(&r_pid) {
+            state.players.write().unwrap().get_mut(&r_pid).unwrap().meta = peer_meta;
+        } else {
+            state.players.write().unwrap().insert(
+                r_pid,
+                Player {
+                    lobby_id: lobby_id.clone(),
+                    meta: peer_meta,
+                },
+            );
+        }
 
         if !state.lobbies.read().unwrap().contains_key(&lobby_id) {
             info!("new lobby {:?}", lobby_id);
 
             let mut lober = state.lobbies.write().unwrap();
-            lober.insert(lobby_id.clone(), Lobby {});
+            lober.insert(lobby_id.clone(), Lobby { meta: lobby_meta });
+        } else if state.master_of(&lobby_id) == *pid.as_ref().unwrap() {
+            let mut lober = state.lobbies.write().unwrap();
+            lober.get_mut(&lobby_id).unwrap().meta = lobby_meta;
         }
 
-        if state.master_of(&lobby_id) == *pid.as_ref().unwrap() {
-            state
-                .lobbies
-                .write()
-                .unwrap()
-                .get_mut(&lobby_id)
-                .unwrap()
-                .meta = payload.lobby_meta;
-        }
+        let lober = state.lobbies.read().unwrap();
 
-        Some("")
+        let peers = state.players.read().unwrap();
+        let peers = peers
+            .iter()
+            .filter(|(_, p)| p.lobby_id == lobby_id)
+            .map(|(k, p)| {
+                let p = ResponsePeer {
+                    meta: p.meta.clone(),
+                };
+
+                (k.to_string(), p)
+            })
+            .collect();
+
+        Some(Response {
+            meta: lober.get(&lobby_id).unwrap().meta.clone(),
+            peers,
+        })
     };
 
     loop {
@@ -225,7 +256,7 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
                 match res {
                     Some(Ok(msg)) => {
                         if let Some(resp) = handle(msg) {
-                            let s = match serde_json::to_string(resp) {
+                            let s = match serde_json::to_string(&resp) {
                                 Ok(ok) => ok,
                                 Err(err) => {
                                     error!("serialize {}: {}", peer_addr, err);
@@ -255,6 +286,8 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
             }
         }
     }
+
+    info!("bye {}", peer_addr);
 
     let mut nonempty = HashSet::new();
 
