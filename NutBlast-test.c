@@ -52,7 +52,6 @@ int main(int argc, char* argv[]) {
     SetExitKey(EMS ? KEY_NULL : KEY_ESCAPE);
 
     NutBlast_SetPeerField("NAME", names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
-    TraceLog(LOG_INFO, "We are %s", NutBlast_GetPeerField(NutBlast_GetOurID(), "NAME"));
 
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H))
@@ -71,10 +70,15 @@ int main(int argc, char* argv[]) {
         const int fs = 28;
         int i = 0;
 
+        const char* name = NutBlast_GetPeerField(NutBlast_GetOurID(), "NAME");
+        if (name)
+            DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
+        i++;
+
         for (const char** ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
-            const char* const name = NutBlast_GetPeerField(*ptr, "NAME");
+            name = NutBlast_GetPeerField(*ptr, "NAME");
             if (name)
-                DrawText(name, GetScreenWidth() - fs * (int)sizeof(NutBlast_PlayerID), fs * i, fs, BLACK);
+                DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
             i++;
         }
 
