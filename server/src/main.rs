@@ -57,6 +57,7 @@ struct ResponsePeer {
 
 #[derive(Serialize)]
 struct Response {
+    master: String,
     peers: HashMap<String, ResponsePeer>,
     meta: HashMap<String, String>,
 }
@@ -245,6 +246,7 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
             .collect();
 
         Some(Response {
+            master: state.master_of(&lobby_id),
             meta: lober.get(&lobby_id).unwrap().meta.clone(),
             peers,
         })
@@ -285,6 +287,10 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
                 break;
             }
         }
+    }
+
+    if let Some(ref pid) = pid {
+        state.players.write().unwrap().remove(pid);
     }
 
     info!("bye {}", peer_addr);

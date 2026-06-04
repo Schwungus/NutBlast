@@ -37,6 +37,8 @@
 #define EMS (0)
 #endif
 
+static const char* names[] = {"Ninja", "Marsoyob", "Trollga", "Ficus", "Caccus", "jrb012345", "Utley"};
+
 int main(int argc, char* argv[]) {
     (void)argc, (void)argv;
 
@@ -48,6 +50,9 @@ int main(int argc, char* argv[]) {
 
     SetTargetFPS(TICKRATE);
     SetExitKey(EMS ? KEY_NULL : KEY_ESCAPE);
+
+    NutBlast_SetPeerField("NAME", names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
+    TraceLog(LOG_INFO, "We are %s", NutBlast_GetPeerField(NutBlast_GetOurID(), "NAME"));
 
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H))
@@ -66,8 +71,12 @@ int main(int argc, char* argv[]) {
         const int fs = 28;
         int i = 0;
 
-        for (const char** ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++)
-            DrawText(*ptr, GetScreenWidth() - fs * (int)sizeof(NutBlast_PlayerID), fs * i, fs, BLACK);
+        for (const char** ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
+            const char* const name = NutBlast_GetPeerField(*ptr, "NAME");
+            if (name)
+                DrawText(name, GetScreenWidth() - fs * (int)sizeof(NutBlast_PlayerID), fs * i, fs, BLACK);
+            i++;
+        }
 
         DrawText("H to host, J to join, K to reset", 0, GetScreenHeight() - fs, fs, BLACK);
 

@@ -47,15 +47,16 @@ struct Peer {
 
 static std::string gid = "", pid = "";
 static std::optional<std::string> blaster, lid;
-static bool hosting = false;
 
-static Peer self;
+static bool hosting = false;
+static std::string master = "";
+
 static std::unordered_map<std::string, Peer> peers;
 
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
 static std::vector<std::string> ws_in;
 
-static Metadata lobby_meta;
+static Metadata peer_meta, lobby_meta;
 
 template <typename... T> static inline void info(const char* fmt, T... args) {
     static char buf[1024] = "";
@@ -99,6 +100,48 @@ static bool is_connected() {
     return blaster_ws != nullptr && blaster_ws->isOpen();
 }
 
+extern "C" const char* NutBlast_GetPeerField(const char* pee, const char* name) {
+    if (!pee || !name)
+        return nullptr;
+
+    if (pee == get_pid())
+        return peer_meta.at(name).c_str();
+
+    if (!is_connected())
+        return nullptr;
+
+    if (!::peers.contains(pee))
+        return nullptr;
+
+    const auto& peer = ::peers.at(pee);
+
+    if (peer.meta.contains(name))
+        return peer.meta.at(name).c_str();
+
+    return nullptr;
+}
+
+extern "C" void NutBlast_SetPeerField(const char* name, const char* value) {
+    peer_meta.insert_or_assign(name, value);
+}
+
+extern "C" const char* NutBlast_GetLobbyField(const char* name) {
+    if (!is_connected())
+        return nullptr;
+
+    if (lobby_meta.contains(name))
+        return lobby_meta.at(name).c_str();
+
+    return nullptr;
+}
+
+extern "C" void NutBlast_SetLobbyField(const char* name, const char* value) {
+    const char* master = NutBlast_GetMasterID();
+
+    if (master != nullptr && master == get_pid())
+        lobby_meta.insert_or_assign(name, value);
+}
+
 static void join_pro(const char* id, bool host) {
     if (is_connected()) {
         info("You're already in a lobby!");
@@ -107,6 +150,7 @@ static void join_pro(const char* id, bool host) {
 
     get_pid(), get_blaster();
     ::lid = id, ::hosting = host;
+    ::master = "";
 
     blaster_ws = std::make_shared<rtc::WebSocket>();
 
@@ -156,7 +200,7 @@ extern "C" const char** NutBlast_GetPlayerIDs() {
 
     for (const auto& [key, player] : peers)
         buf[i++] = key.c_str();
-    buf[i] = NULL;
+    buf[i] = nullptr;
 
     return buf;
 }
@@ -166,8 +210,12 @@ extern "C" const char* NutBlast_GetOurID() {
     return ::pid.c_str();
 }
 
+extern "C" const char* NutBlast_GetMasterID() {
+    return is_connected() ? ::master.c_str() : nullptr;
+}
+
 extern "C" bool NutBlast_IsPlayerAlive(const char* id) {
-    if (!is_connected())
+    if (!is_connected() || !id)
         return false;
 
     if (id == get_pid())
@@ -206,9 +254,22 @@ extern "C" void NutBlast_Update() {
             }
         }
 
+        if (obj.contains("master"))
+            ::master = obj["master"];
+
         if (obj.contains("meta"))
             lobby_meta = obj["meta"];
     }
 
     ws_in.clear();
+
+    const nlohmann::json payload = {
+        {"gid", ::gid},
+        {"pid", get_pid()},
+        {"lid", ::lid},
+        {"peer_meta", peer_meta},
+        {"lobby_meta", lobby_meta},
+    };
+
+    ::blaster_ws->send(payload.dump());
 }

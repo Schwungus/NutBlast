@@ -69,11 +69,26 @@ int NutBlast_GetPlayerCount();
 /// Returns your player's ID.
 const char* NutBlast_GetOurID();
 
+/// Returns the lobby's master's ID.
+const char* NutBlast_GetMasterID();
+
 /// Returns a NULL-terminated array of IDs of the players that are in the lobby.
 const char** NutBlast_GetPlayerIDs();
 
 /// Returns true if the player identified by their ID is in the lobby, and false otherwise.
 bool NutBlast_IsPlayerAlive(const char*);
+
+/// Returns peer's metadata as a null-terminated string.
+const char* NutBlast_GetPeerField(const char* peer, const char* name);
+
+/// Sets our peer's metadata to a null-terminated string.
+void NutBlast_SetPeerField(const char* name, const char* value);
+
+/// Returns lobby metadata as a null-terminated string.
+const char* NutBlast_GetLobbyField(const char* name);
+
+/// Sets lobby metadata to a null-terminated string.
+void NutBlast_SetLobbyField(const char* name, const char* value);
 
 #ifdef __cplusplus
 }
