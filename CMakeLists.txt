@@ -35,7 +35,9 @@ target_include_directories(NutBlast
 set_target_properties(NutBlast PROPERTIES LINKER_LANGUAGE CXX)
 
 FetchContent_Declare(json
-    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.12.0
+    EXCLUDE_FROM_ALL)
 list(APPEND LIBS nlohmann_json::nlohmann_json)
 
 set(NO_MEDIA ON CACHE INTERNAL "")
