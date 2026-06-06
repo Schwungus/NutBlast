@@ -37,17 +37,21 @@
 #define EMS (0)
 #endif
 
+// internal utility func.
+extern uint64_t NutBlast_TimeNS();
+
 static const char* names[] = {"Ninja", "Marsoyob", "Trollga", "Ficus", "Caccus", "jrb012345", "Utley"};
 
 int main(int argc, char* argv[]) {
-    if (argc > 1)
-        NutBlast_SetNutBlaster(argv[1]);
+    (void)argc, (void)argv;
+
     NutBlast_SetGameID("NutBlast Test");
 
     InitWindow(800, 600, "NutBlast Test");
 
     SetTargetFPS(TICKRATE);
     SetExitKey(EMS ? KEY_NULL : KEY_ESCAPE);
+    SetRandomSeed(NutBlast_TimeNS());
 
     NutBlast_SetPeerField("NAME", names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
 

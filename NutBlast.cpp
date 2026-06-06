@@ -23,7 +23,9 @@
 //
 // For more information, please refer to <https://unlicense.org>
 
+#include <ctime>
 #include <optional>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -58,16 +60,32 @@ static std::vector<std::string> ws_in;
 
 static Metadata peer_meta, lobby_meta;
 
+namespace ns {
+constexpr const std::uint64_t second = 1000000000;
+};
+
 template <typename... T> static inline void info(const char* fmt, T... args) {
     static char buf[1024] = "";
     std::snprintf(buf, sizeof(buf), "%s\n", fmt);
     std::printf(buf, args...);
 }
 
+// making this one available externally for internal use.
+extern "C" uint64_t NutBlast_TimeNS() {
+    struct timespec ts = {0};
+    timespec_get(&ts, TIME_UTC);
+    return (std::uint64_t)ts.tv_sec * ns::second + (std::uint64_t)ts.tv_nsec;
+}
+
 static std::string get_pid() {
+    std::mt19937 mt;
+    mt.seed(NutBlast_TimeNS());
+
+    std::uniform_int_distribution<> dist;
+
     if (pid.empty())
         for (size_t i = 0; i < sizeof(NutBlast_PlayerID); i++)
-            pid.push_back(static_cast<char>('A' + std::rand() % ('Z' - 'A' + 1)));
+            pid.push_back(static_cast<char>('A' + dist(mt) % ('Z' - 'A' + 1)));
 
     return pid;
 }
@@ -97,7 +115,7 @@ extern "C" void NutBlast_SetMaxPlayers(int max) {
 }
 
 static bool is_connected() {
-    return blaster_ws != nullptr && blaster_ws->isOpen();
+    return lid.has_value() && blaster_ws != nullptr && blaster_ws->isOpen();
 }
 
 extern "C" const char* NutBlast_GetPeerField(const char* pee, const char* name) {
@@ -169,12 +187,11 @@ static void join_pro(const char* id, bool host) {
 
     blaster_ws->open(get_blaster());
 
-    info("Trying to %s '%s'", host ? "host" : "join", id);
+    info("Trying to %s '%s' at: %s", host ? "host" : "join", id, get_blaster().c_str());
 }
 
 extern "C" void NutBlast_Disconnect() {
     ::lid = std::nullopt;
-    ::blaster_ws = nullptr;
     ::peers.clear();
 }
 
@@ -245,6 +262,10 @@ extern "C" void NutBlast_Update() {
             std::erase_if(::peers, [present_peers](const auto& pair) {
                 return present_peers.contains(pair.first);
             });
+
+            for (const auto& id : present_peers)
+                if (!::peers.contains(id))
+                    ::peers.insert({id, {}});
 
             for (auto& [id, peer] : ::peers) {
                 const auto& as_recv = obj["peers"][id];

@@ -5,6 +5,7 @@ project(NutBlast
     LANGUAGES C CXX)
 
 option(NUTBLAST_BUILD_TEST "Build a NutBlast test binary?" OFF)
+option(NUTBLAST_DEV_LOCALHOST "Connect to ws://localhost:36900 by default?" OFF)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -33,6 +34,10 @@ add_library(NutBlast
 target_include_directories(NutBlast
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(NutBlast PROPERTIES LINKER_LANGUAGE CXX)
+
+if(NUTBLAST_DEV_LOCALHOST)
+    target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST)
+endif()
 
 FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
