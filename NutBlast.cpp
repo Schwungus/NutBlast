@@ -260,7 +260,7 @@ extern "C" void NutBlast_Update() {
                     present_peers.insert(id);
 
             std::erase_if(::peers, [present_peers](const auto& pair) {
-                return present_peers.contains(pair.first);
+                return !present_peers.contains(pair.first);
             });
 
             for (const auto& id : present_peers)

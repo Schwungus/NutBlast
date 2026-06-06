@@ -230,9 +230,11 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
             lober.get_mut(&lobby_id).unwrap().meta = lobby_meta;
         }
 
-        let lober = state.lobbies.read().unwrap();
+        let master = state.master_of(&lobby_id);
 
+        let lober = state.lobbies.read().unwrap();
         let peers = state.players.read().unwrap();
+
         let peers = peers
             .iter()
             .filter(|(_, p)| p.lobby_id == lobby_id)
@@ -246,13 +248,13 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
             .collect();
 
         Some(Response {
-            master: state.master_of(&lobby_id),
+            master,
             meta: lober.get(&lobby_id).unwrap().meta.clone(),
             peers,
         })
     };
 
-    loop {
+    'everything: loop {
         tokio::select! {
             res = ws_receiver.next() => {
                 match res {
@@ -262,29 +264,29 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
                                 Ok(ok) => ok,
                                 Err(err) => {
                                     error!("serialize {}: {}", peer_addr, err);
-                                    break;
+                                    break 'everything;
                                 }
                             };
 
                             if let Err(err) = ws_sender.send(Message::text(s)).await {
                                 error!("send to {}: {}", peer_addr, err);
-                                break;
+                                break 'everything;
                             }
                         } else {
-                            break;
+                            break 'everything;
                         }
                     }
                     Some(Err(e)) => {
                         error!("{}: {}", peer_addr, e);
-                        break;
+                        break 'everything;
                     }
                     None => {
-                        break;
+                        break 'everything;
                     },
                 }
             }
             _ = tokio::time::sleep(TIMEOUT) => {
-                break;
+                break 'everything;
             }
         }
     }
