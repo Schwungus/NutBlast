@@ -61,7 +61,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
 else()
     FetchContent_Declare(datachannel
         GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
-        GIT_TAG v0.24.2
+        GIT_TAG v0.24.4
         EXCLUDE_FROM_ALL)
     list(APPEND LIBS datachannel-static)
 endif()

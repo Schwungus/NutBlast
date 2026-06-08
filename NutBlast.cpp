@@ -39,12 +39,25 @@
 
 using Metadata = std::unordered_map<std::string, std::string>;
 
+static const rtc::Configuration rtc_config{
+    .iceServers = {{"stun:stun.l.google.com:19302"}, {"stun:stun.l.google.com:5349"},},
+};
+
+struct PeerSharedState {
+    std::shared_ptr<rtc::PeerConnection> pc = nullptr;
+    std::shared_ptr<rtc::DataChannel> dc = nullptr;
+
+    std::optional<std::string> local_desc = std::nullopt;
+    std::unordered_set<std::string> outgoing_candidates, incoming_candidates;
+};
+
 struct Peer {
     Metadata meta;
+    bool polite = false;
+    std::shared_ptr<PeerSharedState> state;
 
-    Peer() {}
-
-    ~Peer() {}
+    Peer(bool polite);
+    ~Peer() = default;
 };
 
 static std::string gid = "", pid = "";
@@ -61,7 +74,7 @@ static std::vector<std::string> ws_in;
 static Metadata peer_meta, lobby_meta;
 
 namespace ns {
-constexpr const std::uint64_t second = 1000000000;
+    constexpr const std::uint64_t second = 1000000000;
 };
 
 template <typename... T> static inline void info(const char* fmt, T... args) {
@@ -75,6 +88,50 @@ extern "C" uint64_t NutBlast_TimeNS() {
     struct timespec ts = {0};
     timespec_get(&ts, TIME_UTC);
     return (std::uint64_t)ts.tv_sec * ns::second + (std::uint64_t)ts.tv_nsec;
+}
+
+Peer::Peer(bool polite) : polite(polite), state(new PeerSharedState()) {
+    std::weak_ptr<PeerSharedState> st = state;
+
+    state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
+
+    state->pc->onLocalDescription([st](const auto& local_desc) {
+        if (!st.expired())
+            st.lock()->local_desc = local_desc;
+    });
+
+    state->pc->onLocalCandidate([st](const auto& candidate) {
+        if (!st.expired())
+            st.lock()->outgoing_candidates.insert(candidate);
+    });
+
+    const auto setup_dc = [st](const auto& dc) {
+        dc->onOpen([dc]() {
+            dc->send("hi!!!");
+        });
+
+        dc->onMessage([dc](const auto& variant) {
+            if (std::holds_alternative<rtc::string>(variant)) {
+                const auto& msg = std::get<rtc::string>(variant);
+                info("GOT: %s", msg.c_str());
+            } else {
+                info("GOT JUNK");
+            }
+        });
+    };
+
+    state->pc->onDataChannel([st, setup_dc](const auto& dc) {
+        if (st.expired())
+            return;
+
+        const auto state = st.lock();
+        state->dc = dc;
+        setup_dc(dc);
+        dc->send("hallo!!!");
+    });
+
+    state->dc = state->pc->createDataChannel("NutBlast");
+    setup_dc(state->dc);
 }
 
 static std::string get_pid() {
@@ -249,12 +306,24 @@ extern "C" void NutBlast_Flush() {
     if (!is_connected())
         return;
 
+    std::unordered_map<std::string, nlohmann::json> offers;
+
+    for (const auto& [id, peer] : ::peers) {
+        const nlohmann::json ninja{
+            {"local_desc", peer.state->local_desc},
+            {"candidates", peer.state->outgoing_candidates},
+        };
+
+        offers.insert({id, ninja});
+    }
+
     const nlohmann::json payload = {
         {"gid", ::gid},
         {"pid", get_pid()},
         {"lid", ::lid},
-        {"peer_meta", peer_meta},
-        {"lobby_meta", lobby_meta},
+        {"peer_meta", ::peer_meta},
+        {"lobby_meta", ::lobby_meta},
+        {"offers", offers},
     };
 
     ::blaster_ws->send(payload.dump());
@@ -272,18 +341,47 @@ static void recv_shit() {
                     present_peers.insert(id);
 
             std::erase_if(::peers, [present_peers](const auto& pair) {
-                return !present_peers.contains(pair.first);
+                const bool erase = !present_peers.contains(pair.first);
+
+                if (erase)
+                    info("Bye, %s", pair.first.c_str());
+
+                return erase;
             });
 
-            for (const auto& id : present_peers)
-                if (!::peers.contains(id))
-                    ::peers.insert({id, {}});
+            for (const auto& id : present_peers) {
+                if (!::peers.contains(id)) {
+                    const bool p = get_pid() > id;
+                    ::peers.insert({id, Peer(p)});
+                }
+            }
 
             for (auto& [id, peer] : ::peers) {
-                const auto& as_recv = obj["peers"][id];
+                const auto as_recv = obj["peers"][id];
 
-                if (id != get_pid())
+                if (id != get_pid() && as_recv.contains("meta"))
                     peer.meta = as_recv["meta"];
+
+                if (as_recv.contains("offer") && !as_recv["offer"].is_null()) {
+                    const std::optional<std::string> remote_desc = as_recv["offer"]["local_desc"];
+
+                    std::unordered_set<std::string> new_candidates = as_recv["offer"]["candidates"];
+                    std::erase_if(new_candidates, [peer](const auto& x) {
+                        return peer.state->incoming_candidates.contains(x);
+                    });
+
+                    if (remote_desc.has_value()) {
+                        const rtc::Description desc(*remote_desc);
+
+                        if (desc.typeString() != "offer" || !peer.polite)
+                            peer.state->pc->setRemoteDescription(desc);
+                    }
+
+                    for (const auto& candidate : new_candidates) {
+                        peer.state->pc->addRemoteCandidate(rtc::Candidate(candidate));
+                        peer.state->incoming_candidates.insert(candidate);
+                    }
+                }
             }
         }
 
@@ -291,7 +389,7 @@ static void recv_shit() {
             ::master = obj["master"];
 
         if (obj.contains("meta"))
-            lobby_meta = obj["meta"];
+            ::lobby_meta = obj["meta"];
     }
 
     ws_in.clear();

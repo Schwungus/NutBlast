@@ -34,11 +34,18 @@ struct Lobby {
 struct Player {
     lobby_id: LobbyId,
     meta: HashMap<String, String>,
+    offers: HashMap<String, Offer>,
 }
 
 struct State {
     lobbies: RwLock<HashMap<LobbyId, Lobby>>,
     players: RwLock<HashMap<String, Player>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Offer {
+    local_desc: Option<String>,
+    candidates: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -48,11 +55,13 @@ struct Payload {
     lid: String,
     peer_meta: HashMap<String, String>,
     lobby_meta: Option<HashMap<String, String>>,
+    offers: HashMap<String, Offer>,
 }
 
 #[derive(Serialize)]
 struct ResponsePeer {
     meta: HashMap<String, String>,
+    offer: Option<Offer>,
 }
 
 #[derive(Serialize)]
@@ -141,6 +150,7 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
             lid: r_lid,
             peer_meta,
             lobby_meta,
+            offers,
         } = match serde_json::from_str(text) {
             Ok(ok) => ok,
             Err(err) => {
@@ -208,14 +218,21 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
             name: r_lid.to_string(),
         };
 
+        let fuckyou_offers = offers.clone();
+
         if state.players.read().unwrap().contains_key(&r_pid) {
-            state.players.write().unwrap().get_mut(&r_pid).unwrap().meta = peer_meta;
+            let mut w = state.players.write().unwrap();
+            let w = w.get_mut(&r_pid).unwrap();
+
+            w.meta = peer_meta;
+            w.offers = offers;
         } else {
             state.players.write().unwrap().insert(
                 r_pid,
                 Player {
                     lobby_id: lobby_id.clone(),
                     meta: peer_meta,
+                    offers,
                 },
             );
         }
@@ -241,6 +258,7 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
             .map(|(k, p)| {
                 let p = ResponsePeer {
                     meta: p.meta.clone(),
+                    offer: fuckyou_offers.get(k).cloned(),
                 };
 
                 (k.to_string(), p)
