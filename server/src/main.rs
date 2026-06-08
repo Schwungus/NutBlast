@@ -4,14 +4,14 @@ extern crate log;
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
-use futures_util::{SinkExt as _, StreamExt as _};
+use futures_util::{SinkExt as _, StreamExt as _, stream::SplitSink};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
 const PORT: u16 = 36900;
 
@@ -34,52 +34,72 @@ struct Lobby {
 struct Player {
     lobby_id: LobbyId,
     meta: HashMap<String, String>,
-    offers: HashMap<String, Offer>,
+    queue: Vec<Response>,
 }
 
 struct State {
-    lobbies: RwLock<HashMap<LobbyId, Lobby>>,
-    players: RwLock<HashMap<String, Player>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Offer {
-    local_desc: Option<String>,
-    candidates: Vec<String>,
+    lobbies: HashMap<LobbyId, Lobby>,
+    players: HashMap<String, Player>,
 }
 
 #[derive(Deserialize)]
-struct Payload {
-    pid: String,
-    gid: String,
-    lid: String,
-    peer_meta: HashMap<String, String>,
-    lobby_meta: Option<HashMap<String, String>>,
-    offers: HashMap<String, Offer>,
+#[serde(tag = "type")]
+enum Payload {
+    Update {
+        pid: String,
+        gid: String,
+        lid: String,
+        peer_meta: HashMap<String, String>,
+        lobby_meta: Option<HashMap<String, String>>,
+    },
+    Candidate {
+        to: String,
+        candidate: String,
+    },
+    Offer {
+        to: String,
+        sdp: String,
+    },
+    Answer {
+        to: String,
+        sdp: String,
+    },
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct ResponsePeer {
     meta: HashMap<String, String>,
-    offer: Option<Offer>,
 }
 
-#[derive(Serialize)]
-struct Response {
-    master: String,
-    peers: HashMap<String, ResponsePeer>,
-    meta: HashMap<String, String>,
+#[derive(Clone, Serialize)]
+#[serde(tag = "type")]
+enum Response {
+    Update {
+        master: String,
+        peers: HashMap<String, ResponsePeer>,
+        meta: HashMap<String, String>,
+    },
+    Candidate {
+        peer: String,
+        candidate: String,
+    },
+    Offer {
+        peer: String,
+        sdp: String,
+    },
+    Answer {
+        peer: String,
+        sdp: String,
+    },
 }
 
 impl State {
     fn master_of(&self, lobby: &LobbyId) -> String {
         self.players
-            .read()
-            .unwrap()
             .iter()
             .find(|(_, v)| v.lobby_id == *lobby)
             .map(|(k, _)| k.to_string())
-            .unwrap() // TODO: guarantee safety
+            .unwrap()
     }
 }
 
@@ -96,10 +116,10 @@ async fn main() -> color_eyre::eyre::Result<()> {
 
     info!("listening on: ws://{}", addr);
 
-    let state = Arc::new(State {
-        lobbies: RwLock::new(HashMap::new()),
-        players: RwLock::new(HashMap::new()),
-    });
+    let state = Arc::new(Mutex::new(State {
+        lobbies: HashMap::new(),
+        players: HashMap::new(),
+    }));
 
     while let Ok((stream, peer_addr)) = listener.accept().await {
         tokio::spawn(handle_connection(state.clone(), stream, peer_addr));
@@ -108,7 +128,227 @@ async fn main() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: SocketAddr) {
+struct Connection {
+    addr: SocketAddr,
+    pid: Option<String>,
+    gid: Option<String>,
+    lid: Option<String>,
+}
+
+impl Connection {
+    fn handle(&mut self, state: Arc<Mutex<State>>, msg: Message) -> bool {
+        if msg.is_close() {
+            return false;
+        }
+
+        if !msg.is_text() {
+            return false; // no binary you stupid CLANKER
+        }
+
+        let text = match msg.to_text() {
+            Ok(ok) => ok,
+            Err(err) => {
+                error!("text msg from {}: {}", self.addr, err);
+                return false;
+            }
+        };
+
+        let payload = match serde_json::from_str(text) {
+            Ok(ok) => ok,
+            Err(err) => {
+                error!("parse msg from {}: {}", self.addr, err);
+                return false;
+            }
+        };
+
+        let mut state = state.lock().unwrap();
+
+        match payload {
+            Payload::Update {
+                pid,
+                gid,
+                lid,
+                peer_meta,
+                lobby_meta,
+            } => {
+                let lobby_meta = lobby_meta.unwrap_or_else(HashMap::new);
+
+                match self.pid {
+                    None => {
+                        if pid.len() != PLAYER_ID_LEN {
+                            return false;
+                        }
+
+                        // no pid spoofing!!!
+                        if state.players.contains_key(&pid) {
+                            return false;
+                        }
+
+                        self.pid = Some(pid.to_string());
+                    }
+                    Some(ref real) => {
+                        if pid != *real {
+                            return false;
+                        }
+                    }
+                }
+
+                match self.lid {
+                    None => {
+                        if lid.len() > LOBBY_ID_LEN {
+                            return false;
+                        }
+
+                        // no lobby-hopping!!!
+                        self.lid = Some(lid.to_string());
+                    }
+                    Some(ref real) => {
+                        if lid != *real {
+                            return false;
+                        }
+                    }
+                }
+
+                match self.gid {
+                    None => {
+                        if gid.len() > GAME_ID_LEN {
+                            return false;
+                        }
+
+                        // no game-hopping either!!!
+                        self.gid = Some(gid.to_string());
+                    }
+                    Some(ref real) => {
+                        if gid != *real {
+                            return false;
+                        }
+                    }
+                }
+
+                let lobby_id = LobbyId {
+                    game: gid.to_string(),
+                    name: lid.to_string(),
+                };
+
+                if state.players.contains_key(&pid) {
+                    state.players.get_mut(&pid).unwrap().meta = peer_meta;
+                } else {
+                    let p = Player {
+                        lobby_id: lobby_id.clone(),
+                        meta: peer_meta,
+                        queue: Vec::new(),
+                    };
+
+                    state.players.insert(pid.to_string(), p);
+                }
+
+                if !state.lobbies.contains_key(&lobby_id) {
+                    info!("new lobby {:?}", lobby_id);
+                    let lober = Lobby { meta: lobby_meta };
+                    state.lobbies.insert(lobby_id.clone(), lober);
+                } else if state.master_of(&lobby_id) == self.pid.as_ref().unwrap().to_string() {
+                    state.lobbies.get_mut(&lobby_id).unwrap().meta = lobby_meta;
+                }
+
+                let master = state.master_of(&lobby_id);
+
+                let peers = state
+                    .players
+                    .iter()
+                    .filter(|(_, p)| p.lobby_id == lobby_id)
+                    .map(|(k, p)| {
+                        let p = ResponsePeer {
+                            meta: p.meta.clone(),
+                        };
+
+                        (k.to_string(), p)
+                    })
+                    .collect();
+
+                let update = Response::Update {
+                    master,
+                    meta: state.lobbies.get(&lobby_id).unwrap().meta.clone(),
+                    peers,
+                };
+
+                let peer = state.players.get_mut(&pid).unwrap();
+                peer.queue.push(update);
+
+                true
+            }
+            Payload::Candidate { to, candidate } if self.pid.is_some() => {
+                let peer = state.players.get_mut(&to).unwrap();
+
+                peer.queue.push(Response::Candidate {
+                    peer: self.pid.as_ref().unwrap().to_string(),
+                    candidate,
+                });
+
+                true
+            }
+            Payload::Offer { to, sdp } if self.pid.is_some() => {
+                let peer = state.players.get_mut(&to).unwrap();
+
+                peer.queue.push(Response::Offer {
+                    peer: self.pid.as_ref().unwrap().to_string(),
+                    sdp,
+                });
+
+                true
+            }
+            Payload::Answer { to, sdp } if self.pid.is_some() => {
+                let peer = state.players.get_mut(&to).unwrap();
+
+                peer.queue.push(Response::Answer {
+                    peer: self.pid.as_ref().unwrap().to_string(),
+                    sdp,
+                });
+
+                true
+            }
+            _ => false,
+        }
+    }
+
+    async fn flush(
+        &mut self,
+        state: Arc<Mutex<State>>,
+        sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+    ) -> bool {
+        if self.pid.is_none() {
+            return true;
+        }
+
+        let queue = {
+            let state = state.lock().unwrap();
+            let peer = state.players.get(self.pid.as_ref().unwrap()).unwrap();
+            peer.queue.clone()
+        };
+
+        for resp in queue {
+            let s = match serde_json::to_string(&resp) {
+                Ok(ok) => ok,
+                Err(err) => {
+                    error!("serialize {}: {}", self.addr, err);
+                    return false;
+                }
+            };
+
+            if let Err(err) = sender.send(Message::text(s)).await {
+                error!("send to {}: {}", self.addr, err);
+                return false;
+            }
+        }
+
+        let mut state = state.lock().unwrap();
+        let peer = state.players.get_mut(self.pid.as_ref().unwrap()).unwrap();
+        peer.queue.clear();
+
+        true
+    }
+}
+
+async fn handle_connection(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAddr) {
     info!("conn: {}", peer_addr);
 
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
@@ -123,207 +363,56 @@ async fn handle_connection(state: Arc<State>, stream: TcpStream, peer_addr: Sock
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-    let mut pid: Option<String> = None;
-    let mut gid: Option<String> = None;
-    let mut lid: Option<String> = None;
-
-    let mut handle = |msg: Message| {
-        if msg.is_close() {
-            return None;
-        }
-
-        if !msg.is_text() {
-            return None; // no binary you stupid CLANKER
-        }
-
-        let text = match msg.to_text() {
-            Ok(ok) => ok,
-            Err(err) => {
-                error!("text msg from {}: {}", peer_addr, err);
-                return None;
-            }
-        };
-
-        let Payload {
-            pid: r_pid,
-            gid: r_gid,
-            lid: r_lid,
-            peer_meta,
-            lobby_meta,
-            offers,
-        } = match serde_json::from_str(text) {
-            Ok(ok) => ok,
-            Err(err) => {
-                error!("parse msg from {}: {}", peer_addr, err);
-                return None;
-            }
-        };
-
-        let lobby_meta = lobby_meta.unwrap_or_else(HashMap::new);
-
-        match pid {
-            None => {
-                if r_pid.len() != PLAYER_ID_LEN {
-                    return None;
-                }
-
-                // no pid spoofing!!!
-                if state.players.read().unwrap().contains_key(&r_pid) {
-                    return None;
-                }
-
-                pid = Some(r_pid.to_string());
-            }
-            Some(ref real) => {
-                if r_pid != *real {
-                    return None;
-                }
-            }
-        }
-
-        match lid {
-            None => {
-                if r_lid.len() > LOBBY_ID_LEN {
-                    return None;
-                }
-
-                // no lobby-hopping!!!
-                lid = Some(r_lid.to_string());
-            }
-            Some(ref real) => {
-                if r_lid != *real {
-                    return None;
-                }
-            }
-        }
-
-        match gid {
-            None => {
-                if r_gid.len() > GAME_ID_LEN {
-                    return None;
-                }
-
-                // no game-hopping either!!!
-                gid = Some(r_gid.to_string());
-            }
-            Some(ref real) => {
-                if r_gid != *real {
-                    return None;
-                }
-            }
-        }
-
-        let lobby_id = LobbyId {
-            game: r_gid.to_string(),
-            name: r_lid.to_string(),
-        };
-
-        let fuckyou_offers = offers.clone();
-
-        if state.players.read().unwrap().contains_key(&r_pid) {
-            let mut w = state.players.write().unwrap();
-            let w = w.get_mut(&r_pid).unwrap();
-
-            w.meta = peer_meta;
-            w.offers = offers;
-        } else {
-            state.players.write().unwrap().insert(
-                r_pid,
-                Player {
-                    lobby_id: lobby_id.clone(),
-                    meta: peer_meta,
-                    offers,
-                },
-            );
-        }
-
-        if !state.lobbies.read().unwrap().contains_key(&lobby_id) {
-            info!("new lobby {:?}", lobby_id);
-
-            let mut lober = state.lobbies.write().unwrap();
-            lober.insert(lobby_id.clone(), Lobby { meta: lobby_meta });
-        } else if state.master_of(&lobby_id) == *pid.as_ref().unwrap() {
-            let mut lober = state.lobbies.write().unwrap();
-            lober.get_mut(&lobby_id).unwrap().meta = lobby_meta;
-        }
-
-        let master = state.master_of(&lobby_id);
-
-        let lober = state.lobbies.read().unwrap();
-        let peers = state.players.read().unwrap();
-
-        let peers = peers
-            .iter()
-            .filter(|(_, p)| p.lobby_id == lobby_id)
-            .map(|(k, p)| {
-                let p = ResponsePeer {
-                    meta: p.meta.clone(),
-                    offer: fuckyou_offers.get(k).cloned(),
-                };
-
-                (k.to_string(), p)
-            })
-            .collect();
-
-        Some(Response {
-            master,
-            meta: lober.get(&lobby_id).unwrap().meta.clone(),
-            peers,
-        })
+    let mut conn = Connection {
+        addr: peer_addr,
+        pid: None,
+        gid: None,
+        lid: None,
     };
 
-    'everything: loop {
+    loop {
         tokio::select! {
             res = ws_receiver.next() => {
                 match res {
                     Some(Ok(msg)) => {
-                        if let Some(resp) = handle(msg) {
-                            let s = match serde_json::to_string(&resp) {
-                                Ok(ok) => ok,
-                                Err(err) => {
-                                    error!("serialize {}: {}", peer_addr, err);
-                                    break 'everything;
-                                }
-                            };
-
-                            if let Err(err) = ws_sender.send(Message::text(s)).await {
-                                error!("send to {}: {}", peer_addr, err);
-                                break 'everything;
-                            }
-                        } else {
-                            break 'everything;
+                        if !conn.handle(state.clone(), msg) {
+                            break ;
                         }
                     }
                     Some(Err(e)) => {
                         error!("{}: {}", peer_addr, e);
-                        break 'everything;
+                        break ;
                     }
                     None => {
-                        break 'everything;
+                        break;
                     },
                 }
             }
             _ = tokio::time::sleep(TIMEOUT) => {
-                break 'everything;
+                break ;
             }
+        }
+
+        if !conn.flush(state.clone(), &mut ws_sender).await {
+            break;
         }
     }
 
-    if let Some(ref pid) = pid {
-        state.players.write().unwrap().remove(pid);
+    let mut state = state.lock().unwrap();
+
+    if let Some(ref pid) = conn.pid {
+        state.players.remove(pid);
     }
 
     info!("bye {}", peer_addr);
 
     let mut nonempty = HashSet::new();
 
-    for ref player in state.players.read().unwrap().values() {
+    for ref player in state.players.values() {
         nonempty.insert(player.lobby_id.clone());
     }
 
-    let mut lober = state.lobbies.write().unwrap();
-
-    lober.retain(move |k, _| {
+    state.lobbies.retain(move |k, _| {
         if nonempty.contains(k) {
             return true;
         } else {

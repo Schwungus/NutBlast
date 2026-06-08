@@ -47,16 +47,26 @@ struct PeerSharedState {
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
     std::shared_ptr<rtc::DataChannel> dc = nullptr;
 
-    std::optional<std::string> local_desc = std::nullopt;
+    std::optional<rtc::Description> local_desc = std::nullopt;
     std::unordered_set<std::string> outgoing_candidates, incoming_candidates;
+
+    void drain_incoming_candidates() {
+        for (const auto& candidate : incoming_candidates) {
+            try {
+                pc->addRemoteCandidate(rtc::Candidate(candidate));
+            } catch (const std::logic_error&) { return; }
+        }
+
+        incoming_candidates.clear();
+    }
 };
 
 struct Peer {
     Metadata meta;
-    bool polite = false;
     std::shared_ptr<PeerSharedState> state;
+    bool offering = true;
 
-    Peer(bool polite);
+    Peer();
     ~Peer() = default;
 };
 
@@ -90,7 +100,7 @@ extern "C" uint64_t NutBlast_TimeNS() {
     return (std::uint64_t)ts.tv_sec * ns::second + (std::uint64_t)ts.tv_nsec;
 }
 
-Peer::Peer(bool polite) : polite(polite), state(new PeerSharedState()) {
+Peer::Peer() : state(new PeerSharedState()) {
     std::weak_ptr<PeerSharedState> st = state;
 
     state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
@@ -306,34 +316,57 @@ extern "C" void NutBlast_Flush() {
     if (!is_connected())
         return;
 
-    std::unordered_map<std::string, nlohmann::json> offers;
+    std::unordered_map<std::string, nlohmann::json> ice;
 
     for (const auto& [id, peer] : ::peers) {
-        const nlohmann::json ninja{
-            {"local_desc", peer.state->local_desc},
-            {"candidates", peer.state->outgoing_candidates},
-        };
+        if (peer.state->local_desc.has_value()) {
+            const auto t = peer.state->local_desc->type();
 
-        offers.insert({id, ninja});
+            const nlohmann::json ninja{
+                {"type", t == rtc::Description::Type::Offer ? "Offer" : "Answer"},
+                {"to", id},
+                {"sdp", (rtc::string)*peer.state->local_desc},
+            };
+
+            ::blaster_ws->send(ninja.dump());
+            peer.state->local_desc = std::nullopt;
+        }
+
+        for (const auto& candidate : peer.state->outgoing_candidates) {
+            const nlohmann::json ninja{
+                {"type", "Candidate"},
+                {"to", id},
+                {"candidate", candidate},
+            };
+
+            ::blaster_ws->send(ninja.dump());
+        }
+
+        peer.state->outgoing_candidates.clear();
     }
 
-    const nlohmann::json payload = {
-        {"gid", ::gid},
-        {"pid", get_pid()},
-        {"lid", ::lid},
-        {"peer_meta", ::peer_meta},
-        {"lobby_meta", ::lobby_meta},
-        {"offers", offers},
-    };
+    {
+        const nlohmann::json payload = {
+            {"type", "Update"},
+            {"gid", ::gid},
+            {"pid", ::get_pid()},
+            {"lid", ::lid},
+            {"peer_meta", ::peer_meta},
+            {"lobby_meta", ::lobby_meta},
+        };
 
-    ::blaster_ws->send(payload.dump());
+        ::blaster_ws->send(payload.dump());
+    }
 }
 
 static void recv_shit() {
-    for (const auto& msg : ws_in) {
+    for (const auto& msg : ::ws_in) {
         const auto obj = nlohmann::json::parse(msg);
 
-        if (obj.contains("peers")) {
+        if (obj["type"] == "Update") {
+            ::master = obj["master"];
+            ::lobby_meta = obj["meta"];
+
             std::unordered_set<std::string> present_peers;
 
             for (const auto& [id, peer] : obj["peers"].items())
@@ -349,50 +382,49 @@ static void recv_shit() {
                 return erase;
             });
 
-            for (const auto& id : present_peers) {
-                if (!::peers.contains(id)) {
-                    const bool p = get_pid() > id;
-                    ::peers.insert({id, Peer(p)});
-                }
-            }
+            for (const auto& id : present_peers)
+                if (!::peers.contains(id))
+                    ::peers.insert({id, Peer()});
 
             for (auto& [id, peer] : ::peers) {
                 const auto as_recv = obj["peers"][id];
 
                 if (id != get_pid() && as_recv.contains("meta"))
                     peer.meta = as_recv["meta"];
-
-                if (as_recv.contains("offer") && !as_recv["offer"].is_null()) {
-                    const std::optional<std::string> remote_desc = as_recv["offer"]["local_desc"];
-
-                    std::unordered_set<std::string> new_candidates = as_recv["offer"]["candidates"];
-                    std::erase_if(new_candidates, [peer](const auto& x) {
-                        return peer.state->incoming_candidates.contains(x);
-                    });
-
-                    if (remote_desc.has_value()) {
-                        const rtc::Description desc(*remote_desc);
-
-                        if (desc.typeString() != "offer" || !peer.polite)
-                            peer.state->pc->setRemoteDescription(desc);
-                    }
-
-                    for (const auto& candidate : new_candidates) {
-                        peer.state->pc->addRemoteCandidate(rtc::Candidate(candidate));
-                        peer.state->incoming_candidates.insert(candidate);
-                    }
-                }
             }
+        } else if (obj["type"] == "Offer" || obj["type"] == "Answer") {
+            const std::string& id = obj["peer"];
+
+            if (!::peers.contains(id))
+                return;
+
+            auto& peer = ::peers.at(id);
+            const rtc::Description desc(obj["sdp"], obj["type"] == "Offer" ? "offer" : "answer");
+            const bool polite = ::get_pid() < id, is_offer = desc.typeString() == "offer";
+
+            if (is_offer && peer.offering) {
+                if (!polite)
+                    continue;
+                peer.offering = false;
+            }
+
+            peer.state->pc->setRemoteDescription(desc);
+            peer.state->drain_incoming_candidates();
+        } else if (obj["type"] == "Candidate") {
+            const std::string& id = obj["peer"];
+
+            if (!::peers.contains(id))
+                return;
+
+            auto& peer = ::peers.at(id);
+            peer.state->incoming_candidates.insert(obj["candidate"]);
+            peer.state->drain_incoming_candidates();
+        } else {
+            // junk...
         }
-
-        if (obj.contains("master"))
-            ::master = obj["master"];
-
-        if (obj.contains("meta"))
-            ::lobby_meta = obj["meta"];
     }
 
-    ws_in.clear();
+    ::ws_in.clear();
 }
 
 extern "C" void NutBlast_Update() {
