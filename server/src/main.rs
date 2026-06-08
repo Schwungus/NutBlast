@@ -55,6 +55,7 @@ enum Payload {
     Candidate {
         to: String,
         candidate: String,
+        mid: String,
     },
     Offer {
         to: String,
@@ -82,6 +83,7 @@ enum Response {
     Candidate {
         peer: String,
         candidate: String,
+        mid: String,
     },
     Offer {
         peer: String,
@@ -276,12 +278,13 @@ impl Connection {
 
                 true
             }
-            Payload::Candidate { to, candidate } if self.pid.is_some() => {
+            Payload::Candidate { to, candidate, mid } if self.pid.is_some() => {
                 let peer = state.players.get_mut(&to).unwrap();
 
                 peer.queue.push(Response::Candidate {
                     peer: self.pid.as_ref().unwrap().to_string(),
                     candidate,
+                    mid,
                 });
 
                 true

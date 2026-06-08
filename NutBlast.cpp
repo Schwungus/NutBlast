@@ -48,12 +48,12 @@ struct PeerSharedState {
     std::shared_ptr<rtc::DataChannel> dc = nullptr;
 
     std::optional<rtc::Description> local_desc = std::nullopt;
-    std::unordered_set<std::string> outgoing_candidates, incoming_candidates;
+    std::vector<rtc::Candidate> outgoing_candidates, incoming_candidates;
 
     void drain_incoming_candidates() {
         for (const auto& candidate : incoming_candidates) {
             try {
-                pc->addRemoteCandidate(rtc::Candidate(candidate));
+                pc->addRemoteCandidate(candidate);
             } catch (const std::logic_error&) { return; }
         }
 
@@ -112,7 +112,7 @@ Peer::Peer() : state(new PeerSharedState()) {
 
     state->pc->onLocalCandidate([st](const auto& candidate) {
         if (!st.expired())
-            st.lock()->outgoing_candidates.insert(candidate);
+            st.lock()->outgoing_candidates.push_back(candidate);
     });
 
     const auto setup_dc = [st](const auto& dc) {
@@ -336,7 +336,8 @@ extern "C" void NutBlast_Flush() {
             const nlohmann::json ninja{
                 {"type", "Candidate"},
                 {"to", id},
-                {"candidate", candidate},
+                {"candidate", (rtc::string)candidate},
+                {"mid", candidate.mid()},
             };
 
             ::blaster_ws->send(ninja.dump());
@@ -417,7 +418,7 @@ static void recv_shit() {
                 return;
 
             auto& peer = ::peers.at(id);
-            peer.state->incoming_candidates.insert(obj["candidate"]);
+            peer.state->incoming_candidates.emplace_back(obj["candidate"], obj["mid"]);
             peer.state->drain_incoming_candidates();
         } else {
             // junk...
