@@ -245,10 +245,22 @@ extern "C" bool NutBlast_IsPlayerAlive(const char* id) {
     return false;
 }
 
-extern "C" void NutBlast_Update() {
+extern "C" void NutBlast_Flush() {
     if (!is_connected())
         return;
 
+    const nlohmann::json payload = {
+        {"gid", ::gid},
+        {"pid", get_pid()},
+        {"lid", ::lid},
+        {"peer_meta", peer_meta},
+        {"lobby_meta", lobby_meta},
+    };
+
+    ::blaster_ws->send(payload.dump());
+}
+
+static void recv_shit() {
     for (const auto& msg : ws_in) {
         const auto obj = nlohmann::json::parse(msg);
 
@@ -283,14 +295,11 @@ extern "C" void NutBlast_Update() {
     }
 
     ws_in.clear();
+}
 
-    const nlohmann::json payload = {
-        {"gid", ::gid},
-        {"pid", get_pid()},
-        {"lid", ::lid},
-        {"peer_meta", peer_meta},
-        {"lobby_meta", lobby_meta},
-    };
-
-    ::blaster_ws->send(payload.dump());
+extern "C" void NutBlast_Update() {
+    if (is_connected()) {
+        recv_shit();
+        NutBlast_Flush();
+    }
 }

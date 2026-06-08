@@ -50,6 +50,13 @@ void NutBlast_SetNutBlaster(const char*);
 /// Call this every frame to send, receive, and process data from the NutBlaster and the peers.
 void NutBlast_Update();
 
+/// Call this to flush the output queue.
+///
+/// This is useful in the case you process the result of `NutBlast_Update()` (i.e. the data you received from other
+/// peers) and send out a response immediately after. Without `NutBlast_Flush()`, you would have to wait a whole extra
+/// tick for the next `NutBlast_Update()` call to flush those packets.
+void NutBlast_Flush();
+
 /// Sets a game-id which is used to differentiate the lobbies between different games.
 void NutBlast_SetGameID(const char*);
 
