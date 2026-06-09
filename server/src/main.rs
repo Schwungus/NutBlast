@@ -19,7 +19,8 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 
 const PLAYER_ID_LEN: usize = 4;
 const GAME_ID_LEN: usize = 16;
-const LOBBY_ID_LEN: usize = 32;
+const LOBBY_ID_MAX: usize = 32;
+const LOBBY_ID_MIN: usize = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct LobbyId {
@@ -113,7 +114,7 @@ async fn main() -> color_eyre::eyre::Result<()> {
 
     let _ = color_eyre::install();
 
-    let addr = format!("0.0.0.0:{}", PORT); // TODO: stick behind a reverse-proxy
+    let addr = format!("0.0.0.0:{}", PORT);
     let listener = TcpListener::bind(&addr).await?;
 
     info!("listening on: ws://{}", addr);
@@ -124,7 +125,7 @@ async fn main() -> color_eyre::eyre::Result<()> {
     }));
 
     while let Ok((stream, peer_addr)) = listener.accept().await {
-        tokio::spawn(handle_connection(state.clone(), stream, peer_addr));
+        tokio::spawn(handle(state.clone(), stream, peer_addr));
     }
 
     Ok(())
@@ -197,7 +198,7 @@ impl Connection {
 
                 match self.lid {
                     None => {
-                        if lid.len() > LOBBY_ID_LEN {
+                        if lid.len() < LOBBY_ID_MIN || lid.len() > LOBBY_ID_MAX {
                             return false;
                         }
 
@@ -351,7 +352,7 @@ impl Connection {
     }
 }
 
-async fn handle_connection(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAddr) {
+async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAddr) {
     info!("conn: {}", peer_addr);
 
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
