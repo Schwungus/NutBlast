@@ -12,7 +12,13 @@ use color_eyre::eyre;
 use futures_util::{SinkExt as _, StreamExt as _, stream::SplitSink};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::{
+        Message,
+        handshake::server::{Request as TungRequest, Response as TungResponse},
+    },
+};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -369,7 +375,18 @@ impl Connection {
 async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAddr) {
     info!("conn: {}", peer_addr);
 
-    let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+    let google_ai_mode = |req: &TungRequest, mut response: TungResponse| {
+        if !req.headers().contains_key("Sec-WebSocket-Key") {
+            response.headers_mut().insert(
+                "Sec-WebSocket-Key",
+                "dGhlIHNhbXBsZSBub25jZQ==".parse().unwrap(),
+            );
+        }
+
+        Ok(response)
+    };
+
+    let ws_stream = match tokio_tungstenite::accept_hdr_async(stream, google_ai_mode).await {
         Ok(ws) => ws,
         Err(e) => {
             error!("{}: {}", peer_addr, e);
