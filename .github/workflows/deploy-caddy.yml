@@ -1,0 +1,37 @@
+name: deploy caddy
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/deploy-caddy.yml
+      - server/Caddyfile
+
+concurrency:
+  group: deploy-caddy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+
+      - name: copy caddyfile
+        uses: appleboy/scp-action@v1
+        with:
+          host: nutblast.schwung.us
+          username: root
+          key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
+          source: server/Caddyfile
+          target: /etc/caddy
+          strip_components: 1
+
+      - name: deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: nutblast.schwung.us
+          username: root
+          key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
+          script: systemctl reload caddy

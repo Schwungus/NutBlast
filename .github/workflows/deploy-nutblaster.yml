@@ -1,15 +1,15 @@
-name: deploy
+name: deploy nutblaster
 
 on:
   push:
     branches: [master]
     paths:
-      - .github/workflows/deploy.yml
-      - server/**
+      - .github/workflows/deploy-nutblaster.yml
+      - server/**.rs
       - Cargo.lock
 
 concurrency:
-  group: deploy
+  group: deploy-nutblaster
   cancel-in-progress: true
 
 jobs:
@@ -24,16 +24,6 @@ jobs:
           set -e
           cargo build --release --locked
 
-      - name: copy caddyfile
-        uses: appleboy/scp-action@v1
-        with:
-          host: nutblast.schwung.us
-          username: root
-          key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
-          source: server/Caddyfile
-          target: /etc/caddy
-          strip_components: 1
-
       - name: copy binary
         uses: appleboy/scp-action@v1
         with:
@@ -44,7 +34,7 @@ jobs:
           target: /tmp
           strip_components: 2
 
-      - name: run
+      - name: deploy
         uses: appleboy/ssh-action@v1
         with:
           host: nutblast.schwung.us
@@ -56,4 +46,3 @@ jobs:
             cp /tmp/nutblaster /home/nutpuncher/nutblaster-v1
             chown nutpuncher:nutpuncher /home/nutpuncher/nutblaster-v1
             ssh nutpuncher@localhost systemctl --user start nutblaster-v1
-            systemctl reload caddy
