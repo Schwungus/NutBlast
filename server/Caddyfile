@@ -3,14 +3,7 @@
 }
 
 nutblast.schwung.us, nutblaster.schwung.us {
-	@websocket {
-		path /
-		header Connection *Upgrade*
-		header Upgrade websocket
-	}
-
 	route {
-		rewrite @websocket /v1
 		reverse_proxy /v1* 127.0.0.1:36900
 		redir https://github.com/Schwungus/NutBlast
 	}
