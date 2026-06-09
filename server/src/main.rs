@@ -8,12 +8,11 @@ use std::{
     time::Duration,
 };
 
+use color_eyre::eyre;
 use futures_util::{SinkExt as _, StreamExt as _, stream::SplitSink};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
-
-const PORT: u16 = 36900;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -107,14 +106,19 @@ impl State {
 }
 
 #[tokio::main]
-async fn main() -> color_eyre::eyre::Result<()> {
+async fn main() -> eyre::Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
 
     let _ = color_eyre::install();
 
-    let addr = format!("0.0.0.0:{}", PORT);
+    let addr = if let Some(addr) = std::env::args().nth(1) {
+        addr
+    } else {
+        String::from("127.0.0.1:36900")
+    };
+
     let listener = TcpListener::bind(&addr).await?;
 
     info!("listening on: ws://{}", addr);

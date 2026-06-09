@@ -1,0 +1,23 @@
+{
+	email "admin@schwung.us"
+}
+
+(blast) {
+	redir https://github.com/Schwungus/NutBlast
+}
+
+nutblast.schwung.us {
+	handle_path /v1 {
+		reverse_proxy 127.0.0.1:36900
+	}
+
+	import blast
+}
+
+nutblaster.schwung.us {
+	import blast
+}
+
+nutpuncher.schwung.us, nutpuncher.schwung.us {
+	redir https://github.com/Schwungus/NutPunch
+}

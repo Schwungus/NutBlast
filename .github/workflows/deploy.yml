@@ -1,0 +1,55 @@
+name: deploy
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/deploy.yml
+      - server/**
+      - Cargo.lock
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+
+      - name: build
+        run: |
+          set -e
+          cargo build --release --locked
+
+      - name: copy caddyfile
+        uses: appleboy/scp-action@v1
+        with:
+          host: nutblast.schwung.us
+          username: root
+          key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
+          source: server/Caddyfile
+          target: /etc/caddy
+          strip_components: 1
+
+      - name: copy binary
+        uses: appleboy/scp-action@v1
+        with:
+          host: nutblast.schwung.us
+          username: root
+          key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
+          source: target/release/nutblaster
+          target: /tmp/nutblaster-v1
+          strip_components: 2
+
+      - name: run
+        uses: appleboy/ssh-action@v1
+        with:
+          host: nutblast.schwung.us
+          username: root
+          key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
+          script: |
+            set -e
+            sudo -u nutpuncher systemctl --user stop nutblaster-v1 || :
+            cp /tmp/nutblaster-v1 /home/nutpuncher/nutblaster-v1
+            chown nutpuncher:nutpuncher /home/nutpuncher/nutblaster-v1
+            sudo -u nutpuncher systemctl --user enable --now nutblaster-v1
+            systemctl reload caddy
