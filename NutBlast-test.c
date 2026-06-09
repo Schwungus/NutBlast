@@ -151,10 +151,10 @@ static void on_message(const char* from, const char* msg) {
 }
 
 int main(int argc, char* argv[]) {
-    (void)argc, (void)argv;
+    if (argc > 1)
+        NutBlast_SetNutBlaster(argv[1]);
 
     NutBlast_SetGameID("NutBlast Test");
-
     InitWindow(800, 600, "NutBlast Test");
 
     SetTargetFPS(TICKRATE);
