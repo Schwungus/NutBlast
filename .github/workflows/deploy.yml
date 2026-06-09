@@ -37,7 +37,7 @@ jobs:
           username: root
           key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
           source: target/release/nutblaster
-          target: /tmp/nutblaster-v1
+          target: /tmp
           strip_components: 2
 
       - name: run
