@@ -4,16 +4,7 @@
 
 nutblast.schwung.us, nutblaster.schwung.us {
 	route {
-		reverse_proxy /v1* 127.0.0.1:36900 {
-			flush_interval -1
-
-			transport http {
-				versions 1.1
-				read_timeout 1h
-				write_timeout 1h
-			}
-		}
-
+		reverse_proxy /v1* 127.0.0.1:36900
 		redir https://github.com/Schwungus/NutBlast
 	}
 }
