@@ -52,8 +52,8 @@ jobs:
           key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
           script: |
             set -e
-            sudo -u nutpuncher systemctl --user stop nutblaster-v1 || :
+            ssh nutpuncher@localhost systemctl --user stop nutblaster-v1 || :
             cp /tmp/nutblaster /home/nutpuncher/nutblaster-v1
             chown nutpuncher:nutpuncher /home/nutpuncher/nutblaster-v1
-            sudo -u nutpuncher systemctl --user enable --now nutblaster-v1
+            ssh nutpuncher@localhost systemctl --user start nutblaster-v1
             systemctl reload caddy
