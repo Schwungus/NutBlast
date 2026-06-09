@@ -18,6 +18,6 @@ nutblaster.schwung.us {
 	import blast
 }
 
-nutpuncher.schwung.us, nutpuncher.schwung.us {
+nutpunch.schwung.us, nutpuncher.schwung.us {
 	redir https://github.com/Schwungus/NutPunch
 }
