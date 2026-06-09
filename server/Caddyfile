@@ -5,10 +5,9 @@
 nutblast.schwung.us, nutblaster.schwung.us {
 	route {
 		reverse_proxy /v1 127.0.0.1:36900 {
-			header_up Connection "Upgrade"
-			header_up Upgrade "websocket"
-			header_up Sec-WebSocket-Version "13"
-			header_up Sec-WebSocket-Key "{http.request.header.sec-websocket-key}"
+			transport http {
+				versions 1.1
+			}
 		}
 
 		redir https://github.com/Schwungus/NutBlast
