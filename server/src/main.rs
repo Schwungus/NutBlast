@@ -4,7 +4,7 @@ extern crate log;
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
 
@@ -138,21 +138,26 @@ struct Connection {
     lid: Option<String>,
 }
 
+enum Outcome {
+    Good,
+    Boot,
+}
+
 impl Connection {
-    fn handle(&mut self, state: Arc<Mutex<State>>, msg: Message) -> bool {
+    fn handle(&mut self, state: Arc<Mutex<State>>, msg: Message) -> Outcome {
         if msg.is_close() {
-            return false;
+            return Outcome::Boot;
         }
 
         if !msg.is_text() {
-            return false; // no binary you stupid CLANKER
+            return Outcome::Boot; // no binary you stupid CLANKER
         }
 
         let text = match msg.to_text() {
             Ok(ok) => ok,
             Err(err) => {
                 error!("text msg from {}: {}", self.addr, err);
-                return false;
+                return Outcome::Boot;
             }
         };
 
@@ -160,11 +165,11 @@ impl Connection {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", self.addr, err);
-                return false;
+                return Outcome::Boot;
             }
         };
 
-        let mut state = state.lock().unwrap();
+        let mut state = state.fucking_lock();
 
         match payload {
             Payload::Update {
@@ -179,19 +184,19 @@ impl Connection {
                 match self.pid {
                     None => {
                         if pid.len() != PLAYER_ID_LEN {
-                            return false;
+                            return Outcome::Boot;
                         }
 
                         // no pid spoofing!!!
                         if state.players.contains_key(&pid) {
-                            return false;
+                            return Outcome::Boot;
                         }
 
                         self.pid = Some(pid.to_string());
                     }
                     Some(ref real) => {
                         if pid != *real {
-                            return false;
+                            return Outcome::Boot;
                         }
                     }
                 }
@@ -199,7 +204,7 @@ impl Connection {
                 match self.lid {
                     None => {
                         if lid.len() < LOBBY_ID_MIN || lid.len() > LOBBY_ID_MAX {
-                            return false;
+                            return Outcome::Boot;
                         }
 
                         // no lobby-hopping!!!
@@ -207,7 +212,7 @@ impl Connection {
                     }
                     Some(ref real) => {
                         if lid != *real {
-                            return false;
+                            return Outcome::Boot;
                         }
                     }
                 }
@@ -215,7 +220,7 @@ impl Connection {
                 match self.gid {
                     None => {
                         if gid.len() > GAME_ID_LEN {
-                            return false;
+                            return Outcome::Boot;
                         }
 
                         // no game-hopping either!!!
@@ -223,7 +228,7 @@ impl Connection {
                     }
                     Some(ref real) => {
                         if gid != *real {
-                            return false;
+                            return Outcome::Boot;
                         }
                     }
                 }
@@ -233,8 +238,8 @@ impl Connection {
                     name: lid.to_string(),
                 };
 
-                if state.players.contains_key(&pid) {
-                    state.players.get_mut(&pid).unwrap().meta = peer_meta;
+                if let Some(p) = state.players.get_mut(&pid) {
+                    p.meta = peer_meta;
                 } else {
                     let p = Player {
                         lobby_id: lobby_id.clone(),
@@ -249,8 +254,9 @@ impl Connection {
                     info!("new lobby {:?}", lobby_id);
                     let lober = Lobby { meta: lobby_meta };
                     state.lobbies.insert(lobby_id.clone(), lober);
-                } else if state.master_of(&lobby_id) == self.pid.as_ref().unwrap().to_string() {
-                    state.lobbies.get_mut(&lobby_id).unwrap().meta = lobby_meta;
+                } else if Some(state.master_of(&lobby_id)) == self.pid {
+                    let lober = state.lobbies.get_mut(&lobby_id);
+                    lober.map(|l| l.meta = lobby_meta);
                 }
 
                 let master = state.master_of(&lobby_id);
@@ -270,63 +276,68 @@ impl Connection {
 
                 let update = Response::Update {
                     master,
-                    meta: state.lobbies.get(&lobby_id).unwrap().meta.clone(),
+                    meta: state.lobbies[&lobby_id].meta.clone(),
                     peers,
                 };
 
-                let peer = state.players.get_mut(&pid).unwrap();
-                peer.queue.push(update);
-
-                true
+                let peer = state.players.get_mut(&pid);
+                peer.map(|p| p.queue.push(update));
             }
-            Payload::Candidate { to, candidate, mid } if self.pid.is_some() => {
-                let peer = state.players.get_mut(&to).unwrap();
+            Payload::Candidate { to, candidate, mid } if let Some(ref pid) = self.pid => {
+                let Some(peer) = state.players.get_mut(&to) else {
+                    return Outcome::Good;
+                };
 
                 peer.queue.push(Response::Candidate {
-                    peer: self.pid.as_ref().unwrap().to_string(),
+                    peer: pid.to_string(),
                     candidate,
                     mid,
                 });
-
-                true
             }
-            Payload::Offer { to, sdp } if self.pid.is_some() => {
-                let peer = state.players.get_mut(&to).unwrap();
+            Payload::Offer { to, sdp } if let Some(ref pid) = self.pid => {
+                let Some(peer) = state.players.get_mut(&to) else {
+                    return Outcome::Good;
+                };
 
                 peer.queue.push(Response::Offer {
-                    peer: self.pid.as_ref().unwrap().to_string(),
+                    peer: pid.to_string(),
                     sdp,
                 });
-
-                true
             }
-            Payload::Answer { to, sdp } if self.pid.is_some() => {
-                let peer = state.players.get_mut(&to).unwrap();
+            Payload::Answer { to, sdp } if let Some(ref pid) = self.pid => {
+                let Some(peer) = state.players.get_mut(&to) else {
+                    return Outcome::Good;
+                };
 
                 peer.queue.push(Response::Answer {
-                    peer: self.pid.as_ref().unwrap().to_string(),
+                    peer: pid.to_string(),
                     sdp,
                 });
-
-                true
             }
-            _ => false,
-        }
+            _ => {
+                return Outcome::Boot;
+            }
+        };
+
+        Outcome::Good
     }
 
     async fn flush(
         &mut self,
         state: Arc<Mutex<State>>,
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-    ) -> bool {
-        if self.pid.is_none() {
-            return true;
-        }
+    ) -> Outcome {
+        let Some(ref pid) = self.pid else {
+            return Outcome::Good;
+        };
 
         let queue = {
-            let state = state.lock().unwrap();
-            let peer = state.players.get(self.pid.as_ref().unwrap()).unwrap();
-            peer.queue.clone()
+            let state = state.fucking_lock();
+            state.players.get(pid).map(|p| p.queue.clone())
+        };
+
+        let Some(queue) = queue else {
+            return Outcome::Good;
         };
 
         for resp in queue {
@@ -334,21 +345,20 @@ impl Connection {
                 Ok(ok) => ok,
                 Err(err) => {
                     error!("serialize {}: {}", self.addr, err);
-                    return false;
+                    return Outcome::Boot;
                 }
             };
 
             if let Err(err) = sender.send(Message::text(s)).await {
                 error!("send to {}: {}", self.addr, err);
-                return false;
+                return Outcome::Boot;
             }
         }
 
-        let mut state = state.lock().unwrap();
-        let peer = state.players.get_mut(self.pid.as_ref().unwrap()).unwrap();
-        peer.queue.clear();
+        let mut state = state.fucking_lock();
+        state.players.get_mut(pid).map(|p| p.queue.clear());
 
-        true
+        Outcome::Good
     }
 }
 
@@ -379,7 +389,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
             res = ws_receiver.next() => {
                 match res {
                     Some(Ok(msg)) => {
-                        if !conn.handle(state.clone(), msg) {
+                        if let Outcome::Boot = conn.handle(state.clone(), msg) {
                             break ;
                         }
                     }
@@ -397,12 +407,12 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
             }
         }
 
-        if !conn.flush(state.clone(), &mut ws_sender).await {
+        if let Outcome::Boot = conn.flush(state.clone(), &mut ws_sender).await {
             break;
         }
     }
 
-    let mut state = state.lock().unwrap();
+    let mut state = state.fucking_lock();
 
     if let Some(ref pid) = conn.pid {
         state.players.remove(pid);
@@ -424,4 +434,14 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
             return false;
         }
     });
+}
+
+trait ArcMutexStateExt {
+    fn fucking_lock<'a>(&'a self) -> MutexGuard<'a, State>;
+}
+
+impl ArcMutexStateExt for Arc<Mutex<State>> {
+    fn fucking_lock<'a>(&'a self) -> MutexGuard<'a, State> {
+        self.lock().unwrap()
+    }
 }
