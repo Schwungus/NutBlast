@@ -4,7 +4,7 @@
 
 nutblast.schwung.us, nutblaster.schwung.us {
 	route {
-		reverse_proxy /v1* 127.0.0.1:36900
+		reverse_proxy /v1* http://127.0.0.1:36900
 		redir https://github.com/Schwungus/NutBlast
 	}
 }
