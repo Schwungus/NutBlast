@@ -49,7 +49,7 @@ jobs:
           script: |
             set -e
             sudo -u nutpuncher systemctl --user stop nutblaster-v1 || :
-            cp /tmp/nutblaster-v1 /home/nutpuncher/nutblaster-v1
+            cp /tmp/nutblaster /home/nutpuncher/nutblaster-v1
             chown nutpuncher:nutpuncher /home/nutpuncher/nutblaster-v1
             sudo -u nutpuncher systemctl --user enable --now nutblaster-v1
             systemctl reload caddy
