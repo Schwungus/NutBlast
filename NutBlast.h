@@ -47,6 +47,24 @@ typedef char NutBlast_PlayerID[4], NutBlast_GameID[16], NutBlast_LobbyID[32];
 /// Sets the NutBlaster address.
 void NutBlast_SetNutBlaster(const char*);
 
+/// Registers a callback to fire when you are successfully connected to the NutBlaster.
+void NutBlast_OnConnected(void (*)());
+
+/// Registers a callback to fire when you are disconnected from the NutBlaster.
+void NutBlast_OnDisconnected(void (*)());
+
+/// Registers a callback to fire whenever a new peer connects to your machine.
+void NutBlast_OnPlayerJoined(void (*)(const char*));
+
+/// Registers a callback to fire whenever a peer disconnects from your machine.
+void NutBlast_OnPlayerLeft(void (*)(const char*));
+
+/// Registers a callback to fire whenever you receive a message from a peer.
+void NutBlast_OnMessage(void (*)(const char* from, const char* message));
+
+/// Sends a null-terminated string to the specified peer. Failures are silent. Delivery is not guaranteed.
+void NutBlast_SendTo(const char* peer, const char* msg);
+
 /// Call this every frame to send, receive, and process data from the NutBlaster and the peers.
 void NutBlast_Update();
 

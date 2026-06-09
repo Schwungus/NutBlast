@@ -27,6 +27,7 @@ IndentCaseBlocks: false
 IndentCaseLabels: false
 RemoveBracesLLVM: true
 InsertBraces: true
+ForEachMacros: [TINY_MAP_FOREACH]
 IncludeBlocks: Regroup
 IncludeIsMainRegex: "a{999}" # no main includes
 SortIncludes: CaseSensitive

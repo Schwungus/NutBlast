@@ -39,6 +39,14 @@
 
 using Metadata = std::unordered_map<std::string, std::string>;
 
+static void (*on_connected)() = nullptr, (*on_disconnected)() = nullptr, (*on_player_joined)(const char*),
+            (*on_player_left)(const char*), (*on_message)(const char*, const char*);
+
+template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
+    if (cb != nullptr)
+        cb(args...);
+}
+
 static const rtc::Configuration rtc_config{
     .iceServers = {{"stun:stun.l.google.com:19302"}, {"stun:stun.l.google.com:5349"},},
 };
@@ -66,7 +74,7 @@ struct Peer {
     std::shared_ptr<PeerSharedState> state;
     bool offering = true;
 
-    Peer();
+    Peer(const std::string&);
     ~Peer() = default;
 };
 
@@ -100,7 +108,7 @@ extern "C" uint64_t NutBlast_TimeNS() {
     return (std::uint64_t)ts.tv_sec * ns::second + (std::uint64_t)ts.tv_nsec;
 }
 
-Peer::Peer() : state(new PeerSharedState()) {
+Peer::Peer(const std::string& id) : state(new PeerSharedState()) {
     std::weak_ptr<PeerSharedState> st = state;
 
     state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
@@ -115,29 +123,29 @@ Peer::Peer() : state(new PeerSharedState()) {
             st.lock()->outgoing_candidates.push_back(candidate);
     });
 
-    const auto setup_dc = [st](const auto& dc) {
-        dc->onOpen([dc]() {
-            dc->send("hi!!!");
+    const auto setup_dc = [id, st](const std::shared_ptr<rtc::DataChannel>& dc) {
+        dc->onOpen([id]() {
+            fire(::on_player_joined, id.c_str());
         });
 
-        dc->onMessage([dc](const auto& variant) {
-            if (std::holds_alternative<rtc::string>(variant)) {
-                const auto& msg = std::get<rtc::string>(variant);
-                info("GOT: %s", msg.c_str());
-            } else {
-                info("GOT JUNK");
-            }
+        dc->onClosed([id]() {
+            fire(::on_player_left, id.c_str());
+        });
+
+        dc->onMessage([id, dc](const auto& variant) {
+            if (std::holds_alternative<rtc::string>(variant))
+                fire(::on_message, id.c_str(), std::get<rtc::string>(variant).c_str());
         });
     };
 
-    state->pc->onDataChannel([st, setup_dc](const auto& dc) {
+    state->pc->onDataChannel([id, st, setup_dc](const auto& dc) {
         if (st.expired())
             return;
 
         const auto state = st.lock();
         state->dc = dc;
         setup_dc(dc);
-        dc->send("hallo!!!");
+        fire(::on_player_joined, id.c_str());
     });
 
     state->dc = state->pc->createDataChannel("NutBlast");
@@ -148,7 +156,7 @@ static std::string get_pid() {
     std::mt19937 mt;
     mt.seed(NutBlast_TimeNS());
 
-    std::uniform_int_distribution<> dist;
+    std::uniform_int_distribution dist;
 
     if (pid.empty())
         for (size_t i = 0; i < sizeof(NutBlast_PlayerID); i++)
@@ -239,16 +247,20 @@ static void join_pro(const char* id, bool host) {
 
     blaster_ws = std::make_shared<rtc::WebSocket>();
 
-    blaster_ws->onMessage([](const auto& _msg) {
-        if (!std::holds_alternative<std::string>(_msg))
-            return;
+    blaster_ws->onOpen([]() {
+        fire(::on_connected);
+    });
 
-        const auto msg = std::get<std::string>(_msg);
-        ws_in.push_back(std::move(msg));
+    blaster_ws->onMessage([](const auto& _msg) {
+        if (std::holds_alternative<rtc::string>(_msg)) {
+            const auto msg = std::get<rtc::string>(_msg);
+            ws_in.push_back(std::move(msg));
+        }
     });
 
     blaster_ws->onClosed([]() {
         info("NutBlaster out!");
+        fire(::on_disconnected);
         NutBlast_Disconnect();
     });
 
@@ -385,7 +397,7 @@ static void recv_shit() {
 
             for (const auto& id : present_peers)
                 if (!::peers.contains(id))
-                    ::peers.insert({id, Peer()});
+                    ::peers.insert({id, Peer(id)});
 
             for (auto& [id, peer] : ::peers) {
                 const auto as_recv = obj["peers"][id];
@@ -433,4 +445,35 @@ extern "C" void NutBlast_Update() {
         recv_shit();
         NutBlast_Flush();
     }
+}
+
+extern "C" void NutBlast_SendTo(const char* id, const char* msg) {
+    if (!is_connected())
+        return;
+
+    try {
+        const auto& peer = ::peers.at(id);
+        peer.state->dc->send(msg);
+    } catch (const std::out_of_range&) {
+    } catch (const std::runtime_error&) {}
+}
+
+extern "C" void NutBlast_OnConnected(void (*cb)()) {
+    ::on_connected = cb;
+}
+
+extern "C" void NutBlast_OnDisconnected(void (*cb)()) {
+    ::on_disconnected = cb;
+}
+
+extern "C" void NutBlast_OnPlayerJoined(void (*cb)(const char*)) {
+    ::on_player_joined = cb;
+}
+
+extern "C" void NutBlast_OnPlayerLeft(void (*cb)(const char*)) {
+    ::on_player_left = cb;
+}
+
+extern "C" void NutBlast_OnMessage(void (*cb)(const char*, const char*)) {
+    ::on_message = cb;
 }

@@ -27,6 +27,9 @@
 
 #include <raylib.h>
 
+#define S_TRUCTURES_IMPLEMENTATION
+#include <S_tructures.h>
+
 #include <NutBlast.h>
 
 #define TICKRATE (60)
@@ -42,6 +45,111 @@ extern uint64_t NutBlast_TimeNS();
 
 static const char* names[] = {"Ninja", "Marsoyob", "Trollga", "Ficus", "Caccus", "jrb012345", "Utley"};
 
+static const int psize = 20;
+
+typedef struct {
+    int x, y;
+    Color color;
+} Player;
+
+static TinyMap players = {0};
+
+static void reset() {
+    FreeTinyMap(&players);
+}
+
+static void restart() {
+    reset();
+
+    Player us = {
+        .x = (GetScreenWidth() - psize) / 2,
+        .y = (GetScreenHeight() - psize) / 2,
+        .color = RED,
+    };
+
+    TinyDictPut(&players, NutBlast_GetOurID(), &us, sizeof(us));
+}
+
+static void on_player_joined(const char* id) {
+    Player p = {
+        .x = (GetScreenWidth() - psize) / 2,
+        .y = (GetScreenHeight() - psize) / 2,
+        .color = GREEN,
+    };
+
+    TinyDictPut(&players, id, &p, sizeof(p));
+}
+
+static void on_player_left(const char* id) {
+    TinyDictErase(&players, id);
+}
+
+static void draw_players() {
+    TINY_MAP_FOREACH (&players, bucket) {
+        const Player* p = bucket.data;
+        DrawRectangle(p->x - psize / 2, p->y - psize / 2, psize, psize, p->color);
+    }
+}
+
+static void draw_gui() {
+    const int fs = 28;
+    int i = 0;
+
+    const char* name = NutBlast_GetPeerField(NutBlast_GetOurID(), "NAME");
+    if (name)
+        DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
+    i++;
+
+    for (const char** ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
+        name = NutBlast_GetPeerField(*ptr, "NAME");
+        if (name)
+            DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
+        i++;
+    }
+
+    DrawText("H to host, J to join, K to reset", 0, GetScreenHeight() - fs, fs, BLACK);
+}
+
+static void move_our_rect() {
+    Player* p = (Player*)TinyDictGet(&players, NutBlast_GetOurID());
+
+    if (!p)
+        return;
+
+    const int vel = 300 / TICKRATE;
+    p->x += (IsKeyDown(KEY_RIGHT) - IsKeyDown(KEY_LEFT)) * vel;
+    p->y += (IsKeyDown(KEY_DOWN) - IsKeyDown(KEY_UP)) * vel;
+}
+
+static void send_our_position() {
+    const Player* p = (const Player*)TinyDictGet(&players, NutBlast_GetOurID());
+
+    if (!p)
+        return;
+
+    const char** peers = NutBlast_GetPlayerIDs();
+
+    for (;;) {
+        const char* id = *peers++;
+
+        if (!id)
+            break;
+
+        static char buf[32] = "";
+        snprintf(buf, sizeof(buf), "%d:%d", p->x, p->y);
+        NutBlast_SendTo(id, buf);
+    }
+}
+
+static void on_message(const char* from, const char* msg) {
+    Player* p = (Player*)TinyDictGet(&players, from);
+
+    if (!p)
+        return;
+
+    sscanf(msg, "%d:%d", &p->x, &p->y);
+}
+
 int main(int argc, char* argv[]) {
     (void)argc, (void)argv;
 
@@ -55,6 +163,13 @@ int main(int argc, char* argv[]) {
 
     NutBlast_SetPeerField("NAME", names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
 
+    reset();
+    NutBlast_OnConnected(restart);
+    NutBlast_OnDisconnected(reset);
+    NutBlast_OnPlayerJoined(on_player_joined);
+    NutBlast_OnPlayerLeft(on_player_left);
+    NutBlast_OnMessage(on_message);
+
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H))
             NutBlast_Host("test", 2);
@@ -63,28 +178,15 @@ int main(int argc, char* argv[]) {
         else if (IsKeyPressed(KEY_K))
             NutBlast_Disconnect();
 
+        move_our_rect();
+        send_our_position();
         NutBlast_Update();
 
         BeginDrawing();
         {
             ClearBackground(RAYWHITE);
-
-            const int fs = 28;
-            int i = 0;
-
-            const char* name = NutBlast_GetPeerField(NutBlast_GetOurID(), "NAME");
-            if (name)
-                DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
-            i++;
-
-            for (const char** ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
-                name = NutBlast_GetPeerField(*ptr, "NAME");
-                if (name)
-                    DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
-                i++;
-            }
-
-            DrawText("H to host, J to join, K to reset", 0, GetScreenHeight() - fs, fs, BLACK);
+            draw_players();
+            draw_gui();
         }
         EndDrawing();
     }
