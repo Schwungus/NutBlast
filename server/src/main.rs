@@ -375,6 +375,12 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
     info!("conn: {}", peer_addr);
 
     let google_ai_mode = |req: &TungRequest, mut response: TungResponse| {
+        if let Some(origin) = req.headers().get("origin") {
+            info!("Inbound Handshake Origin header: {:?}", origin);
+        } else {
+            error!("WARNING: Inbound Handshake is missing the Origin header entirely!");
+        }
+
         if let Some(subprotocol) = req.headers().get("sec-websocket-protocol") {
             let hmm = response.headers_mut();
             hmm.insert("sec-websocket-protocol", subprotocol.clone());
