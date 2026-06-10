@@ -113,9 +113,7 @@ impl State {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let _ = color_eyre::install();
 
@@ -325,6 +323,7 @@ impl Connection {
                 });
             }
             _ => {
+                warn!("GOSH DARN IT");
                 return Outcome::Boot;
             }
         };
@@ -409,20 +408,21 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
                 match res {
                     Some(Ok(msg)) => {
                         if let Outcome::Boot = conn.handle(state.clone(), msg) {
-                            break ;
+                            warn!("boot to the face for {}", peer_addr);
+                            break;
                         }
-                    }
+                    },
                     Some(Err(e)) => {
                         error!("{}: {}", peer_addr, e);
-                        break ;
-                    }
+                        break;
+                    },
                     None => {
                         break;
                     },
                 }
             }
             _ = tokio::time::sleep(TIMEOUT) => {
-                break ;
+                break;
             }
         }
 
