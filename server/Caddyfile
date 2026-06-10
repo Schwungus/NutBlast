@@ -1,5 +1,9 @@
 {
 	email "admin@schwung.us"
+
+	servers {
+		protocols h1
+	}
 }
 
 nutblast.schwung.us, nutblaster.schwung.us {
