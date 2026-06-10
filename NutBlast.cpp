@@ -95,6 +95,10 @@ namespace ns {
     constexpr const std::uint64_t second = 1000000000;
 };
 
+namespace interval {
+    constexpr const std::uint64_t beat = ::ns::second / 60;
+};
+
 template <typename... T> static inline void info(const char* fmt, T... args) {
     static char buf[1024] = "";
     std::snprintf(buf, sizeof(buf), "%s\n", fmt);
@@ -107,6 +111,24 @@ extern "C" uint64_t NutBlast_TimeNS() {
     timespec_get(&ts, TIME_UTC);
     return (std::uint64_t)ts.tv_sec * ns::second + (std::uint64_t)ts.tv_nsec;
 }
+
+struct Ticker {
+    const std::uint64_t interval;
+    std::uint64_t last_tick = 0;
+
+    Ticker(std::uint64_t interval) : interval(interval) {}
+
+    explicit operator bool() {
+        const std::uint64_t now = NutBlast_TimeNS();
+
+        if (!last_tick || now - last_tick >= interval) {
+            last_tick = now;
+            return true;
+        }
+
+        return false;
+    }
+};
 
 Peer::Peer(const std::string& id) : state(new PeerSharedState()) {
     std::weak_ptr<PeerSharedState> st = state;
@@ -324,12 +346,92 @@ extern "C" bool NutBlast_IsPlayerAlive(const char* id) {
     return false;
 }
 
-extern "C" void NutBlast_Flush() {
-    if (!is_connected())
+static void handle_update(const nlohmann::json& obj) {
+    ::master = obj["master"];
+    ::lobby_meta = obj["meta"];
+
+    std::unordered_set<std::string> present_peers;
+
+    for (const auto& [id, peer] : obj["peers"].items())
+        if (id != get_pid())
+            present_peers.insert(id);
+
+    std::erase_if(::peers, [present_peers](const auto& pair) {
+        const bool erase = !present_peers.contains(pair.first);
+
+        if (erase)
+            info("Bye, %s", pair.first.c_str());
+
+        return erase;
+    });
+
+    for (const auto& id : present_peers)
+        if (!::peers.contains(id))
+            ::peers.insert({id, Peer(id)});
+
+    for (auto& [id, peer] : ::peers) {
+        const auto as_recv = obj["peers"][id];
+
+        if (id != get_pid() && as_recv.contains("meta"))
+            peer.meta = as_recv["meta"];
+    }
+}
+
+static void handle_offer(const nlohmann::json& obj) {
+    const std::string& id = obj["peer"];
+
+    if (!::peers.contains(id))
         return;
 
-    std::unordered_map<std::string, nlohmann::json> ice;
+    auto& peer = ::peers.at(id);
+    const rtc::Description desc(obj["sdp"], obj["type"] == "Offer" ? "offer" : "answer");
+    const bool polite = ::get_pid() < id, is_offer = desc.typeString() == "offer";
 
+    if (is_offer && peer.offering) {
+        if (!polite)
+            return;
+        peer.offering = false;
+    }
+
+    peer.state->pc->setRemoteDescription(desc);
+    peer.state->drain_incoming_candidates();
+}
+
+static void handle_candidate(const nlohmann::json& obj) {
+    const std::string& id = obj["peer"];
+
+    if (!::peers.contains(id))
+        return;
+
+    auto& peer = ::peers.at(id);
+    peer.state->incoming_candidates.emplace_back(obj["candidate"], obj["mid"]);
+    peer.state->drain_incoming_candidates();
+}
+
+static void recv_shit() {
+    static const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> types{
+        {"Update", handle_update},
+        {"Offer", handle_offer},
+        {"Answer", handle_offer},
+        {"Candidate", handle_candidate},
+    };
+
+    for (const auto& msg : ::ws_in) {
+        const auto obj = nlohmann::json::parse(msg);
+
+        if (!obj.contains("type"))
+            continue;
+
+        const std::string type = obj["type"];
+
+        if (types.contains(type))
+            types.at(type)(obj);
+    }
+
+    ::ws_in.clear();
+}
+
+static void send_shit() {
     for (const auto& [id, peer] : ::peers) {
         if (peer.state->local_desc.has_value()) {
             const auto t = peer.state->local_desc->type();
@@ -372,79 +474,24 @@ extern "C" void NutBlast_Flush() {
     }
 }
 
-static void recv_shit() {
-    for (const auto& msg : ::ws_in) {
-        const auto obj = nlohmann::json::parse(msg);
+extern "C" void NutBlast_Flush() {
+    if (!is_connected())
+        return;
 
-        if (obj["type"] == "Update") {
-            ::master = obj["master"];
-            ::lobby_meta = obj["meta"];
-
-            std::unordered_set<std::string> present_peers;
-
-            for (const auto& [id, peer] : obj["peers"].items())
-                if (id != get_pid())
-                    present_peers.insert(id);
-
-            std::erase_if(::peers, [present_peers](const auto& pair) {
-                const bool erase = !present_peers.contains(pair.first);
-
-                if (erase)
-                    info("Bye, %s", pair.first.c_str());
-
-                return erase;
-            });
-
-            for (const auto& id : present_peers)
-                if (!::peers.contains(id))
-                    ::peers.insert({id, Peer(id)});
-
-            for (auto& [id, peer] : ::peers) {
-                const auto as_recv = obj["peers"][id];
-
-                if (id != get_pid() && as_recv.contains("meta"))
-                    peer.meta = as_recv["meta"];
-            }
-        } else if (obj["type"] == "Offer" || obj["type"] == "Answer") {
-            const std::string& id = obj["peer"];
-
-            if (!::peers.contains(id))
-                return;
-
-            auto& peer = ::peers.at(id);
-            const rtc::Description desc(obj["sdp"], obj["type"] == "Offer" ? "offer" : "answer");
-            const bool polite = ::get_pid() < id, is_offer = desc.typeString() == "offer";
-
-            if (is_offer && peer.offering) {
-                if (!polite)
-                    continue;
-                peer.offering = false;
-            }
-
-            peer.state->pc->setRemoteDescription(desc);
-            peer.state->drain_incoming_candidates();
-        } else if (obj["type"] == "Candidate") {
-            const std::string& id = obj["peer"];
-
-            if (!::peers.contains(id))
-                return;
-
-            auto& peer = ::peers.at(id);
-            peer.state->incoming_candidates.emplace_back(obj["candidate"], obj["mid"]);
-            peer.state->drain_incoming_candidates();
-        } else {
-            // junk...
-        }
-    }
-
-    ::ws_in.clear();
+    // TODO: this is literal snake oil for now since `NutBlast_Send` sends immediately...
 }
 
 extern "C" void NutBlast_Update() {
-    if (is_connected()) {
-        recv_shit();
-        NutBlast_Flush();
-    }
+    static Ticker beater(interval::beat);
+
+    if (!is_connected())
+        return;
+
+    recv_shit();
+    NutBlast_Flush();
+
+    if (beater)
+        send_shit();
 }
 
 extern "C" void NutBlast_SendTo(const char* id, const char* msg) {

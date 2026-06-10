@@ -36,7 +36,7 @@ extern "C" {
 #ifdef NUTBLAST_DEV_LOCALHOST
 #define NUTBLAST_DEFAULT_SERVER "ws://localhost:36900/"
 #else
-#define NUTBLAST_DEFAULT_SERVER "wss://nutblast.schwung.us/"
+#define NUTBLAST_DEFAULT_SERVER "wss://nutblast.schwung.us/v1"
 #endif
 
 #define NUTBLAST_MAX_PLAYERS (16)
