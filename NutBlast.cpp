@@ -267,26 +267,26 @@ static void join_pro(const char* id, bool host) {
     ::lid = id, ::hosting = host;
     ::master = "";
 
-    blaster_ws = std::make_shared<rtc::WebSocket>();
+    ::blaster_ws = std::make_shared<rtc::WebSocket>();
 
-    blaster_ws->onOpen([]() {
+    ::blaster_ws->onOpen([]() {
         fire(::on_connected);
     });
 
-    blaster_ws->onMessage([](const auto& _msg) {
+    ::blaster_ws->onMessage([](const auto& _msg) {
         if (std::holds_alternative<rtc::string>(_msg)) {
             const auto msg = std::get<rtc::string>(_msg);
             ws_in.push_back(std::move(msg));
         }
     });
 
-    blaster_ws->onClosed([]() {
+    ::blaster_ws->onClosed([]() {
         info("NutBlaster out!");
         fire(::on_disconnected);
         NutBlast_Disconnect();
     });
 
-    blaster_ws->open(get_blaster());
+    ::blaster_ws->open(get_blaster());
 
     info("Trying to %s '%s' at: %s", host ? "host" : "join", id, get_blaster().c_str());
 }
