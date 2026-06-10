@@ -376,11 +376,9 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
     info!("conn: {}", peer_addr);
 
     let google_ai_mode = |req: &TungRequest, mut response: TungResponse| {
-        if !req.headers().contains_key("Sec-WebSocket-Key") {
-            response.headers_mut().insert(
-                "Sec-WebSocket-Key",
-                "dGhlIHNhbXBsZSBub25jZQ==".parse().unwrap(),
-            );
+        if let Some(subprotocol) = req.headers().get("sec-websocket-protocol") {
+            let hmm = response.headers_mut();
+            hmm.insert("sec-websocket-protocol", subprotocol.clone());
         }
 
         Ok(response)
