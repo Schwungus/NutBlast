@@ -1,0 +1,3 @@
+#ifndef MBEDTLS_SSL_DTLS_SRTP
+#define MBEDTLS_SSL_DTLS_SRTP
+#endif

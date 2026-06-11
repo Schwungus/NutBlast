@@ -42,31 +42,50 @@ endif()
 FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG v3.12.0
+    OVERRIDE_FIND_PACKAGE
     EXCLUDE_FROM_ALL)
-list(APPEND LIBS nlohmann_json::nlohmann_json)
 
+list(APPEND LIBS nlohmann_json::nlohmann_json)
+list(APPEND DEPS json)
+
+set(USE_SYSTEM_JSON ON CACHE INTERNAL "")
 set(NO_MEDIA ON CACHE INTERNAL "")
 set(NO_EXAMPLES ON CACHE INTERNAL "")
 set(NO_TESTS ON CACHE INTERNAL "")
+set(USE_MBEDTLS ON CACHE INTERNAL "")
+set(ENABLE_PROGRAMS OFF CACHE INTERNAL "")
+set(ENABLE_TESTING OFF CACHE INTERNAL "")
+set(INSTALL_DEPS_LIBS OFF CACHE INTERNAL "")
+set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/mbedtls.h CACHE INTERNAL "")
 
 if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
-    FetchContent_Declare(datachannel
+    FetchContent_Declare(datachannel-wasm
         GIT_REPOSITORY https://github.com/paullouisageneau/datachannel-wasm.git
         GIT_TAG v0.4.0
         EXCLUDE_FROM_ALL)
+
     list(APPEND LIBS datachannel-wasm)
+    list(APPEND DEPS datachannel-wasm)
 
     target_link_options(NutBlast PUBLIC -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPU32,HEAPU8)
     target_compile_options(NutBlast PUBLIC -O3) # the emscripten manual recommends this
 else()
-    FetchContent_Declare(datachannel
-        GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
-        GIT_TAG v0.24.4
+    FetchContent_Declare(MbedTLS
+        GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
+        GIT_TAG v3.6.6
+        OVERRIDE_FIND_PACKAGE
         EXCLUDE_FROM_ALL)
+
+    FetchContent_Declare(datachannel
+        GIT_REPOSITORY https://github.com/Schwungus/libdatachannel.git
+        GIT_TAG master
+        EXCLUDE_FROM_ALL)
+
+    list(APPEND DEPS MbedTLS datachannel)
     list(APPEND LIBS datachannel-static)
 endif()
 
-FetchContent_MakeAvailable(datachannel json)
+FetchContent_MakeAvailable(${DEPS})
 target_link_libraries(NutBlast PUBLIC ${LIBS})
 
 if(NUTBLAST_BUILD_TEST)
