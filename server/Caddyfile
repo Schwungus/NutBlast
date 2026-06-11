@@ -3,16 +3,16 @@
 }
 
 nutblast.schwung.us, nutblaster.schwung.us {
+	tls {
+		protocols tls1.2 tls1.2
+	}
+
 	route {
 		reverse_proxy /v1* 127.0.0.1:36900 {
 			header_up Host "127.0.0.1:36900"
 
 			transport http {
 				versions 1.1
-			}
-
-			tls {
-				max_version tls1.2
 			}
 		}
 
