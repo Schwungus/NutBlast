@@ -37,6 +37,13 @@
 
 #include <NutBlast.h>
 
+static constexpr const bool WINDOSE =
+#ifdef _WIN32
+    true;
+#else
+    false;
+#endif
+
 using Metadata = std::unordered_map<std::string, std::string>;
 
 static void (*on_connected)() = nullptr, (*on_disconnected)() = nullptr, (*on_player_joined)(const char*),
@@ -269,7 +276,14 @@ static void join_pro(const char* id, bool host) {
     ::lid = id, ::hosting = host;
     ::master = "";
 
-    ::blaster_ws = std::make_shared<rtc::WebSocket>();
+    std::optional<rtc::string> ca = std::nullopt;
+
+    if (!WINDOSE)
+        ca = "/etc/ssl/certs/ca-certificates.crt";
+
+    ::blaster_ws = std::make_shared<rtc::WebSocket>(rtc::WebSocketConfiguration{
+        .caCertificatePemFile = ca,
+    });
 
     ::blaster_ws->onOpen([]() {
         fire(::on_connected);
