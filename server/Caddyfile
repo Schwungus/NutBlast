@@ -12,7 +12,7 @@ nutblast.schwung.us, nutblaster.schwung.us {
 			}
 
 			tls {
-				protocols tls1.2 tls1.2
+				max_version tls1.2
 			}
 		}
 
