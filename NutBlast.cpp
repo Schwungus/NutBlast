@@ -188,6 +188,8 @@ static std::string get_pid() {
 }
 
 static std::string get_blaster() {
+    rtc::InitLogger(rtc::LogLevel::Debug);
+
     if (blaster == std::nullopt) {
         info("Using the default NutBlaster server as none was explicitly specified: %s", NUTBLAST_DEFAULT_SERVER);
         blaster = NUTBLAST_DEFAULT_SERVER;
