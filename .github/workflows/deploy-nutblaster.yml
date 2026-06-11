@@ -29,7 +29,7 @@ jobs:
         uses: appleboy/scp-action@v1
         with:
           host: nutblast.schwung.us
-          username: root
+          username: nutpuncher
           key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
           source: target/release/nutblaster
           target: /tmp
@@ -39,11 +39,10 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: nutblast.schwung.us
-          username: root
+          username: nutpuncher
           key: ${{ secrets.PUBLIC_INSTANCE_SSH_KEY }}
           script: |
             set -e
-            ssh nutpuncher@localhost systemctl --user stop nutblaster-v1 || :
-            cp /tmp/nutblaster /home/nutpuncher/nutblaster-v1
-            chown nutpuncher:nutpuncher /home/nutpuncher/nutblaster-v1
-            ssh nutpuncher@localhost systemctl --user start nutblaster-v1
+            systemctl --user stop nutblaster-v1 || :
+            cp /tmp/nutblaster nutblaster-v1
+            systemctl --user start nutblaster-v1
