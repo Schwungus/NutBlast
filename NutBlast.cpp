@@ -431,6 +431,12 @@ static void recv_shit() {
     ::ws_in.clear();
 }
 
+static void ws_send(const nlohmann::json& obj) {
+    try {
+        ::blaster_ws->send(obj.dump());
+    } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
+}
+
 static void send_shit() {
     for (const auto& [id, peer] : ::peers) {
         if (peer.state->local_desc.has_value()) {
@@ -442,7 +448,7 @@ static void send_shit() {
                 {"sdp", (rtc::string)*peer.state->local_desc},
             };
 
-            ::blaster_ws->send(ninja.dump());
+            ws_send(ninja);
             peer.state->local_desc = std::nullopt;
         }
 
@@ -454,7 +460,7 @@ static void send_shit() {
                 {"mid", candidate.mid()},
             };
 
-            ::blaster_ws->send(ninja.dump());
+            ws_send(ninja);
         }
 
         peer.state->outgoing_candidates.clear();
@@ -470,7 +476,7 @@ static void send_shit() {
             {"lobby_meta", ::lobby_meta},
         };
 
-        ::blaster_ws->send(payload.dump());
+        ws_send(payload);
     }
 }
 
@@ -495,14 +501,11 @@ extern "C" void NutBlast_Update() {
 }
 
 extern "C" void NutBlast_SendTo(const char* id, const char* msg) {
-    if (!is_connected())
-        return;
-
     try {
         const auto& peer = ::peers.at(id);
         peer.state->dc->send(msg);
     } catch (const std::out_of_range&) {
-    } catch (const std::runtime_error&) {}
+    } catch (const std::runtime_error&) { ::peers.erase(id); }
 }
 
 extern "C" void NutBlast_OnConnected(void (*cb)()) {
