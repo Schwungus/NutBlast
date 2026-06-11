@@ -10,6 +10,10 @@ nutblast.schwung.us, nutblaster.schwung.us {
 			transport http {
 				versions 1.1
 			}
+
+			tls {
+				protocols tls1.2 tls1.2
+			}
 		}
 
 		redir https://github.com/Schwungus/NutBlast
