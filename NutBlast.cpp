@@ -24,6 +24,7 @@
 // For more information, please refer to <https://unlicense.org>
 
 #include <ctime>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <string>
@@ -46,8 +47,10 @@ static constexpr const bool WINDOSE =
 
 using Metadata = std::unordered_map<std::string, std::string>;
 
-static void (*on_connected)() = nullptr, (*on_disconnected)() = nullptr, (*on_player_joined)(const char*),
+static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(const char*),
             (*on_player_left)(const char*), (*on_message)(const char*, const char*);
+
+static std::mutex sync;
 
 template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
     if (cb != nullptr)
@@ -92,7 +95,7 @@ struct Peer {
 };
 
 static std::string gid = "", pid = "";
-static std::optional<std::string> blaster, lid;
+static std::optional<std::string> blaster, lid, disconnect_reason;
 
 static bool hosting = false;
 static std::string master = "";
@@ -126,10 +129,24 @@ extern "C" uint64_t NutBlast_TimeNS() {
     return (std::uint64_t)ts.tv_sec * ns::second + (std::uint64_t)ts.tv_nsec;
 }
 
-static void ws_send(const nlohmann::json& obj) {
+static void ws_send(nlohmann::json&& obj) {
+    static std::vector<nlohmann::json> queue;
+    queue.push_back(obj);
+
+    if (!::blaster_ws)
+        queue.clear();
+
+    if (!::blaster_ws || !::blaster_ws->isOpen())
+        return;
+
+    std::lock_guard guard(::sync);
+
     try {
-        ::blaster_ws->send(obj.dump());
+        for (const auto& obj : queue)
+            ::blaster_ws->send(obj.dump());
     } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
+
+    queue.clear();
 }
 
 struct Ticker {
@@ -181,14 +198,18 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
 
     const auto setup_dc = [id](rtc::DataChannel& dc) {
         dc.onOpen([id]() {
+            std::lock_guard guard(::sync);
             fire(::on_player_joined, id.c_str());
         });
 
         dc.onClosed([id]() {
+            std::lock_guard guard(::sync);
             fire(::on_player_left, id.c_str());
         });
 
         dc.onMessage([id](const auto& variant) {
+            std::lock_guard guard(::sync);
+
             if (std::holds_alternative<rtc::string>(variant))
                 fire(::on_message, id.c_str(), std::get<rtc::string>(variant).c_str());
         });
@@ -211,14 +232,15 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
 }
 
 static std::string get_pid() {
-    std::mt19937 mt;
-    mt.seed(NutBlast_TimeNS());
+    if (pid.empty()) {
+        std::mt19937 mt;
+        mt.seed(NutBlast_TimeNS());
 
-    std::uniform_int_distribution dist;
+        std::uniform_int_distribution dist;
 
-    if (pid.empty())
         for (size_t i = 0; i < sizeof(NutBlast_PlayerID); i++)
             pid.push_back(static_cast<char>('A' + dist(mt) % ('Z' - 'A' + 1)));
+    }
 
     return pid;
 }
@@ -252,7 +274,7 @@ extern "C" void NutBlast_SetMaxPlayers(int max) {
 }
 
 static bool is_connected() {
-    return lid.has_value() && blaster_ws != nullptr && blaster_ws->isOpen();
+    return ::lid.has_value() && ::blaster_ws != nullptr;
 }
 
 extern "C" const char* NutBlast_GetPeerField(const char* pee, const char* name) {
@@ -297,15 +319,9 @@ extern "C" void NutBlast_SetLobbyField(const char* name, const char* value) {
         lobby_meta.insert_or_assign(name, value);
 }
 
-static void join_pro(const char* id, bool host) {
-    if (is_connected()) {
-        info("You're already in a lobby!");
-        return;
-    }
-
-    get_pid(), get_blaster();
-    ::lid = id, ::hosting = host;
-    ::master = "";
+static void join_pro(const char* id) {
+    get_blaster();
+    ::lid = id, ::master = "", ::disconnect_reason = std::nullopt;
 
     std::optional<rtc::string> ca = std::nullopt;
 
@@ -332,28 +348,59 @@ static void join_pro(const char* id, bool host) {
     });
 
     ::blaster_ws->onClosed([]() {
-        info("NutBlaster out!");
-        fire(::on_disconnected);
         NutBlast_Disconnect();
     });
 
     ::blaster_ws->open(get_blaster());
 
-    info("Trying to %s '%s' at: %s", host ? "host" : "join", id, get_blaster().c_str());
+    info("Trying to %s '%s' at: %s", ::hosting ? "host" : "join", id, get_blaster().c_str());
 }
 
 extern "C" void NutBlast_Disconnect() {
-    ::lid = std::nullopt;
+    static bool recursed = false;
+
+    if (recursed)
+        return;
+
+    // :face_vomiting:
+    struct Guard {
+        Guard() {
+            recursed = true;
+        }
+
+        ~Guard() {
+            recursed = false;
+        }
+    } recurse_guard;
+
+    info("NutBlaster out!");
+    fire(::on_disconnected, ::disconnect_reason ? ::disconnect_reason->c_str() : "Disconnected");
+
+    if (::blaster_ws) {
+        try {
+            ::blaster_ws->close();
+        } catch (const std::runtime_error&) {}
+    }
+
+    ::blaster_ws = nullptr, ::lid = std::nullopt;
     ::peers.clear();
 }
 
 extern "C" void NutBlast_Join(const char* id) {
-    join_pro(id, false);
+    if (is_connected())
+        info("You're already in a lobby!");
+    else
+        join_pro(id);
 }
 
 extern "C" void NutBlast_Host(const char* id, int max) {
-    NutBlast_SetMaxPlayers(max);
-    join_pro(id, true);
+    if (is_connected()) {
+        info("You're already in a lobby!");
+    } else {
+        NutBlast_SetMaxPlayers(max);
+        ::hosting = true;
+        join_pro(id);
+    }
 }
 
 extern "C" int NutBlast_GetPlayerCount() {
@@ -450,8 +497,14 @@ static void handle_candidate(const nlohmann::json& obj) {
     peer.state->drain_incoming_candidates();
 }
 
+static void handle_bye(const nlohmann::json& obj) {
+    ::disconnect_reason = obj["reason"];
+    NutBlast_Disconnect();
+}
+
 static void recv_shit() {
     static const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> types{
+        {"Bye", handle_bye},
         {"Update", handle_update},
         {"Offer", handle_offer_answer},
         {"Answer", handle_offer_answer},
@@ -491,12 +544,15 @@ static void send_shit() {
 
     ::ws_send({
         {"type", "Update"},
+        {"mode", ::hosting ? "Host" : "Join"},
         {"gid", ::gid},
         {"pid", ::get_pid()},
         {"lid", ::lid},
         {"peer_meta", ::peer_meta},
         {"lobby_meta", ::lobby_meta},
     });
+
+    ::hosting = false; // otherwise we'll get booted with "lobby already exists!"
 }
 
 extern "C" void NutBlast_Flush() {
@@ -534,7 +590,7 @@ extern "C" void NutBlast_OnConnected(void (*cb)()) {
     ::on_connected = cb;
 }
 
-extern "C" void NutBlast_OnDisconnected(void (*cb)()) {
+extern "C" void NutBlast_OnDisconnected(void (*cb)(const char*)) {
     ::on_disconnected = cb;
 }
 

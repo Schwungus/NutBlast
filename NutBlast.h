@@ -51,7 +51,7 @@ void NutBlast_SetNutBlaster(const char*);
 void NutBlast_OnConnected(void (*)());
 
 /// Registers a callback to fire when you are disconnected from the NutBlaster.
-void NutBlast_OnDisconnected(void (*)());
+void NutBlast_OnDisconnected(void (*)(const char*));
 
 /// Registers a callback to fire whenever a new peer connects to your machine.
 void NutBlast_OnPlayerJoined(void (*)(const char*));

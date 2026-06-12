@@ -150,6 +150,11 @@ static void on_message(const char* from, const char* msg) {
     sscanf(msg, "%d:%d", &p->x, &p->y);
 }
 
+static void on_disconnected(const char* reason) {
+    TraceLog(LOG_ERROR, "%s", reason);
+    reset();
+}
+
 int main(int argc, char* argv[]) {
     if (argc > 1)
         NutBlast_SetNutBlaster(argv[1]);
@@ -162,10 +167,10 @@ int main(int argc, char* argv[]) {
     SetRandomSeed(NutBlast_TimeNS());
 
     NutBlast_SetPeerField("NAME", names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
-
     reset();
+
     NutBlast_OnConnected(restart);
-    NutBlast_OnDisconnected(reset);
+    NutBlast_OnDisconnected(on_disconnected);
     NutBlast_OnPlayerJoined(on_player_joined);
     NutBlast_OnPlayerLeft(on_player_left);
     NutBlast_OnMessage(on_message);

@@ -12,13 +12,7 @@ use color_eyre::eyre;
 use futures_util::{SinkExt as _, StreamExt as _, stream::SplitSink};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{
-    WebSocketStream,
-    tungstenite::{
-        Message,
-        handshake::server::{Request as TungRequest, Response as TungResponse},
-    },
-};
+use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -49,9 +43,16 @@ struct State {
 }
 
 #[derive(Deserialize)]
+enum ConnectionMode {
+    Host,
+    Join,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "type")]
 enum Payload {
     Update {
+        mode: ConnectionMode,
         pid: String,
         gid: String,
         lid: String,
@@ -81,6 +82,9 @@ struct ResponsePeer {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type")]
 enum Response {
+    Bye {
+        reason: String,
+    },
     Update {
         master: String,
         peers: HashMap<String, ResponsePeer>,
@@ -148,32 +152,29 @@ struct Connection {
 
 enum Outcome {
     Good,
-    Boot,
+    Boot(String),
+}
+
+impl Outcome {
+    fn boot(s: impl Into<String>) -> Self {
+        Self::Boot(s.into())
+    }
 }
 
 impl Connection {
     fn handle(&mut self, state: Arc<Mutex<State>>, msg: Message) -> Outcome {
-        if msg.is_close() {
-            return Outcome::Boot;
-        }
-
-        if !msg.is_text() {
-            return Outcome::Boot; // no binary you stupid CLANKER
-        }
-
-        let text = match msg.to_text() {
-            Ok(ok) => ok,
-            Err(err) => {
-                error!("text msg from {}: {}", self.addr, err);
-                return Outcome::Boot;
-            }
+        let text = match msg {
+            Message::Text(text) => text.to_string(),
+            Message::Close(_) => return Outcome::boot("Bye"),
+            Message::Binary(_) => return Outcome::boot("Sybau clanker"),
+            _ => return Outcome::Good,
         };
 
-        let payload = match serde_json::from_str(text) {
+        let payload = match serde_json::from_str(&text) {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", self.addr, err);
-                return Outcome::Boot;
+                return Outcome::boot("Speak JSON!!!");
             }
         };
 
@@ -181,6 +182,7 @@ impl Connection {
 
         match payload {
             Payload::Update {
+                mode,
                 pid,
                 gid,
                 lid,
@@ -192,19 +194,19 @@ impl Connection {
                 match self.pid {
                     None => {
                         if pid.len() != PLAYER_ID_LEN {
-                            return Outcome::Boot;
+                            return Outcome::boot("PID");
                         }
 
                         // no pid spoofing!!!
                         if state.players.contains_key(&pid) {
-                            return Outcome::Boot;
+                            return Outcome::boot("PID");
                         }
 
                         self.pid = Some(pid.to_string());
                     }
                     Some(ref real) => {
                         if pid != *real {
-                            return Outcome::Boot;
+                            return Outcome::boot("PID");
                         }
                     }
                 }
@@ -212,7 +214,7 @@ impl Connection {
                 match self.lid {
                     None => {
                         if lid.len() < LOBBY_ID_MIN || lid.len() > LOBBY_ID_MAX {
-                            return Outcome::Boot;
+                            return Outcome::boot("LID");
                         }
 
                         // no lobby-hopping!!!
@@ -220,7 +222,7 @@ impl Connection {
                     }
                     Some(ref real) => {
                         if lid != *real {
-                            return Outcome::Boot;
+                            return Outcome::boot("LID");
                         }
                     }
                 }
@@ -228,7 +230,7 @@ impl Connection {
                 match self.gid {
                     None => {
                         if gid.len() > GAME_ID_LEN {
-                            return Outcome::Boot;
+                            return Outcome::boot("GID");
                         }
 
                         // no game-hopping either!!!
@@ -236,7 +238,7 @@ impl Connection {
                     }
                     Some(ref real) => {
                         if gid != *real {
-                            return Outcome::Boot;
+                            return Outcome::boot("GID");
                         }
                     }
                 }
@@ -245,6 +247,12 @@ impl Connection {
                     game: gid.to_string(),
                     name: lid.to_string(),
                 };
+
+                match (mode, state.lobbies.contains_key(&lobby_id)) {
+                    (ConnectionMode::Host, true) => return Outcome::boot("Lobby already exists!"),
+                    (ConnectionMode::Join, false) => return Outcome::boot("No such lobby!"),
+                    _ => {}
+                }
 
                 if let Some(p) = state.players.get_mut(&pid) {
                     p.meta = peer_meta;
@@ -323,10 +331,30 @@ impl Connection {
                 });
             }
             _ => {
-                warn!("GOSH DARN IT");
-                return Outcome::Boot;
+                return Outcome::boot("wtf");
             }
         };
+
+        Outcome::Good
+    }
+
+    async fn send_json(
+        &mut self,
+        sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+        value: &Response,
+    ) -> Outcome {
+        let s = match serde_json::to_string(value) {
+            Ok(ok) => ok,
+            Err(err) => {
+                error!("serialize {}: {}", self.addr, err);
+                return Outcome::boot("Skill issue");
+            }
+        };
+
+        if let Err(err) = sender.send(Message::text(s)).await {
+            error!("send to {}: {}", self.addr, err);
+            return Outcome::boot("Skill issue");
+        }
 
         Outcome::Good
     }
@@ -336,13 +364,13 @@ impl Connection {
         state: Arc<Mutex<State>>,
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
     ) -> Outcome {
-        let Some(ref pid) = self.pid else {
+        let Some(pid) = self.pid.to_owned() else {
             return Outcome::Good;
         };
 
         let queue = {
             let state = state.fucking_lock();
-            state.players.get(pid).map(|p| p.queue.clone())
+            state.players.get(&pid).map(|p| p.queue.clone())
         };
 
         let Some(queue) = queue else {
@@ -350,22 +378,13 @@ impl Connection {
         };
 
         for resp in queue {
-            let s = match serde_json::to_string(&resp) {
-                Ok(ok) => ok,
-                Err(err) => {
-                    error!("serialize {}: {}", self.addr, err);
-                    return Outcome::Boot;
-                }
-            };
-
-            if let Err(err) = sender.send(Message::text(s)).await {
-                error!("send to {}: {}", self.addr, err);
-                return Outcome::Boot;
+            if let Outcome::Boot(reason) = self.send_json(sender, &resp).await {
+                return Outcome::boot(reason);
             }
         }
 
         let mut state = state.fucking_lock();
-        state.players.get_mut(pid).map(|p| p.queue.clear());
+        state.players.get_mut(&pid).map(|p| p.queue.clear());
 
         Outcome::Good
     }
@@ -374,32 +393,20 @@ impl Connection {
 async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAddr) {
     info!("conn: {}", peer_addr);
 
-    let google_ai_mode = |req: &TungRequest, mut response: TungResponse| {
-        if let Some(origin) = req.headers().get("origin") {
-            info!("Inbound Handshake Origin header: {:?}", origin);
-        } else {
-            error!("WARNING: Inbound Handshake is missing the Origin header entirely!");
-        }
+    let (mut ws_sender, mut ws_receiver) = {
+        let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+            Ok(ws) => {
+                info!("hi {}", peer_addr);
+                ws
+            }
+            Err(e) => {
+                error!("{}: {}", peer_addr, e);
+                return;
+            }
+        };
 
-        if let Some(subprotocol) = req.headers().get("sec-websocket-protocol") {
-            let hmm = response.headers_mut();
-            hmm.insert("sec-websocket-protocol", subprotocol.clone());
-        }
-
-        Ok(response)
+        ws_stream.split()
     };
-
-    let ws_stream = match tokio_tungstenite::accept_hdr_async(stream, google_ai_mode).await {
-        Ok(ws) => ws,
-        Err(e) => {
-            error!("{}: {}", peer_addr, e);
-            return;
-        }
-    };
-
-    info!("hi {}", peer_addr);
-
-    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
     let mut conn = Connection {
         addr: peer_addr,
@@ -413,8 +420,9 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
             res = ws_receiver.next() => {
                 match res {
                     Some(Ok(msg)) => {
-                        if let Outcome::Boot = conn.handle(state.clone(), msg) {
-                            warn!("boot to the face for {}", peer_addr);
+                        if let Outcome::Boot(reason)= conn.handle(state.clone(), msg) {
+                            warn!("boot to the face for {}: {}", peer_addr, reason);
+                            let _ = conn.send_json(&mut ws_sender, &Response::Bye { reason }).await;
                             break;
                         }
                     },
@@ -432,9 +440,13 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
             }
         }
 
-        if let Outcome::Boot = conn.flush(state.clone(), &mut ws_sender).await {
+        if let Outcome::Boot(_) = conn.flush(state.clone(), &mut ws_sender).await {
             break;
         }
+    }
+
+    if let Ok(mut ws) = ws_receiver.reunite(ws_sender) {
+        let _ = ws.close(None).await;
     }
 
     let mut state = state.fucking_lock();
