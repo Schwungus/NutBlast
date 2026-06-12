@@ -52,11 +52,7 @@ set(USE_SYSTEM_JSON ON CACHE INTERNAL "")
 set(NO_MEDIA ON CACHE INTERNAL "")
 set(NO_EXAMPLES ON CACHE INTERNAL "")
 set(NO_TESTS ON CACHE INTERNAL "")
-set(USE_MBEDTLS ON CACHE INTERNAL "")
-set(ENABLE_PROGRAMS OFF CACHE INTERNAL "")
-set(ENABLE_TESTING OFF CACHE INTERNAL "")
-set(INSTALL_DEPS_LIBS OFF CACHE INTERNAL "")
-set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/mbedtls.h CACHE INTERNAL "")
+set(USE_MBEDTLS OFF CACHE INTERNAL "")
 
 if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     FetchContent_Declare(datachannel-wasm
@@ -70,19 +66,13 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     target_link_options(NutBlast PUBLIC -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPU32,HEAPU8)
     target_compile_options(NutBlast PUBLIC -O3) # the emscripten manual recommends this
 else()
-    FetchContent_Declare(MbedTLS
-        GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
-        GIT_TAG v3.6.6
-        OVERRIDE_FIND_PACKAGE
-        EXCLUDE_FROM_ALL)
-
     FetchContent_Declare(datachannel
-        GIT_REPOSITORY https://github.com/Schwungus/libdatachannel.git
-        GIT_TAG master
+        GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
+        GIT_TAG v0.24.5
         EXCLUDE_FROM_ALL)
 
-    list(APPEND DEPS MbedTLS datachannel)
     list(APPEND LIBS datachannel-static)
+    list(APPEND DEPS datachannel)
 endif()
 
 FetchContent_MakeAvailable(${DEPS})
