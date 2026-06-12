@@ -31,6 +31,7 @@ extern "C" {
 #endif // __cplusplus
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef NUTBLAST_DEV_LOCALHOST
@@ -43,9 +44,18 @@ extern "C" {
 
 // NOTE: make sure to sync this with `src/main.rs`.
 typedef char NutBlast_PlayerID[4], NutBlast_GameID[16], NutBlast_LobbyID[32];
+typedef uint8_t NutBlast_ChannelID;
+
+typedef struct {
+    const char *data, *from;
+    size_t size;
+} NutBlast_Message;
 
 /// Sets the NutBlaster address.
 void NutBlast_SetNutBlaster(const char*);
+
+/// Sets the maximum amount of channels to receive messages on. Defaults to 1 channel if unspecified.
+void NutBlast_SetMaxChannels(NutBlast_ChannelID);
 
 /// Registers a callback to fire when you are successfully connected to the NutBlaster.
 void NutBlast_OnConnected(void (*)());
@@ -59,11 +69,13 @@ void NutBlast_OnPlayerJoined(void (*)(const char*));
 /// Registers a callback to fire whenever a peer disconnects from your machine.
 void NutBlast_OnPlayerLeft(void (*)(const char*));
 
-/// Registers a callback to fire whenever you receive a message from a peer.
-void NutBlast_OnMessage(void (*)(const char* from, const char* message));
+/// Returns true and copies the incoming message if there is a message waiting in the queue for the specified channel.
+bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
 
 /// Sends a null-terminated string to the specified peer. Failures are silent. Delivery is not guaranteed.
-void NutBlast_SendTo(const char* peer, const char* msg);
+///
+/// Set `size` to -1 to assume `msg` is a zero-terminated string.
+void NutBlast_SendTo(NutBlast_ChannelID chan, const char* peer, const char* msg, int size);
 
 /// Call this every frame to send, receive, and process data from the NutBlaster and the peers.
 void NutBlast_Update();

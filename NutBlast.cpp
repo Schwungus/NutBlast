@@ -23,6 +23,7 @@
 //
 // For more information, please refer to <https://unlicense.org>
 
+#include <array>
 #include <ctime>
 #include <mutex>
 #include <optional>
@@ -48,7 +49,7 @@ static constexpr const bool WINDOSE =
 using Metadata = std::unordered_map<std::string, std::string>;
 
 static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(const char*),
-            (*on_player_left)(const char*), (*on_message)(const char*, const char*);
+            (*on_player_left)(const char*);
 
 static std::mutex sync;
 
@@ -94,8 +95,16 @@ struct Peer {
     bool is_offerer() const;
 };
 
+struct Message {
+    std::string from;
+    std::vector<std::byte> bytes;
+};
+
 static std::string gid = "", pid = "";
 static std::optional<std::string> blaster, lid, disconnect_reason;
+
+static NutBlast_ChannelID max_chan = 1;
+static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
 
 static bool hosting = false;
 static std::string master = "";
@@ -104,6 +113,7 @@ static std::unordered_map<std::string, Peer> peers;
 
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
 static std::vector<std::string> ws_in;
+static std::vector<nlohmann::json> ws_out;
 
 static Metadata peer_meta, lobby_meta;
 
@@ -130,11 +140,10 @@ extern "C" uint64_t NutBlast_TimeNS() {
 }
 
 static void ws_send(nlohmann::json&& obj) {
-    static std::vector<nlohmann::json> queue;
-    queue.push_back(obj);
+    ws_out.push_back(obj);
 
     if (!::blaster_ws)
-        queue.clear();
+        ws_out.clear();
 
     if (!::blaster_ws || !::blaster_ws->isOpen())
         return;
@@ -142,11 +151,11 @@ static void ws_send(nlohmann::json&& obj) {
     std::lock_guard guard(::sync);
 
     try {
-        for (const auto& obj : queue)
+        for (const auto& obj : ws_out)
             ::blaster_ws->send(obj.dump());
     } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
 
-    queue.clear();
+    ws_out.clear();
 }
 
 struct Ticker {
@@ -208,10 +217,20 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
         });
 
         dc.onMessage([id](const auto& variant) {
+            if (!std::holds_alternative<rtc::binary>(variant))
+                return;
+
             std::lock_guard guard(::sync);
 
-            if (std::holds_alternative<rtc::string>(variant))
-                fire(::on_message, id.c_str(), std::get<rtc::string>(variant).c_str());
+            auto bytes = std::get<rtc::binary>(variant);
+
+            if (!bytes.size())
+                return;
+
+            const auto chan = static_cast<NutBlast_ChannelID>(bytes[0]);
+            bytes.erase(bytes.begin());
+
+            recv_queues[chan].push_back({.from = id, .bytes = bytes});
         });
     };
 
@@ -268,6 +287,11 @@ extern "C" void NutBlast_SetGameID(const char* gid) {
     ::gid = gid;
 }
 
+extern "C" void NutBlast_SetMaxChannels(NutBlast_ChannelID max) {
+    if (max)
+        ::max_chan = max;
+}
+
 extern "C" void NutBlast_SetMaxPlayers(int max) {
     if (max > 1 && max <= NUTBLAST_MAX_PLAYERS)
         ::max_players = max;
@@ -322,6 +346,10 @@ extern "C" void NutBlast_SetLobbyField(const char* name, const char* value) {
 static void join_pro(const char* id) {
     get_blaster();
     ::lid = id, ::master = "", ::disconnect_reason = std::nullopt;
+    ::ws_in.clear(), ::ws_out.clear();
+
+    for (auto& queue : recv_queues)
+        queue.clear();
 
     std::optional<rtc::string> ca = std::nullopt;
 
@@ -575,15 +603,43 @@ extern "C" void NutBlast_Update() {
         send_shit();
 }
 
-extern "C" void NutBlast_SendTo(const char* id, const char* msg) {
+extern "C" void NutBlast_SendTo(NutBlast_ChannelID chan, const char* id, const char* msg, int size) {
+    if (!is_connected())
+        return;
+
+    if (size < 0)
+        size = (int)std::strlen(msg) + 1;
+
+    rtc::binary buf(1 + size);
+    buf[0] = static_cast<std::byte>(chan);
+
+    for (size_t i = 0; i < size; i++)
+        buf[i + 1] = static_cast<std::byte>(msg[i]);
+
     try {
         const auto& peer = ::peers.at(id);
         const auto dc = peer.state->dc;
-
-        if (dc)
-            dc->send(msg);
+        dc && dc->send(buf);
     } catch (const std::out_of_range&) {
     } catch (const std::runtime_error&) {}
+}
+
+extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
+    auto& queue = recv_queues[chan];
+
+    if (queue.empty())
+        return false;
+
+    static Message msg; // keeps the buffers valid between calls
+
+    msg = queue.front();
+    queue.erase(queue.begin());
+
+    out->data = reinterpret_cast<const char*>(msg.bytes.data());
+    out->size = msg.bytes.size();
+    out->from = msg.from.c_str();
+
+    return true;
 }
 
 extern "C" void NutBlast_OnConnected(void (*cb)()) {
@@ -600,8 +656,4 @@ extern "C" void NutBlast_OnPlayerJoined(void (*cb)(const char*)) {
 
 extern "C" void NutBlast_OnPlayerLeft(void (*cb)(const char*)) {
     ::on_player_left = cb;
-}
-
-extern "C" void NutBlast_OnMessage(void (*cb)(const char*, const char*)) {
-    ::on_message = cb;
 }

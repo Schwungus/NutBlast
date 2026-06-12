@@ -45,6 +45,11 @@ extern uint64_t NutBlast_TimeNS();
 
 static const char* names[] = {"Ninja", "Marsoyob", "Trollga", "Ficus", "Caccus", "jrb012345", "Utley"};
 
+enum {
+    CHAN_POS,
+    CHAN_MAX,
+};
+
 static const int psize = 20;
 
 typedef struct {
@@ -137,17 +142,21 @@ static void send_our_position() {
 
         static char buf[32] = "";
         snprintf(buf, sizeof(buf), "%d:%d", p->x, p->y);
-        NutBlast_SendTo(id, buf);
+        NutBlast_SendTo(CHAN_POS, id, buf, -1);
     }
 }
 
-static void on_message(const char* from, const char* msg) {
-    Player* p = (Player*)TinyDictGet(&players, from);
+static void recv_shit() {
+    NutBlast_Message msg = {0};
 
-    if (!p)
-        return;
+    while (NutBlast_NextMessage(CHAN_POS, &msg)) {
+        Player* p = (Player*)TinyDictGet(&players, msg.from);
 
-    sscanf(msg, "%d:%d", &p->x, &p->y);
+        if (!p)
+            continue;
+
+        sscanf(msg.data, "%d:%d", &p->x, &p->y);
+    }
 }
 
 static void on_disconnected(const char* reason) {
@@ -160,6 +169,8 @@ int main(int argc, char* argv[]) {
         NutBlast_SetNutBlaster(argv[1]);
 
     NutBlast_SetGameID("NutBlast Test");
+    NutBlast_SetMaxChannels(CHAN_MAX);
+
     InitWindow(800, 600, "NutBlast Test");
 
     SetTargetFPS(TICKRATE);
@@ -173,7 +184,6 @@ int main(int argc, char* argv[]) {
     NutBlast_OnDisconnected(on_disconnected);
     NutBlast_OnPlayerJoined(on_player_joined);
     NutBlast_OnPlayerLeft(on_player_left);
-    NutBlast_OnMessage(on_message);
 
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H))
@@ -186,6 +196,7 @@ int main(int argc, char* argv[]) {
         move_our_rect();
         send_our_position();
         NutBlast_Update();
+        recv_shit();
 
         BeginDrawing();
         {
