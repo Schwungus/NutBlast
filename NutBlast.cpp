@@ -54,15 +54,19 @@ template <typename... Args> static void fire(void (*cb)(Args...), Args... args) 
         cb(args...);
 }
 
-static const rtc::Configuration rtc_config{
-    .iceServers = {{"stun:stun.l.google.com:19302"}, {"stun:stun.l.google.com:5349"},},
+static const rtc::Configuration rtc_config = {
+    .iceServers = {
+        {"stun:stun.l.google.com:19302"},
+        {"stun:stun1.l.google.com:19302"},
+        {"stun:stun2.l.google.com:19302"},
+        {"stun:stun3.l.google.com:19302"},
+        {"stun:stun4.l.google.com:19302"},
+    },
 };
 
 struct PeerSharedState {
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
     std::shared_ptr<rtc::DataChannel> dc = nullptr;
-
-    std::optional<rtc::Description> local_desc = std::nullopt;
     std::vector<rtc::Candidate> outgoing_candidates, incoming_candidates;
 
     void drain_incoming_candidates() {
@@ -79,10 +83,12 @@ struct PeerSharedState {
 struct Peer {
     Metadata meta;
     std::shared_ptr<PeerSharedState> state;
-    bool offering = true;
+    const std::string id;
 
     Peer(const std::string&);
     ~Peer() = default;
+
+    bool is_offerer() const;
 };
 
 static std::string gid = "", pid = "";
@@ -110,6 +116,7 @@ template <typename... T> static inline void info(const char* fmt, T... args) {
     static char buf[1024] = "";
     std::snprintf(buf, sizeof(buf), "%s\n", fmt);
     std::printf(buf, args...);
+    std::fflush(stdout);
 }
 
 // making this one available externally for internal use.
@@ -117,6 +124,12 @@ extern "C" uint64_t NutBlast_TimeNS() {
     struct timespec ts = {0};
     timespec_get(&ts, TIME_UTC);
     return (std::uint64_t)ts.tv_sec * ns::second + (std::uint64_t)ts.tv_nsec;
+}
+
+static void ws_send(const nlohmann::json& obj) {
+    try {
+        ::blaster_ws->send(obj.dump());
+    } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
 }
 
 struct Ticker {
@@ -137,14 +150,28 @@ struct Ticker {
     }
 };
 
-Peer::Peer(const std::string& id) : state(new PeerSharedState()) {
-    std::weak_ptr<PeerSharedState> st = state;
-
+Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
     state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
+    const std::weak_ptr<PeerSharedState> st = state;
 
-    state->pc->onLocalDescription([st](const auto& local_desc) {
-        if (!st.expired())
-            st.lock()->local_desc = local_desc;
+    state->pc->onLocalDescription([id, st](const auto& local_desc) {
+        if (st.expired())
+            return;
+
+        std::string type;
+
+        if (local_desc.typeString() == "offer")
+            type = "Offer";
+        else if (local_desc.typeString() == "answer")
+            type = "Answer";
+        else
+            return;
+
+        ::ws_send({
+            {"type", type},
+            {"to", id},
+            {"sdp", (rtc::string)local_desc},
+        });
     });
 
     state->pc->onLocalCandidate([st](const auto& candidate) {
@@ -152,16 +179,16 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()) {
             st.lock()->outgoing_candidates.push_back(candidate);
     });
 
-    const auto setup_dc = [id, st](const std::shared_ptr<rtc::DataChannel>& dc) {
-        dc->onOpen([id]() {
+    const auto setup_dc = [id](rtc::DataChannel& dc) {
+        dc.onOpen([id]() {
             fire(::on_player_joined, id.c_str());
         });
 
-        dc->onClosed([id]() {
+        dc.onClosed([id]() {
             fire(::on_player_left, id.c_str());
         });
 
-        dc->onMessage([id, dc](const auto& variant) {
+        dc.onMessage([id](const auto& variant) {
             if (std::holds_alternative<rtc::string>(variant))
                 fire(::on_message, id.c_str(), std::get<rtc::string>(variant).c_str());
         });
@@ -173,12 +200,14 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()) {
 
         const auto state = st.lock();
         state->dc = dc;
-        setup_dc(dc);
+        setup_dc(*dc);
         fire(::on_player_joined, id.c_str());
     });
 
-    state->dc = state->pc->createDataChannel("NutBlast");
-    setup_dc(state->dc);
+    if (is_offerer()) {
+        state->dc = state->pc->createDataChannel("NutBlast");
+        setup_dc(*state->dc);
+    }
 }
 
 static std::string get_pid() {
@@ -194,9 +223,11 @@ static std::string get_pid() {
     return pid;
 }
 
-static std::string get_blaster() {
-    rtc::InitLogger(rtc::LogLevel::Debug);
+bool Peer::is_offerer() const {
+    return get_pid() > id;
+}
 
+static std::string get_blaster() {
     if (blaster == std::nullopt) {
         info("Using the default NutBlaster server as none was explicitly specified: %s", NUTBLAST_DEFAULT_SERVER);
         blaster = NUTBLAST_DEFAULT_SERVER;
@@ -207,15 +238,29 @@ static std::string get_blaster() {
 
 static int max_players = NUTBLAST_MAX_PLAYERS;
 
+static void maybe_init() {
+    static bool init = false;
+
+    if (init)
+        return;
+
+    init = true;
+    rtc::InitLogger(rtc::LogLevel::Info);
+}
+
 extern "C" void NutBlast_SetNutBlaster(const char* blaster) {
+    maybe_init();
     ::blaster = blaster;
 }
 
 extern "C" void NutBlast_SetGameID(const char* gid) {
+    maybe_init();
     ::gid = gid;
 }
 
 extern "C" void NutBlast_SetMaxPlayers(int max) {
+    maybe_init();
+
     if (max > 1 && max <= NUTBLAST_MAX_PLAYERS)
         ::max_players = max;
 }
@@ -267,6 +312,8 @@ extern "C" void NutBlast_SetLobbyField(const char* name, const char* value) {
 }
 
 static void join_pro(const char* id, bool host) {
+    maybe_init();
+
     if (is_connected()) {
         info("You're already in a lobby!");
         return;
@@ -281,9 +328,13 @@ static void join_pro(const char* id, bool host) {
     if (!WINDOSE)
         ca = "/etc/ssl/certs/ca-certificates.crt";
 
-    ::blaster_ws = std::make_shared<rtc::WebSocket>(rtc::WebSocketConfiguration{
-        .caCertificatePemFile = ca,
-    });
+    ::blaster_ws = std::make_shared<rtc::WebSocket>(
+#ifndef __EMSCRIPTEN__
+        rtc::WebSocketConfiguration{
+            .caCertificatePemFile = ca,
+        }
+#endif
+    );
 
     ::blaster_ws->onOpen([]() {
         fire(::on_connected);
@@ -308,6 +359,7 @@ static void join_pro(const char* id, bool host) {
 }
 
 extern "C" void NutBlast_Disconnect() {
+    maybe_init();
     ::lid = std::nullopt;
     ::peers.clear();
 }
@@ -393,28 +445,19 @@ static void handle_update(const nlohmann::json& obj) {
     }
 }
 
-static void handle_offer(const nlohmann::json& obj) {
-    const std::string& id = obj["peer"];
+static void handle_offer_answer(const nlohmann::json& obj) {
+    const std::string& id = obj["from"];
 
     if (!::peers.contains(id))
         return;
 
     auto& peer = ::peers.at(id);
-    const rtc::Description desc(obj["sdp"], obj["type"] == "Offer" ? "offer" : "answer");
-    const bool polite = ::get_pid() < id, is_offer = desc.typeString() == "offer";
-
-    if (is_offer && peer.offering) {
-        if (!polite)
-            return;
-        peer.offering = false;
-    }
-
-    peer.state->pc->setRemoteDescription(desc);
+    peer.state->pc->setRemoteDescription({obj["sdp"], obj["type"] == "Offer" ? "offer" : "answer"});
     peer.state->drain_incoming_candidates();
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
-    const std::string& id = obj["peer"];
+    const std::string& id = obj["from"];
 
     if (!::peers.contains(id))
         return;
@@ -425,75 +468,54 @@ static void handle_candidate(const nlohmann::json& obj) {
 }
 
 static void recv_shit() {
+    maybe_init();
+
     static const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> types{
         {"Update", handle_update},
-        {"Offer", handle_offer},
-        {"Answer", handle_offer},
+        {"Offer", handle_offer_answer},
+        {"Answer", handle_offer_answer},
         {"Candidate", handle_candidate},
     };
 
     for (const auto& msg : ::ws_in) {
-        const auto obj = nlohmann::json::parse(msg);
+        try {
+            const auto obj = nlohmann::json::parse(msg);
 
-        if (!obj.contains("type"))
-            continue;
+            if (!obj.contains("type"))
+                continue;
 
-        const std::string type = obj["type"];
+            const std::string type = obj["type"];
 
-        if (types.contains(type))
-            types.at(type)(obj);
+            if (types.contains(type))
+                types.at(type)(obj);
+        } catch (const nlohmann::json::parse_error&) { continue; }
     }
 
     ::ws_in.clear();
 }
 
-static void ws_send(const nlohmann::json& obj) {
-    try {
-        ::blaster_ws->send(obj.dump());
-    } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
-}
-
 static void send_shit() {
-    for (const auto& [id, peer] : ::peers) {
-        if (peer.state->local_desc.has_value()) {
-            const auto t = peer.state->local_desc->type();
-
-            const nlohmann::json ninja{
-                {"type", t == rtc::Description::Type::Offer ? "Offer" : "Answer"},
-                {"to", id},
-                {"sdp", (rtc::string)*peer.state->local_desc},
-            };
-
-            ws_send(ninja);
-            peer.state->local_desc = std::nullopt;
-        }
-
+    for (auto& [id, peer] : ::peers) {
         for (const auto& candidate : peer.state->outgoing_candidates) {
-            const nlohmann::json ninja{
+            ::ws_send({
                 {"type", "Candidate"},
                 {"to", id},
                 {"candidate", (rtc::string)candidate},
                 {"mid", candidate.mid()},
-            };
-
-            ws_send(ninja);
+            });
         }
 
         peer.state->outgoing_candidates.clear();
     }
 
-    {
-        const nlohmann::json payload = {
-            {"type", "Update"},
-            {"gid", ::gid},
-            {"pid", ::get_pid()},
-            {"lid", ::lid},
-            {"peer_meta", ::peer_meta},
-            {"lobby_meta", ::lobby_meta},
-        };
-
-        ws_send(payload);
-    }
+    ::ws_send({
+        {"type", "Update"},
+        {"gid", ::gid},
+        {"pid", ::get_pid()},
+        {"lid", ::lid},
+        {"peer_meta", ::peer_meta},
+        {"lobby_meta", ::lobby_meta},
+    });
 }
 
 extern "C" void NutBlast_Flush() {
@@ -519,9 +541,12 @@ extern "C" void NutBlast_Update() {
 extern "C" void NutBlast_SendTo(const char* id, const char* msg) {
     try {
         const auto& peer = ::peers.at(id);
-        peer.state->dc->send(msg);
+        const auto dc = peer.state->dc;
+
+        if (dc)
+            dc->send(msg);
     } catch (const std::out_of_range&) {
-    } catch (const std::runtime_error&) { ::peers.erase(id); }
+    } catch (const std::runtime_error&) {}
 }
 
 extern "C" void NutBlast_OnConnected(void (*cb)()) {
