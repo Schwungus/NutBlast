@@ -87,16 +87,16 @@ enum Response {
         meta: HashMap<String, String>,
     },
     Candidate {
-        peer: String,
+        from: String,
         candidate: String,
         mid: String,
     },
     Offer {
-        peer: String,
+        from: String,
         sdp: String,
     },
     Answer {
-        peer: String,
+        from: String,
         sdp: String,
     },
 }
@@ -292,33 +292,33 @@ impl Connection {
                 peer.map(|p| p.queue.push(update));
             }
             Payload::Candidate { to, candidate, mid } if let Some(ref pid) = self.pid => {
-                let Some(peer) = state.players.get_mut(&to) else {
+                let Some(to) = state.players.get_mut(&to) else {
                     return Outcome::Good;
                 };
 
-                peer.queue.push(Response::Candidate {
-                    peer: pid.to_string(),
+                to.queue.push(Response::Candidate {
+                    from: pid.to_string(),
                     candidate,
                     mid,
                 });
             }
             Payload::Offer { to, sdp } if let Some(ref pid) = self.pid => {
-                let Some(peer) = state.players.get_mut(&to) else {
+                let Some(to) = state.players.get_mut(&to) else {
                     return Outcome::Good;
                 };
 
-                peer.queue.push(Response::Offer {
-                    peer: pid.to_string(),
+                to.queue.push(Response::Offer {
+                    from: pid.to_string(),
                     sdp,
                 });
             }
             Payload::Answer { to, sdp } if let Some(ref pid) = self.pid => {
-                let Some(peer) = state.players.get_mut(&to) else {
+                let Some(to) = state.players.get_mut(&to) else {
                     return Outcome::Good;
                 };
 
-                peer.queue.push(Response::Answer {
-                    peer: pid.to_string(),
+                to.queue.push(Response::Answer {
+                    from: pid.to_string(),
                     sdp,
                 });
             }
