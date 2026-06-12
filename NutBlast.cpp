@@ -224,13 +224,15 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
 
             auto bytes = std::get<rtc::binary>(variant);
 
-            if (!bytes.size())
+            if (bytes.empty())
                 return;
 
             const auto chan = static_cast<NutBlast_ChannelID>(bytes[0]);
-            bytes.erase(bytes.begin());
 
-            recv_queues[chan].push_back({.from = id, .bytes = bytes});
+            if (chan < ::max_chan) {
+                bytes.erase(bytes.begin());
+                recv_queues[chan].push_back({.from = id, .bytes = bytes});
+            }
         });
     };
 
