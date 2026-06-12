@@ -238,29 +238,15 @@ static std::string get_blaster() {
 
 static int max_players = NUTBLAST_MAX_PLAYERS;
 
-static void maybe_init() {
-    static bool init = false;
-
-    if (init)
-        return;
-
-    init = true;
-    rtc::InitLogger(rtc::LogLevel::Info);
-}
-
 extern "C" void NutBlast_SetNutBlaster(const char* blaster) {
-    maybe_init();
     ::blaster = blaster;
 }
 
 extern "C" void NutBlast_SetGameID(const char* gid) {
-    maybe_init();
     ::gid = gid;
 }
 
 extern "C" void NutBlast_SetMaxPlayers(int max) {
-    maybe_init();
-
     if (max > 1 && max <= NUTBLAST_MAX_PLAYERS)
         ::max_players = max;
 }
@@ -312,8 +298,6 @@ extern "C" void NutBlast_SetLobbyField(const char* name, const char* value) {
 }
 
 static void join_pro(const char* id, bool host) {
-    maybe_init();
-
     if (is_connected()) {
         info("You're already in a lobby!");
         return;
@@ -359,7 +343,6 @@ static void join_pro(const char* id, bool host) {
 }
 
 extern "C" void NutBlast_Disconnect() {
-    maybe_init();
     ::lid = std::nullopt;
     ::peers.clear();
 }
@@ -468,8 +451,6 @@ static void handle_candidate(const nlohmann::json& obj) {
 }
 
 static void recv_shit() {
-    maybe_init();
-
     static const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> types{
         {"Update", handle_update},
         {"Offer", handle_offer_answer},
