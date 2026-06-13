@@ -260,7 +260,7 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
         setup_dc(*state->unreliable_dc);
 
         state->reliable_dc = state->pc->createDataChannel("reliable", {
-            .reliability = {.unordered = false, .maxRetransmits = 3, },
+            .reliability = {.unordered = false, },
         });
 
         setup_dc(*state->reliable_dc);
