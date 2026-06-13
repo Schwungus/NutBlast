@@ -16,10 +16,9 @@ use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-const PLAYER_ID_LEN: usize = 4;
+const ID_MIN: usize = 1;
+const ID_MAX: usize = 8;
 const GAME_ID_LEN: usize = 16;
-const LOBBY_ID_MAX: usize = 32;
-const LOBBY_ID_MIN: usize = 3;
 
 const MAX_PLAYERS: usize = 16;
 
@@ -270,8 +269,8 @@ impl Connection {
 
                 match self.pid {
                     None => {
-                        if pid.len() != PLAYER_ID_LEN {
-                            return Outcome::boot("Player ID must be 4 characters");
+                        if pid.len() < ID_MIN || pid.len() > ID_MAX {
+                            return Outcome::boot("Player ID must be 1-8 characters");
                         }
 
                         // no pid spoofing!!!
@@ -290,8 +289,8 @@ impl Connection {
 
                 match self.lid {
                     None => {
-                        if lid.len() < LOBBY_ID_MIN || lid.len() > LOBBY_ID_MAX {
-                            return Outcome::boot("Lobby ID must be 3-32 characters");
+                        if lid.len() < ID_MIN || lid.len() > ID_MAX {
+                            return Outcome::boot("Lobby ID must be 1-8 characters");
                         }
 
                         // no lobby-hopping!!!

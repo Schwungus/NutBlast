@@ -43,7 +43,7 @@ extern "C" {
 #define NUTBLAST_MAX_PLAYERS (16)
 
 // NOTE: make sure to sync this with `src/main.rs`.
-typedef char NutBlast_PlayerID[4], NutBlast_GameID[16], NutBlast_LobbyID[32];
+typedef char NutBlast_ID[8];
 typedef uint8_t NutBlast_ChannelID;
 
 typedef struct {
@@ -52,7 +52,7 @@ typedef struct {
 } NutBlast_Message;
 
 typedef struct {
-    const char* name;
+    const char* id;
     uint8_t players, capacity;
 } NutBlast_Lobby;
 

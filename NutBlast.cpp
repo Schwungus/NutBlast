@@ -272,15 +272,25 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
     }
 }
 
+static std::string generate_id() {
+    std::mt19937 mt;
+    mt.seed(NutBlast_TimeNS());
+
+    std::uniform_int_distribution<> dtype(0, 1);
+    std::uniform_int_distribution<> dalpha('A', 'Z');
+    std::uniform_int_distribution<> ddigit('0', '9');
+
+    std::string id = "";
+    for (size_t i = 0; i < sizeof(NutBlast_ID); i++)
+        id.push_back(static_cast<char>(dtype(mt) ? ddigit(mt) : dalpha(mt)));
+
+    return id;
+}
+
 static std::string get_pid() {
     if (pid.empty()) {
-        std::mt19937 mt;
-        mt.seed(NutBlast_TimeNS());
-
-        std::uniform_int_distribution dist;
-
-        for (size_t i = 0; i < sizeof(NutBlast_PlayerID); i++)
-            pid.push_back(static_cast<char>('A' + dist(mt) % ('Z' - 'A' + 1)));
+        pid = generate_id();
+        info("You are {}", pid);
     }
 
     return pid;
@@ -469,9 +479,9 @@ extern "C" void NutBlast_Host(const char* id, int max) {
         info("You're already in a lobby!");
     } else {
         NutBlast_SetMaxPlayers(max);
-        ::hosting = true, ::listing = false, ::lid = id;
+        ::hosting = true, ::listing = false, ::lid = id ? id : generate_id();
         join_pro();
-        info("Trying to host '{}' at: {}", id, get_blaster());
+        info("Trying to host '{}' at: {}", *lid, get_blaster());
     }
 }
 
@@ -583,7 +593,7 @@ static void handle_lobbies(const nlohmann::json& obj) {
         tmp.push_back(lober["id"]);
 
         lobbies.push_back(NutBlast_Lobby{
-            .name = tmp.back().c_str(),
+            .id = tmp.back().c_str(),
             .players = lober["players"],
             .capacity = lober["max"],
         });
