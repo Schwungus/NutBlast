@@ -19,7 +19,9 @@ static void on_found(const NutBlast_Lobby* list, size_t count) {
 }
 
 int main(int argc, char* argv[]) {
-    NutBlast_SetGameID(argc > 1 ? argv[1] : "NutBlast Test");
+    if (argc > 1)
+        NutBlast_SetNutBlaster(argv[1]);
+    NutBlast_SetGameID(argc > 2 ? argv[2] : "NutBlast Test");
 
     NutBlast_OnLobbiesFound(on_found);
     NutBlast_FindLobbies();
