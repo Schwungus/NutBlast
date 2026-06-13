@@ -276,9 +276,7 @@ static std::string generate_id() {
     std::mt19937 mt;
     mt.seed(NutBlast_TimeNS());
 
-    std::uniform_int_distribution<> dtype(0, 1);
-    std::uniform_int_distribution<> dalpha('A', 'Z');
-    std::uniform_int_distribution<> ddigit('0', '9');
+    std::uniform_int_distribution<> dtype(0, 1), dalpha('A', 'Z'), ddigit('0', '9');
 
     std::string id = "";
     for (size_t i = 0; i < sizeof(NutBlast_ID); i++)
@@ -456,7 +454,7 @@ extern "C" void NutBlast_Disconnect() {
 
 extern "C" void NutBlast_FindLobbies() {
     if (is_connected()) {
-        info("You're already in a lobby!");
+        info("You're already connected!");
     } else {
         ::listing = true;
         join_pro();
@@ -466,7 +464,7 @@ extern "C" void NutBlast_FindLobbies() {
 
 extern "C" void NutBlast_Join(const char* id) {
     if (is_connected()) {
-        info("You're already in a lobby!");
+        info("You're already connected!");
     } else {
         ::hosting = false, ::listing = false, ::lid = id;
         join_pro();
@@ -476,7 +474,7 @@ extern "C" void NutBlast_Join(const char* id) {
 
 extern "C" void NutBlast_Host(const char* id, int max) {
     if (is_connected()) {
-        info("You're already in a lobby!");
+        info("You're already connected!");
     } else {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing = false, ::lid = id ? id : generate_id();
