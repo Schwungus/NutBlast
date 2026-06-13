@@ -3,4 +3,4 @@ Completion:
 Diagnostics:
   Suppress: [c23-extensions, format-security]
 CompileFlags:
-  Remove: [-fdeps-format=*, -fmodule-ts, -fmodule-mapper=*]
+  Remove: [-fdeps-format=*, -fmodules-ts, -fmodule-mapper=*]
