@@ -120,7 +120,7 @@ enum Response {
         from: String,
         sdp: String,
     },
-    Lobbies {
+    List {
         list: Vec<LobbyListing>,
     },
 }
@@ -246,7 +246,7 @@ impl Connection {
                     list.get_mut(&player.lobby_id).map(|l| l.players += 1);
                 }
 
-                let resp = Response::Lobbies {
+                let resp = Response::List {
                     list: list.into_values().collect(),
                 };
 

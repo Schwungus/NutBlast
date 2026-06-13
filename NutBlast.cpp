@@ -585,7 +585,7 @@ static void handle_bye(const nlohmann::json& obj) {
     NutBlast_Disconnect();
 }
 
-static void handle_lobbies(const nlohmann::json& obj) {
+static void handle_list(const nlohmann::json& obj) {
     std::vector<NutBlast_Lobby> lobbies;
     std::vector<std::string> tmp;
 
@@ -611,7 +611,7 @@ static void recv_shit() {
         {"Offer", handle_offer_answer},
         {"Answer", handle_offer_answer},
         {"Candidate", handle_candidate},
-        {"Lobbies", handle_lobbies},
+        {"List", handle_list},
     };
 
     const auto copy = ::ws_in; // NOTE: this copy solves a hardcrash on exit???
