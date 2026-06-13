@@ -49,7 +49,7 @@ static constexpr const bool WINDOSE =
 using Metadata = std::unordered_map<std::string, std::string>;
 
 static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(const char*),
-            (*on_player_left)(const char*);
+            (*on_player_left)(const char*), (*on_lobbies_found)(const NutBlast_Lobby*, size_t);
 
 static std::mutex sync;
 
@@ -106,7 +106,7 @@ static std::optional<std::string> blaster, lid, disconnect_reason;
 static NutBlast_ChannelID max_chan = 1;
 static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
 
-static bool hosting = false;
+static bool hosting = false, listing = false;
 static std::string master = "";
 
 static std::unordered_map<std::string, Peer> peers;
@@ -118,7 +118,7 @@ static std::vector<nlohmann::json> ws_out;
 static Metadata peer_meta, lobby_meta;
 
 namespace ns {
-    constexpr const std::uint64_t second = 1000000000;
+    constexpr const std::uint64_t second = 1000000000, milli = second / 1000;
 };
 
 namespace interval {
@@ -247,7 +247,12 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
     });
 
     if (is_offerer()) {
-        state->dc = state->pc->createDataChannel("NutBlast");
+        // TODO: have separate reliable and unreliable channels (#5)
+        const rtc::DataChannelInit args{
+            .reliability = {.maxRetransmits = 0},
+        };
+
+        state->dc = state->pc->createDataChannel("NutBlast", args);
         setup_dc(*state->dc);
     }
 }
@@ -300,7 +305,7 @@ extern "C" void NutBlast_SetMaxPlayers(int max) {
 }
 
 static bool is_connected() {
-    return ::lid.has_value() && ::blaster_ws != nullptr;
+    return ::blaster_ws != nullptr;
 }
 
 extern "C" const char* NutBlast_GetPeerField(const char* pee, const char* name) {
@@ -345,9 +350,11 @@ extern "C" void NutBlast_SetLobbyField(const char* name, const char* value) {
         lobby_meta.insert_or_assign(name, value);
 }
 
-static void join_pro(const char* id) {
+static void recv_shit();
+
+static void join_pro() {
     get_blaster();
-    ::lid = id, ::master = "", ::disconnect_reason = std::nullopt;
+    ::master = "", ::disconnect_reason = std::nullopt;
     ::ws_in.clear(), ::ws_out.clear();
 
     for (auto& queue : recv_queues)
@@ -378,12 +385,11 @@ static void join_pro(const char* id) {
     });
 
     ::blaster_ws->onClosed([]() {
+        recv_shit();
         NutBlast_Disconnect();
     });
 
     ::blaster_ws->open(get_blaster());
-
-    info("Trying to %s '%s' at: %s", ::hosting ? "host" : "join", id, get_blaster().c_str());
 }
 
 extern "C" void NutBlast_Disconnect() {
@@ -416,11 +422,24 @@ extern "C" void NutBlast_Disconnect() {
     ::peers.clear();
 }
 
-extern "C" void NutBlast_Join(const char* id) {
-    if (is_connected())
+extern "C" void NutBlast_FindLobbies() {
+    if (is_connected()) {
         info("You're already in a lobby!");
-    else
-        join_pro(id);
+    } else {
+        ::listing = true;
+        join_pro();
+        info("Connecting to %s", get_blaster().c_str());
+    }
+}
+
+extern "C" void NutBlast_Join(const char* id) {
+    if (is_connected()) {
+        info("You're already in a lobby!");
+    } else {
+        ::hosting = false, ::listing = false, ::lid = id;
+        join_pro();
+        info("Trying to join '%s' at: %s", id, get_blaster().c_str());
+    }
 }
 
 extern "C" void NutBlast_Host(const char* id, int max) {
@@ -428,8 +447,9 @@ extern "C" void NutBlast_Host(const char* id, int max) {
         info("You're already in a lobby!");
     } else {
         NutBlast_SetMaxPlayers(max);
-        ::hosting = true;
-        join_pro(id);
+        ::hosting = true, ::listing = false, ::lid = id;
+        join_pro();
+        info("Trying to host '%s' at: %s", id, get_blaster().c_str());
     }
 }
 
@@ -532,6 +552,23 @@ static void handle_bye(const nlohmann::json& obj) {
     NutBlast_Disconnect();
 }
 
+static void handle_lobbies(const nlohmann::json& obj) {
+    std::vector<NutBlast_Lobby> lobbies;
+    std::vector<std::string> tmp;
+
+    for (const auto& lober : obj["list"]) {
+        tmp.push_back(lober["id"]);
+
+        lobbies.push_back(NutBlast_Lobby{
+            .name = tmp.back().c_str(),
+            .players = lober["players"],
+            .capacity = lober["max"],
+        });
+    }
+
+    fire(::on_lobbies_found, const_cast<const NutBlast_Lobby*>(lobbies.data()), lobbies.size());
+}
+
 static void recv_shit() {
     static const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> types{
         {"Bye", handle_bye},
@@ -539,6 +576,7 @@ static void recv_shit() {
         {"Offer", handle_offer_answer},
         {"Answer", handle_offer_answer},
         {"Candidate", handle_candidate},
+        {"Lobbies", handle_lobbies},
     };
 
     for (const auto& msg : ::ws_in) {
@@ -558,7 +596,7 @@ static void recv_shit() {
     ::ws_in.clear();
 }
 
-static void send_shit() {
+static void send_updates() {
     for (auto& [id, peer] : ::peers) {
         for (const auto& candidate : peer.state->outgoing_candidates) {
             ::ws_send({
@@ -586,23 +624,27 @@ static void send_shit() {
 }
 
 extern "C" void NutBlast_Flush() {
-    if (!is_connected())
+    static Ticker beater(interval::beat);
+
+    if (!is_connected() || !beater)
         return;
 
-    // TODO: this is literal snake oil for now since `NutBlast_Send` sends immediately...
+    if (listing) {
+        ::ws_send({
+            {"type", "List"},
+            {"gid", ::gid},
+        });
+    } else {
+        send_updates();
+    }
 }
 
 extern "C" void NutBlast_Update() {
-    static Ticker beater(interval::beat);
-
     if (!is_connected())
         return;
 
     recv_shit();
     NutBlast_Flush();
-
-    if (beater)
-        send_shit();
 }
 
 extern "C" void NutBlast_SendTo(NutBlast_ChannelID chan, const char* id, const char* msg, int size) {
@@ -659,3 +701,25 @@ extern "C" void NutBlast_OnPlayerJoined(void (*cb)(const char*)) {
 extern "C" void NutBlast_OnPlayerLeft(void (*cb)(const char*)) {
     ::on_player_left = cb;
 }
+
+extern "C" void NutBlast_OnLobbiesFound(void (*cb)(const NutBlast_Lobby*, size_t)) {
+    ::on_lobbies_found = cb;
+}
+
+#ifndef _WIN32
+
+#include <time.h>
+
+#include <errno.h>
+
+extern "C" void NutBlast_SleepMS(int _ms) {
+    time_t ms = _ms;
+
+    // Stolen from: <https://stackoverflow.com/a/1157217>
+    struct timespec ts = {0};
+    ts.tv_sec = ms / 1000, ts.tv_nsec = (ms % 1000) * (time_t)ns::milli;
+    int res = 0;
+    do { res = nanosleep(&ts, &ts); } while (res && errno == EINTR);
+}
+
+#endif

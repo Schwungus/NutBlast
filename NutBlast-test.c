@@ -40,9 +40,6 @@
 #define EMS (0)
 #endif
 
-// internal utility func.
-extern uint64_t NutBlast_TimeNS();
-
 static const char* names[] = {"Ninja", "Marsoyob", "Trollga", "Ficus", "Caccus", "jrb012345", "Utley"};
 
 enum {

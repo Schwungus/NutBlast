@@ -51,6 +51,11 @@ typedef struct {
     size_t size;
 } NutBlast_Message;
 
+typedef struct {
+    const char* name;
+    uint8_t players, capacity;
+} NutBlast_Lobby;
+
 /// Sets the NutBlaster address.
 void NutBlast_SetNutBlaster(const char*);
 
@@ -68,6 +73,9 @@ void NutBlast_OnPlayerJoined(void (*)(const char*));
 
 /// Registers a callback to fire whenever a peer disconnects from your machine.
 void NutBlast_OnPlayerLeft(void (*)(const char*));
+
+/// Registers a callback to fire whenever `NutBlast_FindLobbies` receives a list of lobbies.
+void NutBlast_OnLobbiesFound(void (*)(const NutBlast_Lobby*, size_t));
 
 /// Returns true and copies the incoming message if there is a message waiting in the queue for the specified channel.
 bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
@@ -101,6 +109,9 @@ void NutBlast_Join(const char* id);
 /// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
 void NutBlast_Host(const char* id, int players);
 
+/// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
+void NutBlast_FindLobbies();
+
 /// Disconnects you from the lobby if you are in one, and resets the networking state.
 void NutBlast_Disconnect();
 
@@ -130,6 +141,14 @@ const char* NutBlast_GetLobbyField(const char* name);
 
 /// Sets lobby metadata to a null-terminated string.
 void NutBlast_SetLobbyField(const char* name, const char* value);
+
+uint64_t NutBlast_TimeNS();
+
+#ifdef _WIN32
+#define NutBlast_SleepMS Sleep
+#else
+void NutBlast_SleepMS(int);
+#endif
 
 #ifdef __cplusplus
 }
