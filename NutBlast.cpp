@@ -25,6 +25,7 @@
 
 #include <array>
 #include <ctime>
+#include <format>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -126,10 +127,8 @@ namespace interval {
     constexpr const std::uint64_t beat = ::ns::second / 60;
 };
 
-template <typename... T> static inline void info(const char* fmt, T... args) {
-    static char buf[1024] = "";
-    std::snprintf(buf, sizeof(buf), "%s\n", fmt);
-    std::printf(buf, args...);
+template <typename... Args> static inline void info(std::format_string<Args...> fmt, Args&&... args) {
+    std::fprintf(stdout, "%s\n", std::vformat(fmt.get(), std::make_format_args(args...)).c_str());
     std::fflush(stdout);
 }
 
@@ -288,7 +287,7 @@ bool Peer::is_offerer() const {
 
 static std::string get_blaster() {
     if (blaster == std::nullopt) {
-        info("Using the default NutBlaster server as none was explicitly specified: %s", NUTBLAST_DEFAULT_SERVER);
+        info("Using the default NutBlaster server as none was explicitly specified: {}", NUTBLAST_DEFAULT_SERVER);
         blaster = NUTBLAST_DEFAULT_SERVER;
     }
 
@@ -439,7 +438,7 @@ extern "C" void NutBlast_FindLobbies() {
     } else {
         ::listing = true;
         join_pro();
-        info("Connecting to %s", get_blaster().c_str());
+        info("Connecting to {}", get_blaster());
     }
 }
 
@@ -449,7 +448,7 @@ extern "C" void NutBlast_Join(const char* id) {
     } else {
         ::hosting = false, ::listing = false, ::lid = id;
         join_pro();
-        info("Trying to join '%s' at: %s", id, get_blaster().c_str());
+        info("Trying to join '{}' at: {}", id, get_blaster());
     }
 }
 
@@ -460,7 +459,7 @@ extern "C" void NutBlast_Host(const char* id, int max) {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing = false, ::lid = id;
         join_pro();
-        info("Trying to host '%s' at: %s", id, get_blaster().c_str());
+        info("Trying to host '{}' at: {}", id, get_blaster());
     }
 }
 
@@ -520,7 +519,7 @@ static void handle_update(const nlohmann::json& obj) {
         const bool erase = !present_peers.contains(pair.first);
 
         if (erase)
-            info("Bye, %s", pair.first.c_str());
+            info("Bye, {}", pair.first);
 
         return erase;
     });
