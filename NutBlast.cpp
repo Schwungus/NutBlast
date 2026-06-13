@@ -386,6 +386,13 @@ static void join_pro() {
     ::blaster_ws->onOpen([]() {
         std::lock_guard guard(::sync);
         fire(::on_connected);
+
+        if (listing) {
+            ::ws_send({
+                {"type", "List"},
+                {"gid", ::gid},
+            });
+        }
     });
 
     ::blaster_ws->onMessage([](const auto& msg) {
@@ -643,17 +650,8 @@ static void send_updates() {
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat);
 
-    if (!is_connected() || !beater)
-        return;
-
-    if (listing) {
-        ::ws_send({
-            {"type", "List"},
-            {"gid", ::gid},
-        });
-    } else {
+    if (is_connected() && !listing && beater)
         send_updates();
-    }
 }
 
 extern "C" void NutBlast_Update() {
@@ -731,7 +729,14 @@ extern "C" void NutBlast_OnLobbiesFound(void (*cb)(const NutBlast_Lobby*, size_t
     ::on_lobbies_found = cb;
 }
 
-#ifndef _WIN32
+#ifdef _WIN32
+
+extern "C" void NutBlast_SleepMS(int _ms) {
+    uint64_t target = NutBlast_TimeNS() + ((uint64_t)_ms * 1000000);
+    while (NutBlast_TimeNS() < target) {}
+}
+
+#else
 
 #include <time.h>
 

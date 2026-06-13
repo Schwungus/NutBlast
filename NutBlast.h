@@ -147,11 +147,7 @@ void NutBlast_SetLobbyField(const char* name, const char* value);
 
 uint64_t NutBlast_TimeNS();
 
-#ifdef _WIN32
-#define NutBlast_SleepMS Sleep
-#else
 void NutBlast_SleepMS(int);
-#endif
 
 #ifdef __cplusplus
 }
