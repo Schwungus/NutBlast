@@ -40,6 +40,12 @@
 
 #include <NutBlast.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <errno.h>
+#endif
+
 static constexpr const bool WINDOSE =
 #ifdef _WIN32
     true;
@@ -728,19 +734,10 @@ extern "C" void NutBlast_OnLobbiesFound(void (*cb)(const NutBlast_Lobby*, size_t
     ::on_lobbies_found = cb;
 }
 
+extern "C" void NutBlast_SleepMS(int _ms) {
 #ifdef _WIN32
-
-extern "C" void NutBlast_SleepMS(int _ms) {
     Sleep(_ms);
-}
-
 #else
-
-#include <time.h>
-
-#include <errno.h>
-
-extern "C" void NutBlast_SleepMS(int _ms) {
     time_t ms = _ms;
 
     // Stolen from: <https://stackoverflow.com/a/1157217>
@@ -748,6 +745,5 @@ extern "C" void NutBlast_SleepMS(int _ms) {
     ts.tv_sec = ms / 1000, ts.tv_nsec = (ms % 1000) * (time_t)ns::milli;
     int res = 0;
     do { res = nanosleep(&ts, &ts); } while (res && errno == EINTR);
-}
-
 #endif
+}
