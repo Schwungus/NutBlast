@@ -85,6 +85,9 @@ bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
 /// Set `size` to -1 to assume `msg` is a zero-terminated string.
 void NutBlast_SendTo(NutBlast_ChannelID chan, const char* peer, const char* msg, int size);
 
+/// A reliable-delivery version of `NutBlast_SendTo`, which see.
+void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, const char* peer, const char* msg, int size);
+
 /// Call this every frame to send, receive, and process data from the NutBlaster and the peers.
 void NutBlast_Update();
 
@@ -124,7 +127,7 @@ const char* NutBlast_GetOurID();
 /// Returns the lobby's master's ID.
 const char* NutBlast_GetMasterID();
 
-/// Returns a NULL-terminated array of IDs of the players that are in the lobby.
+/// Returns a NULL-terminated array of IDs of the players that are in the lobby, except our own.
 const char** NutBlast_GetPlayerIDs();
 
 /// Returns true if the player identified by their ID is in the lobby, and false otherwise.

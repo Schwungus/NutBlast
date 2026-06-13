@@ -51,7 +51,7 @@ using Metadata = std::unordered_map<std::string, std::string>;
 static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(const char*),
             (*on_player_left)(const char*), (*on_lobbies_found)(const NutBlast_Lobby*, size_t);
 
-static std::mutex sync;
+static std::recursive_mutex sync;
 
 template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
     if (cb != nullptr)
@@ -70,7 +70,7 @@ static const rtc::Configuration rtc_config = {
 
 struct PeerSharedState {
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
-    std::shared_ptr<rtc::DataChannel> dc = nullptr;
+    std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr;
     std::vector<rtc::Candidate> outgoing_candidates, incoming_candidates;
 
     void drain_incoming_candidates() {
@@ -240,20 +240,30 @@ Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
         if (st.expired())
             return;
 
+        std::lock_guard sync_guard(::sync);
         const auto state = st.lock();
-        state->dc = dc;
+
+        if (dc->label() == "reliable")
+            state->reliable_dc = dc;
+        else
+            state->unreliable_dc = dc;
+
         setup_dc(*dc);
         fire(::on_player_joined, id.c_str());
     });
 
     if (is_offerer()) {
-        // TODO: have separate reliable and unreliable channels (#5)
-        const rtc::DataChannelInit args{
-            .reliability = {.maxRetransmits = 0},
-        };
+        state->unreliable_dc = state->pc->createDataChannel("unreliable", {
+            .reliability = {.unordered = true, .maxRetransmits = 0, },
+        });
 
-        state->dc = state->pc->createDataChannel("NutBlast", args);
-        setup_dc(*state->dc);
+        setup_dc(*state->unreliable_dc);
+
+        state->reliable_dc = state->pc->createDataChannel("reliable", {
+            .reliability = {.unordered = false, .maxRetransmits = 3, },
+        });
+
+        setup_dc(*state->reliable_dc);
     }
 }
 
@@ -374,52 +384,38 @@ static void join_pro() {
     );
 
     ::blaster_ws->onOpen([]() {
+        std::lock_guard guard(::sync);
         fire(::on_connected);
     });
 
-    ::blaster_ws->onMessage([](const auto& _msg) {
-        if (std::holds_alternative<rtc::string>(_msg)) {
-            const auto msg = std::get<rtc::string>(_msg);
-            ws_in.push_back(std::move(msg));
+    ::blaster_ws->onMessage([](const auto& msg) {
+        if (std::holds_alternative<rtc::string>(msg)) {
+            std::lock_guard guard(::sync);
+            ws_in.push_back(std::get<rtc::string>(msg));
         }
     });
 
-    ::blaster_ws->onClosed([]() {
-        recv_shit();
-        NutBlast_Disconnect();
-    });
+    ::blaster_ws->onClosed(NutBlast_Disconnect);
 
     ::blaster_ws->open(get_blaster());
 }
 
 extern "C" void NutBlast_Disconnect() {
-    static bool recursed = false;
-
-    if (recursed)
-        return;
-
-    // :face_vomiting:
-    struct Guard {
-        Guard() {
-            recursed = true;
-        }
-
-        ~Guard() {
-            recursed = false;
-        }
-    } recurse_guard;
-
-    info("NutBlaster out!");
-    fire(::on_disconnected, ::disconnect_reason ? ::disconnect_reason->c_str() : "Disconnected");
+    std::lock_guard sync_guard(::sync);
 
     if (::blaster_ws) {
+        recv_shit();
+
+        info("NutBlaster out!");
+        fire(::on_disconnected, ::disconnect_reason ? ::disconnect_reason->c_str() : "Disconnected");
+
         try {
             ::blaster_ws->close();
         } catch (const std::runtime_error&) {}
     }
 
     ::blaster_ws = nullptr, ::lid = std::nullopt;
-    ::peers.clear();
+    ::peers.clear(), ::ws_in.clear(), ::ws_out.clear();
 }
 
 extern "C" void NutBlast_FindLobbies() {
@@ -570,7 +566,9 @@ static void handle_lobbies(const nlohmann::json& obj) {
 }
 
 static void recv_shit() {
-    static const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> types{
+    std::lock_guard guard(::sync);
+
+    const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> types{
         {"Bye", handle_bye},
         {"Update", handle_update},
         {"Offer", handle_offer_answer},
@@ -579,7 +577,9 @@ static void recv_shit() {
         {"Lobbies", handle_lobbies},
     };
 
-    for (const auto& msg : ::ws_in) {
+    for (const auto& _msg : ::ws_in) {
+        const auto msg = _msg; // NOTE: this copy solves a hardcrash on exit???
+
         try {
             const auto obj = nlohmann::json::parse(msg);
 
@@ -597,6 +597,8 @@ static void recv_shit() {
 }
 
 static void send_updates() {
+    std::lock_guard guard(::sync);
+
     for (auto& [id, peer] : ::peers) {
         for (const auto& candidate : peer.state->outgoing_candidates) {
             ::ws_send({
@@ -640,14 +642,14 @@ extern "C" void NutBlast_Flush() {
 }
 
 extern "C" void NutBlast_Update() {
-    if (!is_connected())
-        return;
-
-    recv_shit();
-    NutBlast_Flush();
+    if (is_connected()) {
+        recv_shit();
+        NutBlast_Flush();
+    }
 }
 
-extern "C" void NutBlast_SendTo(NutBlast_ChannelID chan, const char* id, const char* msg, int size) {
+static void greatest_technician_thats_ever_lived(
+    NutBlast_ChannelID chan, const char* id, const char* msg, int size, bool reliable) {
     if (!is_connected())
         return;
 
@@ -662,10 +664,18 @@ extern "C" void NutBlast_SendTo(NutBlast_ChannelID chan, const char* id, const c
 
     try {
         const auto& peer = ::peers.at(id);
-        const auto dc = peer.state->dc;
+        const auto& dc = reliable ? peer.state->reliable_dc : peer.state->unreliable_dc;
         dc && dc->send(buf);
     } catch (const std::out_of_range&) {
     } catch (const std::runtime_error&) {}
+}
+
+extern "C" void NutBlast_SendTo(NutBlast_ChannelID chan, const char* id, const char* msg, int size) {
+    greatest_technician_thats_ever_lived(chan, id, msg, size, false);
+}
+
+extern "C" void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, const char* id, const char* msg, int size) {
+    greatest_technician_thats_ever_lived(chan, id, msg, size, true);
 }
 
 extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {

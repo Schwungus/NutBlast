@@ -44,6 +44,7 @@ static const char* names[] = {"Ninja", "Marsoyob", "Trollga", "Ficus", "Caccus",
 
 enum {
     CHAN_POS,
+    CHAN_CHAT,
     CHAN_MAX,
 };
 
@@ -143,6 +144,22 @@ static void send_our_position() {
     }
 }
 
+static void maybe_chat() {
+    if (!IsKeyPressed(KEY_T))
+        return;
+
+    const char** peers = NutBlast_GetPlayerIDs();
+
+    for (;;) {
+        const char* id = *peers++;
+
+        if (!id)
+            break;
+
+        NutBlast_SendReliablyTo(CHAN_CHAT, id, "Hello!", -1);
+    }
+}
+
 static void recv_shit() {
     NutBlast_Message msg = {0};
 
@@ -154,6 +171,9 @@ static void recv_shit() {
 
         sscanf(msg.data, "%d:%d", &p->x, &p->y);
     }
+
+    while (NutBlast_NextMessage(CHAN_CHAT, &msg))
+        TraceLog(LOG_INFO, "chat <%s> %s", NutBlast_GetPeerField(msg.from, "NAME"), msg.data);
 }
 
 static void on_disconnected(const char* reason) {
@@ -192,6 +212,7 @@ int main(int argc, char* argv[]) {
 
         move_our_rect();
         send_our_position();
+        maybe_chat();
         NutBlast_Update();
         recv_shit();
 
