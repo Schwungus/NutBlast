@@ -132,7 +132,6 @@ template <typename... Args> static inline void info(std::format_string<Args...> 
     std::fflush(stdout);
 }
 
-// making this one available externally for internal use.
 extern "C" uint64_t NutBlast_TimeNS() {
     struct timespec ts = {0};
     timespec_get(&ts, TIME_UTC);
@@ -732,8 +731,7 @@ extern "C" void NutBlast_OnLobbiesFound(void (*cb)(const NutBlast_Lobby*, size_t
 #ifdef _WIN32
 
 extern "C" void NutBlast_SleepMS(int _ms) {
-    uint64_t target = NutBlast_TimeNS() + ((uint64_t)_ms * 1000000);
-    while (NutBlast_TimeNS() < target) {}
+    Sleep(_ms);
 }
 
 #else
