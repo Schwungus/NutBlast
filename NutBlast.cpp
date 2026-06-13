@@ -74,13 +74,14 @@ struct PeerSharedState {
     std::vector<rtc::Candidate> outgoing_candidates, incoming_candidates;
 
     void drain_incoming_candidates() {
-        for (const auto& candidate : incoming_candidates) {
+        const auto copy = incoming_candidates;
+        incoming_candidates.clear();
+
+        for (const auto& candidate : copy) {
             try {
                 pc->addRemoteCandidate(candidate);
             } catch (const std::logic_error&) { return; }
         }
-
-        incoming_candidates.clear();
     }
 };
 
@@ -402,6 +403,20 @@ static void join_pro() {
 
 extern "C" void NutBlast_Disconnect() {
     std::lock_guard sync_guard(::sync);
+    static bool recursion_cycle = false;
+
+    if (recursion_cycle)
+        return;
+
+    struct Guard {
+        Guard() {
+            recursion_cycle = true;
+        }
+
+        ~Guard() {
+            recursion_cycle = false;
+        }
+    } recursion_guard;
 
     if (::blaster_ws) {
         recv_shit();
@@ -492,6 +507,7 @@ extern "C" bool NutBlast_IsPlayerAlive(const char* id) {
 
 static void handle_update(const nlohmann::json& obj) {
     ::master = obj["master"];
+    ::max_players = obj["max_players"];
     ::lobby_meta = obj["meta"];
 
     std::unordered_set<std::string> present_peers;
@@ -577,9 +593,10 @@ static void recv_shit() {
         {"Lobbies", handle_lobbies},
     };
 
-    for (const auto& _msg : ::ws_in) {
-        const auto msg = _msg; // NOTE: this copy solves a hardcrash on exit???
+    const auto copy = ::ws_in; // NOTE: this copy solves a hardcrash on exit???
+    ::ws_in.clear();
 
+    for (const auto& msg : copy) {
         try {
             const auto obj = nlohmann::json::parse(msg);
 
@@ -592,8 +609,6 @@ static void recv_shit() {
                 types.at(type)(obj);
         } catch (const nlohmann::json::parse_error&) { continue; }
     }
-
-    ::ws_in.clear();
 }
 
 static void send_updates() {
@@ -618,6 +633,7 @@ static void send_updates() {
         {"gid", ::gid},
         {"pid", ::get_pid()},
         {"lid", ::lid},
+        {"max_players", ::max_players},
         {"peer_meta", ::peer_meta},
         {"lobby_meta", ::lobby_meta},
     });

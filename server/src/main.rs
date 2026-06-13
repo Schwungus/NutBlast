@@ -21,6 +21,8 @@ const GAME_ID_LEN: usize = 16;
 const LOBBY_ID_MAX: usize = 32;
 const LOBBY_ID_MIN: usize = 3;
 
+const MAX_PLAYERS: usize = 16;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct LobbyId {
     game: String,
@@ -29,9 +31,11 @@ struct LobbyId {
 
 struct Lobby {
     meta: HashMap<String, String>,
+    max_players: usize,
 }
 
 struct Player {
+    counter: u64, // keeps player ordering stable (e.g. master doesn't change if a new player joins)
     lobby_id: LobbyId,
     meta: HashMap<String, String>,
     queue: Vec<Response>,
@@ -40,6 +44,7 @@ struct Player {
 struct State {
     lobbies: HashMap<LobbyId, Lobby>,
     players: HashMap<String, Player>,
+    counter: u64,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +64,7 @@ enum Payload {
         pid: String,
         gid: String,
         lid: String,
+        max_players: usize,
         peer_meta: HashMap<String, String>,
         lobby_meta: Option<HashMap<String, String>>,
     },
@@ -85,8 +91,8 @@ struct ResponsePeer {
 #[derive(Clone, Serialize)]
 struct LobbyListing {
     id: String,
-    players: u8,
-    max: u8,
+    players: usize,
+    max: usize,
     meta: HashMap<String, String>,
 }
 
@@ -98,6 +104,7 @@ enum Response {
     },
     Update {
         master: String,
+        max_players: usize,
         peers: HashMap<String, ResponsePeer>,
         meta: HashMap<String, String>,
     },
@@ -123,9 +130,28 @@ impl State {
     fn master_of(&self, lobby: &LobbyId) -> String {
         self.players
             .iter()
-            .find(|(_, v)| v.lobby_id == *lobby)
+            .filter(|(_, v)| v.lobby_id == *lobby)
+            .min_by(|(_, a), (_, b)| a.counter.cmp(&b.counter))
             .map(|(k, _)| k.to_string())
             .unwrap()
+    }
+
+    fn players_in(&self, lobby: &LobbyId) -> usize {
+        let mut counter = 0;
+
+        for (_, p) in self.players.iter() {
+            if p.lobby_id == *lobby {
+                counter += 1;
+            }
+        }
+
+        counter
+    }
+
+    fn next_counter(&mut self) -> u64 {
+        let next = self.counter;
+        self.counter += 1;
+        next
     }
 }
 
@@ -148,6 +174,7 @@ async fn main() -> eyre::Result<()> {
     let state = Arc::new(Mutex::new(State {
         lobbies: HashMap::new(),
         players: HashMap::new(),
+        counter: 0,
     }));
 
     while let Ok((stream, peer_addr)) = listener.accept().await {
@@ -201,19 +228,18 @@ impl Connection {
                     .lobbies
                     .iter()
                     .filter_map(|(lid, lobby)| {
-                        if lid.game == gid {
-                            Some((
-                                lid.clone(),
-                                LobbyListing {
-                                    id: lid.name.to_string(),
-                                    max: 0, // TODO: add max players
-                                    players: 0,
-                                    meta: lobby.meta.clone(),
-                                },
-                            ))
-                        } else {
-                            None
+                        if lid.game != gid {
+                            return None;
                         }
+
+                        let lobby = LobbyListing {
+                            id: lid.name.to_string(),
+                            max: lobby.max_players,
+                            players: 0,
+                            meta: lobby.meta.clone(),
+                        };
+
+                        Some((lid.clone(), lobby))
                     })
                     .collect();
 
@@ -232,9 +258,14 @@ impl Connection {
                 pid,
                 gid,
                 lid,
+                max_players,
                 peer_meta,
                 lobby_meta,
             } => {
+                if max_players < 2 || max_players > MAX_PLAYERS {
+                    return Outcome::boot("wtf?");
+                }
+
                 let lobby_meta = lobby_meta.unwrap_or_else(HashMap::new);
 
                 match self.pid {
@@ -300,25 +331,48 @@ impl Connection {
                     _ => {}
                 }
 
+                let max_players = if !state.lobbies.contains_key(&lobby_id) {
+                    info!("new lobby max={1} {:?}", lobby_id, max_players);
+
+                    state.lobbies.insert(
+                        lobby_id.clone(),
+                        Lobby {
+                            meta: lobby_meta,
+                            max_players,
+                        },
+                    );
+
+                    max_players
+                } else if Some(state.master_of(&lobby_id)) == self.pid {
+                    let lober = state.lobbies.get_mut(&lobby_id);
+
+                    lober.map(|l| {
+                        l.meta = lobby_meta;
+                        l.max_players = max_players;
+                    });
+
+                    max_players
+                } else {
+                    state.lobbies[&lobby_id].max_players
+                };
+
                 if let Some(p) = state.players.get_mut(&pid) {
                     p.meta = peer_meta;
                 } else {
+                    if let Some(Lobby { max_players, .. }) = state.lobbies.get(&lobby_id)
+                        && state.players_in(&lobby_id) >= *max_players
+                    {
+                        return Outcome::boot("Lobby is full!");
+                    }
+
                     let p = Player {
+                        counter: state.next_counter(),
                         lobby_id: lobby_id.clone(),
                         meta: peer_meta,
                         queue: Vec::new(),
                     };
 
                     state.players.insert(pid.to_string(), p);
-                }
-
-                if !state.lobbies.contains_key(&lobby_id) {
-                    info!("new lobby {:?}", lobby_id);
-                    let lober = Lobby { meta: lobby_meta };
-                    state.lobbies.insert(lobby_id.clone(), lober);
-                } else if Some(state.master_of(&lobby_id)) == self.pid {
-                    let lober = state.lobbies.get_mut(&lobby_id);
-                    lober.map(|l| l.meta = lobby_meta);
                 }
 
                 let master = state.master_of(&lobby_id);
@@ -338,6 +392,7 @@ impl Connection {
 
                 let update = Response::Update {
                     master,
+                    max_players,
                     meta: state.lobbies[&lobby_id].meta.clone(),
                     peers,
                 };
