@@ -208,7 +208,7 @@ impl Connection {
         let json = match msg {
             Message::Text(text) => text.to_string(),
             Message::Close(_) => return Outcome::Bye(None),
-            Message::Binary(_) => return Outcome::boot("Sybau clanker"),
+            Message::Binary(_) => return Outcome::boot("Binary messages not supported"),
             _ => return Outcome::Good,
         };
 
@@ -216,7 +216,7 @@ impl Connection {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", self.addr, err);
-                return Outcome::boot("Speak JSON!!!");
+                return Outcome::boot("Bad JSON");
             }
         };
 
@@ -263,7 +263,7 @@ impl Connection {
                 lobby_meta,
             } => {
                 if max_players < 2 || max_players > MAX_PLAYERS {
-                    return Outcome::boot("wtf?");
+                    return Outcome::boot("Bad max player count");
                 }
 
                 let lobby_meta = lobby_meta.unwrap_or_else(HashMap::new);
@@ -271,12 +271,12 @@ impl Connection {
                 match self.pid {
                     None => {
                         if pid.len() != PLAYER_ID_LEN {
-                            return Outcome::boot("PID");
+                            return Outcome::boot("Player ID must be 4 characters");
                         }
 
                         // no pid spoofing!!!
                         if state.players.contains_key(&pid) {
-                            return Outcome::boot("PID");
+                            return Outcome::boot("Another player is using this ID");
                         }
 
                         self.pid = Some(pid.to_string());
@@ -291,7 +291,7 @@ impl Connection {
                 match self.lid {
                     None => {
                         if lid.len() < LOBBY_ID_MIN || lid.len() > LOBBY_ID_MAX {
-                            return Outcome::boot("LID");
+                            return Outcome::boot("Lobby ID must be 3-32 characters");
                         }
 
                         // no lobby-hopping!!!
@@ -307,7 +307,7 @@ impl Connection {
                 match self.gid {
                     None => {
                         if gid.len() > GAME_ID_LEN {
-                            return Outcome::boot("GID");
+                            return Outcome::boot("Game ID exceeds 16 characters");
                         }
 
                         // no game-hopping either!!!
@@ -326,8 +326,8 @@ impl Connection {
                 };
 
                 match (mode, state.lobbies.contains_key(&lobby_id)) {
-                    (ConnectionMode::Host, true) => return Outcome::boot("Lobby already exists!"),
-                    (ConnectionMode::Join, false) => return Outcome::boot("No such lobby!"),
+                    (ConnectionMode::Host, true) => return Outcome::boot("Lobby already exists"),
+                    (ConnectionMode::Join, false) => return Outcome::boot("Lobby not found"),
                     _ => {}
                 }
 
@@ -362,7 +362,7 @@ impl Connection {
                     if let Some(Lobby { max_players, .. }) = state.lobbies.get(&lobby_id)
                         && state.players_in(&lobby_id) >= *max_players
                     {
-                        return Outcome::boot("Lobby is full!");
+                        return Outcome::boot("Lobby is full");
                     }
 
                     let p = Player {
@@ -432,7 +432,7 @@ impl Connection {
                 });
             }
             _ => {
-                return Outcome::boot("wtf");
+                return Outcome::boot("Bad payload");
             }
         };
 
