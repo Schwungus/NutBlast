@@ -113,8 +113,8 @@ struct Peer {
     std::shared_ptr<PeerSharedState> state;
     const std::string id;
 
-    Peer(const std::string&);
-    ~Peer() = default;
+    Peer(const std::string& id) : Peer(id, {}) {}
+    Peer(const std::string&, const Metadata&);
 
     bool is_offerer() const;
 };
@@ -194,7 +194,7 @@ struct Ticker {
     }
 };
 
-Peer::Peer(const std::string& id) : state(new PeerSharedState(id)), id(id) {
+Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedState(id)), id(id), meta(meta) {
     state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
     const std::weak_ptr<PeerSharedState> st = state;
 
@@ -418,10 +418,12 @@ static void join_pro() {
     for (auto& queue : recv_queues)
         queue.clear();
 
+#ifndef __EMSCRIPTEN__
     std::optional<rtc::string> ca = std::nullopt;
 
     if (!WINDOSE)
         ca = "/etc/ssl/certs/ca-certificates.crt";
+#endif
 
     ::blaster_ws = std::make_shared<rtc::WebSocket>(
 #ifndef __EMSCRIPTEN__
@@ -447,16 +449,9 @@ static void join_pro() {
                 {"pid", ::get_pid()},
                 {"lid", ::lid},
                 {"max_players", ::max_players},
-                // TODO: stick peer-metadata in here
+                {"peer_meta", ::peer_meta},
+                {"lobby_meta", ::lobby_meta},
             });
-
-            for (const auto& [key, value] : ::peer_meta) {
-                ::ws_send({
-                    {"type", "SetPeerMeta"},
-                    {"key", key},
-                    {"value", value},
-                });
-            }
         }
 
         fire(::on_connected);
@@ -641,7 +636,8 @@ static const std::unordered_map<std::string, std::function<void(const nlohmann::
         }},
     {"Joined",
         [](const auto& obj) {
-            ::peers.insert({obj["id"], Peer(obj["id"])});
+            const std::string id = obj["id"];
+            ::peers.insert({id, Peer(id, obj["meta"])});
         }},
     {"Left",
         [](const auto& obj) {

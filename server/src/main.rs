@@ -17,6 +17,7 @@ const ID_MIN: usize = 1;
 const ID_MAX: usize = 8;
 const GAME_ID_LEN: usize = 16;
 const MAX_PLAYERS: usize = 16;
+const MAX_FIELDS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct LobbyId {
@@ -60,6 +61,8 @@ enum Payload {
         gid: String,
         lid: String,
         max_players: usize,
+        peer_meta: HashMap<String, String>,
+        lobby_meta: HashMap<String, String>,
     },
     SetCapacity {
         capacity: usize,
@@ -118,6 +121,7 @@ enum Response {
     },
     Joined {
         id: String,
+        meta: HashMap<String, String>,
     },
     Left {
         id: String,
@@ -271,7 +275,8 @@ impl Connection {
                 gid,
                 lid,
                 max_players,
-                // TODO: add peer & lobby metadata here so it's available as soon as the fucker joins
+                peer_meta,
+                lobby_meta,
             } if (1..=MAX_PLAYERS).contains(&max_players)
                 && self.pid.is_none()
                 && self.lid.is_none()
@@ -302,7 +307,7 @@ impl Connection {
                     state.lobbies.insert(
                         lid.clone(),
                         Lobby {
-                            meta: HashMap::new(),
+                            meta: lobby_meta,
                             max_players,
                         },
                     );
@@ -319,7 +324,7 @@ impl Connection {
                 let p = Player {
                     counter: state.next_counter(),
                     lid: lid.clone(),
-                    meta: HashMap::new(),
+                    meta: peer_meta.clone(),
                     queue: Vec::new(),
                 };
 
@@ -354,15 +359,8 @@ impl Connection {
                     for (other, meta) in &pmeta {
                         player.queue.push(Response::Joined {
                             id: other.to_string(),
+                            meta: meta.clone(),
                         });
-
-                        for (key, value) in meta {
-                            player.queue.push(Response::PeerMetaSet {
-                                peer: other.to_string(),
-                                key: key.to_string(),
-                                value: value.to_string(),
-                            });
-                        }
                     }
 
                     if let Some(mastah) = mastah {
@@ -374,6 +372,7 @@ impl Connection {
                     if let Some(other) = state.players.get_mut(other) {
                         other.queue.push(Response::Joined {
                             id: pid.to_string(),
+                            meta: peer_meta.clone(),
                         })
                     };
                 }
@@ -428,13 +427,13 @@ impl Connection {
             }
             Payload::SetPeerMeta { key, value }
                 if let Some(ref lid) = self.lid
-                    && let Some(ref pid) = self.pid =>
+                    && let Some(ref pid) = self.pid
+                    && let Some(player) = state.players.get_mut(pid) =>
             {
-                if let Some(player) = state.players.get_mut(pid) {
-                    // TODO: add field count checks.
-                    player.meta.insert(key.to_string(), value.to_string());
-                } else {
+                if !player.meta.contains_key(&key) && player.meta.len() >= MAX_FIELDS {
                     return Outcome::Good;
+                } else {
+                    player.meta.insert(key.to_string(), value.to_string());
                 }
 
                 for (_, player) in &mut state.players {
@@ -447,13 +446,14 @@ impl Connection {
                     }
                 }
             }
-            Payload::SetLobbyMeta { key, value } if let Some(ref lid) = self.lid => {
-                let master = state.master_of(&lid);
-
-                if let Some(lober) = state.lobbies.get_mut(&lid)
-                    && master == self.pid
+            Payload::SetLobbyMeta { key, value }
+                if let Some(ref lid) = self.lid
+                    && let master = state.master_of(&lid)
+                    && let Some(lober) = state.lobbies.get_mut(&lid) =>
+            {
+                if master == self.pid
+                    && (lober.meta.contains_key(&key) || lober.meta.len() < MAX_FIELDS)
                 {
-                    // TODO: add field count checks.
                     lober.meta.insert(key.to_string(), value.to_string());
                 } else {
                     return Outcome::Good;
