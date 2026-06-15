@@ -5,7 +5,6 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::{Arc, Mutex, MutexGuard},
-    time::Duration,
 };
 
 use color_eyre::eyre;
@@ -14,12 +13,9 @@ use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
-const TIMEOUT: Duration = Duration::from_secs(5);
-
 const ID_MIN: usize = 1;
 const ID_MAX: usize = 8;
 const GAME_ID_LEN: usize = 16;
-
 const MAX_PLAYERS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -35,7 +31,7 @@ struct Lobby {
 
 struct Player {
     counter: u64, // keeps player ordering stable (e.g. master doesn't change if a new player joins)
-    lobby_id: LobbyId,
+    lid: LobbyId,
     meta: HashMap<String, String>,
     queue: Vec<Response>,
 }
@@ -46,26 +42,35 @@ struct State {
     counter: u64,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 enum ConnectionMode {
     Host,
     Join,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum Payload {
     List {
         gid: String,
     },
-    Update {
+    Connect {
         mode: ConnectionMode,
         pid: String,
         gid: String,
         lid: String,
         max_players: usize,
-        peer_meta: HashMap<String, String>,
-        lobby_meta: Option<HashMap<String, String>>,
+    },
+    SetCapacity {
+        capacity: usize,
+    },
+    SetPeerMeta {
+        key: String,
+        value: String,
+    },
+    SetLobbyMeta {
+        key: String,
+        value: String,
     },
     Candidate {
         to: String,
@@ -83,11 +88,6 @@ enum Payload {
 }
 
 #[derive(Clone, Serialize)]
-struct ResponsePeer {
-    meta: HashMap<String, String>,
-}
-
-#[derive(Clone, Serialize)]
 struct LobbyListing {
     id: String,
     players: usize,
@@ -101,11 +101,26 @@ enum Response {
     Bye {
         reason: Option<String>,
     },
-    Update {
-        master: String,
-        max_players: usize,
-        peers: HashMap<String, ResponsePeer>,
-        meta: HashMap<String, String>,
+    CapacitySet {
+        capacity: usize,
+    },
+    PeerMetaSet {
+        peer: String,
+        key: String,
+        value: String,
+    },
+    LobbyMetaSet {
+        key: String,
+        value: String,
+    },
+    NewMaster {
+        id: String,
+    },
+    Joined {
+        id: String,
+    },
+    Left {
+        id: String,
     },
     Candidate {
         from: String,
@@ -126,20 +141,19 @@ enum Response {
 }
 
 impl State {
-    fn master_of(&self, lobby: &LobbyId) -> String {
+    fn master_of(&self, lobby: &LobbyId) -> Option<String> {
         self.players
             .iter()
-            .filter(|(_, v)| v.lobby_id == *lobby)
+            .filter(|(_, v)| v.lid == *lobby)
             .min_by(|(_, a), (_, b)| a.counter.cmp(&b.counter))
             .map(|(k, _)| k.to_string())
-            .unwrap()
     }
 
     fn players_in(&self, lobby: &LobbyId) -> usize {
         let mut counter = 0;
 
         for (_, p) in self.players.iter() {
-            if p.lobby_id == *lobby {
+            if p.lid == *lobby {
                 counter += 1;
             }
         }
@@ -186,8 +200,7 @@ async fn main() -> eyre::Result<()> {
 struct Connection {
     addr: SocketAddr,
     pid: Option<String>,
-    gid: Option<String>,
-    lid: Option<String>,
+    lid: Option<LobbyId>,
 }
 
 enum Outcome {
@@ -243,161 +256,126 @@ impl Connection {
                     .collect();
 
                 for (_, player) in state.players.iter() {
-                    list.get_mut(&player.lobby_id).map(|l| l.players += 1);
+                    if let Some(lober) = list.get_mut(&player.lid) {
+                        lober.players += 1;
+                    }
                 }
 
-                let resp = Response::List {
+                return Outcome::Bye(Some(Response::List {
                     list: list.into_values().collect(),
-                };
-
-                return Outcome::Bye(Some(resp));
+                }));
             }
-            Payload::Update {
+            Payload::Connect {
                 mode,
                 pid,
                 gid,
                 lid,
                 max_players,
-                peer_meta,
-                lobby_meta,
-            } => {
-                if max_players < 2 || max_players > MAX_PLAYERS {
-                    return Outcome::boot("Bad max player count");
-                }
-
-                let lobby_meta = lobby_meta.unwrap_or_else(HashMap::new);
-
-                match self.pid {
-                    None => {
-                        if pid.len() < ID_MIN || pid.len() > ID_MAX {
-                            return Outcome::boot("Player ID must be 1-8 characters");
-                        }
-
-                        // no pid spoofing!!!
-                        if state.players.contains_key(&pid) {
-                            return Outcome::boot("Another player is using this ID");
-                        }
-
-                        self.pid = Some(pid.to_string());
-                    }
-                    Some(ref real) => {
-                        if pid != *real {
-                            return Outcome::boot("PID");
-                        }
-                    }
-                }
-
-                match self.lid {
-                    None => {
-                        if lid.len() < ID_MIN || lid.len() > ID_MAX {
-                            return Outcome::boot("Lobby ID must be 1-8 characters");
-                        }
-
-                        // no lobby-hopping!!!
-                        self.lid = Some(lid.to_string());
-                    }
-                    Some(ref real) => {
-                        if lid != *real {
-                            return Outcome::boot("LID");
-                        }
-                    }
-                }
-
-                match self.gid {
-                    None => {
-                        if gid.len() > GAME_ID_LEN {
-                            return Outcome::boot("Game ID exceeds 16 characters");
-                        }
-
-                        // no game-hopping either!!!
-                        self.gid = Some(gid.to_string());
-                    }
-                    Some(ref real) => {
-                        if gid != *real {
-                            return Outcome::boot("GID");
-                        }
-                    }
-                }
-
-                let lobby_id = LobbyId {
+            } if (1..=MAX_PLAYERS).contains(&max_players)
+                && self.pid.is_none()
+                && self.lid.is_none()
+                && !state.players.contains_key(&pid)
+                && (ID_MIN..=ID_MAX).contains(&pid.len())
+                && (ID_MIN..=ID_MAX).contains(&lid.len())
+                && (1..=GAME_ID_LEN).contains(&gid.len()) =>
+            {
+                let lid = LobbyId {
                     game: gid.to_string(),
                     name: lid.to_string(),
                 };
 
-                match (mode, state.lobbies.contains_key(&lobby_id)) {
+                self.pid = Some(pid.to_string());
+                self.lid = Some(lid.clone());
+
+                match (mode, state.lobbies.contains_key(&lid)) {
                     (ConnectionMode::Host, true) => return Outcome::boot("Lobby already exists"),
                     (ConnectionMode::Join, false) => return Outcome::boot("Lobby not found"),
                     _ => {}
                 }
 
-                let max_players = if !state.lobbies.contains_key(&lobby_id) {
-                    info!("new lobby max={1} {:?}", lobby_id, max_players);
+                let max_players = if state.lobbies.contains_key(&lid) {
+                    state.lobbies[&lid].max_players
+                } else {
+                    info!("new lobby max={1} {:?}", lid, max_players);
 
                     state.lobbies.insert(
-                        lobby_id.clone(),
+                        lid.clone(),
                         Lobby {
-                            meta: lobby_meta,
+                            meta: HashMap::new(),
                             max_players,
                         },
                     );
 
                     max_players
-                } else if Some(state.master_of(&lobby_id)) == self.pid {
-                    let lober = state.lobbies.get_mut(&lobby_id);
-
-                    lober.map(|l| {
-                        l.meta = lobby_meta;
-                        l.max_players = max_players;
-                    });
-
-                    max_players
-                } else {
-                    state.lobbies[&lobby_id].max_players
                 };
 
-                if let Some(p) = state.players.get_mut(&pid) {
-                    p.meta = peer_meta;
-                } else {
-                    if let Some(Lobby { max_players, .. }) = state.lobbies.get(&lobby_id)
-                        && state.players_in(&lobby_id) >= *max_players
-                    {
-                        return Outcome::boot("Lobby is full");
-                    }
-
-                    let p = Player {
-                        counter: state.next_counter(),
-                        lobby_id: lobby_id.clone(),
-                        meta: peer_meta,
-                        queue: Vec::new(),
-                    };
-
-                    state.players.insert(pid.to_string(), p);
+                if let Some(Lobby { max_players, .. }) = state.lobbies.get(&lid)
+                    && state.players_in(&lid) >= *max_players
+                {
+                    return Outcome::boot("Lobby is full");
                 }
 
-                let master = state.master_of(&lobby_id);
+                let p = Player {
+                    counter: state.next_counter(),
+                    lid: lid.clone(),
+                    meta: HashMap::new(),
+                    queue: Vec::new(),
+                };
 
-                let peers = state
+                state.players.insert(pid.to_string(), p);
+
+                let mastah = state.master_of(&lid);
+                let meta = state.lobbies[&lid].meta.clone();
+
+                let pmeta: HashMap<_, _> = state
                     .players
                     .iter()
-                    .filter(|(_, p)| p.lobby_id == lobby_id)
-                    .map(|(k, p)| {
-                        let p = ResponsePeer {
-                            meta: p.meta.clone(),
-                        };
-
-                        (k.to_string(), p)
+                    .filter_map(|(id, p)| {
+                        if id != &pid && p.lid == lid {
+                            Some((id.to_string(), p.meta.clone()))
+                        } else {
+                            None
+                        }
                     })
                     .collect();
 
-                let update = Response::Update {
-                    master,
-                    max_players,
-                    meta: state.lobbies[&lobby_id].meta.clone(),
-                    peers,
-                };
+                {
+                    let player = state.players.get_mut(&pid).unwrap();
 
-                let peer = state.players.get_mut(&pid);
-                peer.map(|p| p.queue.push(update));
+                    player.queue.push(Response::CapacitySet {
+                        capacity: max_players,
+                    });
+
+                    for (key, value) in meta {
+                        player.queue.push(Response::LobbyMetaSet { key, value });
+                    }
+
+                    for (other, meta) in &pmeta {
+                        player.queue.push(Response::Joined {
+                            id: other.to_string(),
+                        });
+
+                        for (key, value) in meta {
+                            player.queue.push(Response::PeerMetaSet {
+                                peer: other.to_string(),
+                                key: key.to_string(),
+                                value: value.to_string(),
+                            });
+                        }
+                    }
+
+                    if let Some(mastah) = mastah {
+                        player.queue.push(Response::NewMaster { id: mastah });
+                    }
+                }
+
+                for other in pmeta.keys() {
+                    if let Some(other) = state.players.get_mut(other) {
+                        other.queue.push(Response::Joined {
+                            id: pid.to_string(),
+                        })
+                    };
+                }
             }
             Payload::Candidate { to, candidate, mid } if let Some(ref pid) = self.pid => {
                 let Some(to) = state.players.get_mut(&to) else {
@@ -430,7 +408,65 @@ impl Connection {
                     sdp,
                 });
             }
-            _ => {
+            Payload::SetCapacity { capacity } if let Some(ref lid) = self.lid => {
+                let master = state.master_of(&lid);
+
+                if master == self.pid
+                    && let Some(lober) = state.lobbies.get_mut(&lid)
+                {
+                    lober.max_players = capacity;
+                } else {
+                    return Outcome::Good;
+                }
+
+                for (_, player) in &mut state.players {
+                    if player.lid == *lid {
+                        player.queue.push(Response::CapacitySet { capacity });
+                    }
+                }
+            }
+            Payload::SetPeerMeta { key, value }
+                if let Some(ref lid) = self.lid
+                    && let Some(ref pid) = self.pid =>
+            {
+                if let Some(player) = state.players.get_mut(pid) {
+                    player.meta.insert(key.to_string(), value.to_string());
+                } else {
+                    return Outcome::Good;
+                }
+
+                for (_, player) in &mut state.players {
+                    if player.lid == *lid {
+                        player.queue.push(Response::PeerMetaSet {
+                            peer: pid.to_string(),
+                            key: key.to_string(),
+                            value: value.to_string(),
+                        });
+                    }
+                }
+            }
+            Payload::SetLobbyMeta { key, value } if let Some(ref lid) = self.lid => {
+                let master = state.master_of(&lid);
+
+                if let Some(lober) = state.lobbies.get_mut(&lid)
+                    && master == self.pid
+                {
+                    lober.meta.insert(key.to_string(), value.to_string());
+                } else {
+                    return Outcome::Good;
+                }
+
+                for (_, player) in &mut state.players {
+                    if player.lid == *lid {
+                        player.queue.push(Response::LobbyMetaSet {
+                            key: key.to_string(),
+                            value: value.to_string(),
+                        });
+                    }
+                }
+            }
+            other => {
+                debug!("bad: {:?}", other);
                 return Outcome::boot("Bad payload");
             }
         };
@@ -522,44 +558,67 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
     let mut conn = Connection {
         addr: peer_addr,
         pid: None,
-        gid: None,
         lid: None,
     };
 
     loop {
-        tokio::select! {
-            _ = tokio::time::sleep(TIMEOUT) => {
+        match ws_receiver.next().await {
+            Some(Ok(msg)) => {
+                match conn.handle(state.clone(), msg) {
+                    Outcome::Good => {}
+                    Outcome::Boot(reason) => {
+                        warn!("boot to the face for {}: {}", peer_addr, reason);
+
+                        let fatality = Some(Response::Bye {
+                            reason: Some(reason),
+                        });
+
+                        conn.finalize(state.clone(), &mut ws_sender, fatality).await;
+
+                        break;
+                    }
+                    Outcome::Bye(fatality) => {
+                        conn.finalize(state.clone(), &mut ws_sender, fatality).await;
+                        break;
+                    }
+                }
+
+                conn.flush(state.clone(), &mut ws_sender).await;
+            }
+            Some(Err(e)) => {
+                error!("{}: {}", peer_addr, e);
                 break;
             }
-            res = ws_receiver.next() => {
-                match res {
-                    Some(Ok(msg)) => {
-                        match conn.handle(state.clone(), msg) {
-                            Outcome::Good => {}
-                            Outcome::Boot(reason) => {
-                                warn!("boot to the face for {}: {}", peer_addr, reason);
-                                conn.finalize(state.clone(), &mut ws_sender, Some(Response::Bye { reason: Some(reason) })).await;
-                                break;
-                            }
-                            Outcome::Bye(fatality) => {
-                                conn.finalize(state.clone(), &mut ws_sender, fatality).await;
-                                break;
-                            }
-                        }
-
-                        conn.flush(state.clone(), &mut ws_sender).await;
-                    },
-                    Some(Err(e)) => {
-                        error!("{}: {}", peer_addr, e);
-                        break;
-                    },
-                    None => {
-                        break;
-                    },
-                }
+            None => {
+                break;
             }
         }
     }
+
+    if let Some(ref pid) = conn.pid
+        && let Some(ref lid) = conn.lid
+    {
+        let mut state = state.fucking_lock();
+        state.players.remove(pid);
+
+        let mastah = state.master_of(lid);
+
+        for (other, player) in &mut state.players {
+            if player.lid == *lid && other != pid {
+                player.queue.push(Response::Left {
+                    id: pid.to_string(),
+                });
+
+                if let Some(ref mastah) = mastah {
+                    player.queue.push(Response::NewMaster {
+                        id: mastah.to_string(),
+                    })
+                };
+            }
+        }
+    }
+
+    info!("bye {}", peer_addr);
 
     if let Ok(mut ws) = ws_receiver.reunite(ws_sender) {
         let _ = ws.close(None).await;
@@ -567,16 +626,10 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
 
     let mut state = state.fucking_lock();
 
-    if let Some(ref pid) = conn.pid {
-        state.players.remove(pid);
-    }
-
-    info!("bye {}", peer_addr);
-
     let mut nonempty = HashSet::new();
 
     for ref player in state.players.values() {
-        nonempty.insert(player.lobby_id.clone());
+        nonempty.insert(player.lid.clone());
     }
 
     state.lobbies.retain(move |k, _| {

@@ -31,7 +31,6 @@
 #include <random>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 
 #include <rtc/rtc.hpp>
 #include <rtc/websocket.hpp>
@@ -325,6 +324,13 @@ extern "C" void NutBlast_SetMaxChannels(NutBlast_ChannelID max) {
 extern "C" void NutBlast_SetMaxPlayers(int max) {
     if (max > 1 && max <= NUTBLAST_MAX_PLAYERS)
         ::max_players = max;
+    else
+        return;
+
+    ::ws_send({
+        {"type", "SetCapacity"},
+        {"capacity", ::max_players},
+    });
 }
 
 static bool is_connected() {
@@ -352,8 +358,14 @@ extern "C" const char* NutBlast_GetPeerField(const char* pee, const char* name) 
     return nullptr;
 }
 
-extern "C" void NutBlast_SetPeerField(const char* name, const char* value) {
-    peer_meta.insert_or_assign(name, value);
+extern "C" void NutBlast_SetPeerField(const char* key, const char* value) {
+    peer_meta.insert_or_assign(key, value);
+
+    ::ws_send({
+        {"type", "SetPeerMeta"},
+        {"key", key},
+        {"value", value},
+    });
 }
 
 extern "C" const char* NutBlast_GetLobbyField(const char* name) {
@@ -366,11 +378,19 @@ extern "C" const char* NutBlast_GetLobbyField(const char* name) {
     return nullptr;
 }
 
-extern "C" void NutBlast_SetLobbyField(const char* name, const char* value) {
+extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
     const char* master = NutBlast_GetMasterID();
 
     if (master != nullptr && master == get_pid())
-        lobby_meta.insert_or_assign(name, value);
+        lobby_meta.insert_or_assign(key, value);
+    else
+        return;
+
+    ::ws_send({
+        {"type", "SetLobbyMeta"},
+        {"key", key},
+        {"value", value},
+    });
 }
 
 static void recv_shit();
@@ -398,14 +418,24 @@ static void join_pro() {
 
     ::blaster_ws->onOpen([]() {
         std::lock_guard guard(::sync);
-        fire(::on_connected);
 
         if (listing) {
             ::ws_send({
                 {"type", "List"},
                 {"gid", ::gid},
             });
+        } else {
+            ::ws_send({
+                {"type", "Connect"},
+                {"mode", ::hosting ? "Host" : "Join"},
+                {"gid", ::gid},
+                {"pid", ::get_pid()},
+                {"lid", ::lid},
+                {"max_players", ::max_players},
+            });
         }
+
+        fire(::on_connected);
     });
 
     ::blaster_ws->onMessage([](const auto& msg) {
@@ -524,38 +554,6 @@ extern "C" bool NutBlast_IsPlayerAlive(const char* id) {
     return false;
 }
 
-static void handle_update(const nlohmann::json& obj) {
-    ::master = obj["master"];
-    ::max_players = obj["max_players"];
-    ::lobby_meta = obj["meta"];
-
-    std::unordered_set<std::string> present_peers;
-
-    for (const auto& [id, peer] : obj["peers"].items())
-        if (id != get_pid())
-            present_peers.insert(id);
-
-    std::erase_if(::peers, [present_peers](const auto& pair) {
-        const bool erase = !present_peers.contains(pair.first);
-
-        if (erase)
-            info("Bye, {}", pair.first);
-
-        return erase;
-    });
-
-    for (const auto& id : present_peers)
-        if (!::peers.contains(id))
-            ::peers.insert({id, Peer(id)});
-
-    for (auto& [id, peer] : ::peers) {
-        const auto as_recv = obj["peers"][id];
-
-        if (id != get_pid() && as_recv.contains("meta"))
-            peer.meta = as_recv["meta"];
-    }
-}
-
 static void handle_offer_answer(const nlohmann::json& obj) {
     const std::string& id = obj["from"];
 
@@ -578,11 +576,6 @@ static void handle_candidate(const nlohmann::json& obj) {
     peer.state->drain_incoming_candidates();
 }
 
-static void handle_bye(const nlohmann::json& obj) {
-    ::disconnect_reason = obj["reason"];
-    NutBlast_Disconnect();
-}
-
 static void handle_list(const nlohmann::json& obj) {
     std::vector<NutBlast_Lobby> lobbies;
     std::vector<std::string> tmp;
@@ -590,7 +583,7 @@ static void handle_list(const nlohmann::json& obj) {
     for (const auto& lober : obj["list"]) {
         tmp.push_back(lober["id"]);
 
-        lobbies.push_back(NutBlast_Lobby{
+        lobbies.push_back({
             .id = tmp.back().c_str(),
             .players = lober["players"],
             .capacity = lober["max"],
@@ -600,17 +593,47 @@ static void handle_list(const nlohmann::json& obj) {
     fire(::on_lobbies_found, const_cast<const NutBlast_Lobby*>(lobbies.data()), lobbies.size());
 }
 
+static const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> payload_types{
+    {"Bye",
+        [](const auto& obj) {
+            ::disconnect_reason = obj["reason"];
+            NutBlast_Disconnect();
+        }},
+    {"CapacitySet",
+        [](const auto& obj) {
+            ::max_players = obj["capacity"];
+        }},
+    {"PeerMetaSet",
+        [](const auto& obj) {
+            if (::peers.contains(obj["peer"]))
+                ::peers.at(obj["peer"]).meta.insert_or_assign(obj["key"], obj["value"]);
+        }},
+    {"LobbyMetaSet",
+        [](const auto& obj) {
+            ::lobby_meta.insert_or_assign(obj["key"], obj["value"]);
+        }},
+    {"NewMaster",
+        [](const auto& obj) {
+            ::master = obj["id"];
+        }},
+    {"Joined",
+        [](const auto& obj) {
+            ::peers.insert({obj["id"], Peer(obj["id"])});
+        }},
+    {"Left",
+        [](const auto& obj) {
+            if (::peers.contains(obj["id"]))
+                ::peers.erase(obj["id"]);
+        }},
+    {"Offer", handle_offer_answer},
+    {"Offer", handle_offer_answer},
+    {"Answer", handle_offer_answer},
+    {"Candidate", handle_candidate},
+    {"List", handle_list},
+};
+
 static void recv_shit() {
     std::lock_guard guard(::sync);
-
-    const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> types{
-        {"Bye", handle_bye},
-        {"Update", handle_update},
-        {"Offer", handle_offer_answer},
-        {"Answer", handle_offer_answer},
-        {"Candidate", handle_candidate},
-        {"List", handle_list},
-    };
 
     const auto copy = ::ws_in; // NOTE: this copy solves a hardcrash on exit???
     ::ws_in.clear();
@@ -624,8 +647,8 @@ static void recv_shit() {
 
             const std::string type = obj["type"];
 
-            if (types.contains(type))
-                types.at(type)(obj);
+            if (payload_types.contains(type))
+                payload_types.at(type)(obj);
         } catch (const nlohmann::json::parse_error&) { continue; }
     }
 }
@@ -645,19 +668,6 @@ static void send_updates() {
 
         peer.state->outgoing_candidates.clear();
     }
-
-    ::ws_send({
-        {"type", "Update"},
-        {"mode", ::hosting ? "Host" : "Join"},
-        {"gid", ::gid},
-        {"pid", ::get_pid()},
-        {"lid", ::lid},
-        {"max_players", ::max_players},
-        {"peer_meta", ::peer_meta},
-        {"lobby_meta", ::lobby_meta},
-    });
-
-    ::hosting = false; // otherwise we'll get booted with "lobby already exists!"
 }
 
 extern "C" void NutBlast_Flush() {
