@@ -482,7 +482,6 @@ extern "C" void NutBlast_Disconnect() {
 
     ::blaster_ws = nullptr, ::lid = std::nullopt;
     ::peers.clear(), ::ws_in.clear(), ::ws_out.clear();
-    rtc::Cleanup().wait();
 }
 
 extern "C" void NutBlast_FindLobbies() {
