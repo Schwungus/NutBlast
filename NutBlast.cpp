@@ -39,17 +39,13 @@
 
 #include <NutBlast.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <errno.h>
-#endif
-
 static constexpr const bool WINDOSE =
 #ifdef _WIN32
     true;
+#include <windows.h>
 #else
     false;
+#include <errno.h>
 #endif
 
 using Metadata = std::unordered_map<std::string, std::string>;
@@ -98,13 +94,21 @@ struct PeerSharedState {
         for (const auto& offer : copy_and_clear(::incoming_offers.at(id)))
             pc->setRemoteDescription(offer);
 
-        if (::incoming_candidates.contains(id)) {
-            for (const auto& candidate : copy_and_clear(::incoming_candidates.at(id))) {
-                try {
-                    pc->addRemoteCandidate(candidate);
-                } catch (const std::logic_error&) { return; }
+        if (!::incoming_candidates.contains(id))
+            return;
+
+        const auto copy = ::incoming_candidates.at(id);
+
+        for (const auto& candidate : copy) {
+            try {
+                pc->addRemoteCandidate(candidate);
+            } catch (const std::logic_error&) {
+                return; // cannot use `copy_and_clear` here since that would clear incoming candidates immediately. we
+                        // need them kept despite any state-related errors.
             }
         }
+
+        ::incoming_candidates.at(id).clear();
     }
 };
 
@@ -117,6 +121,11 @@ struct Peer {
     Peer(const std::string&, const Metadata&);
 
     bool is_offerer() const;
+
+    bool is_alive() const {
+        return state && state->unreliable_dc && state->unreliable_dc->isOpen() && state->reliable_dc
+               && state->reliable_dc->isOpen();
+    }
 };
 
 struct Message {
@@ -161,19 +170,16 @@ extern "C" uint64_t NutBlast_TimeNS() {
 }
 
 static void ws_send(nlohmann::json&& obj) {
-    ws_out.push_back(obj);
-
-    if (!::blaster_ws || !::blaster_ws->isOpen())
-        return;
-
     std::lock_guard guard(::sync);
 
-    try {
-        for (const auto& obj : ws_out)
-            ::blaster_ws->send(obj.dump());
-    } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
+    ws_out.push_back(obj);
 
-    ws_out.clear();
+    if (NutBlast_IsReady()) {
+        try {
+            for (const auto& obj : copy_and_clear(ws_out))
+                ::blaster_ws->send(obj.dump());
+        } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
+    }
 }
 
 struct Ticker {
@@ -347,10 +353,6 @@ extern "C" void NutBlast_SetMaxPlayers(int max) {
     });
 }
 
-static bool is_connected() {
-    return ::blaster_ws != nullptr;
-}
-
 extern "C" const char* NutBlast_GetPeerField(const char* pee, const char* name) {
     if (!pee || !name)
         return nullptr;
@@ -358,7 +360,7 @@ extern "C" const char* NutBlast_GetPeerField(const char* pee, const char* name) 
     if (pee == get_pid())
         return peer_meta.at(name).c_str();
 
-    if (!is_connected())
+    if (!NutBlast_IsReady())
         return nullptr;
 
     if (!::peers.contains(pee))
@@ -383,7 +385,7 @@ extern "C" void NutBlast_SetPeerField(const char* key, const char* value) {
 }
 
 extern "C" const char* NutBlast_GetLobbyField(const char* name) {
-    if (!is_connected())
+    if (!name || !NutBlast_IsReady())
         return nullptr;
 
     if (lobby_meta.contains(name))
@@ -393,18 +395,25 @@ extern "C" const char* NutBlast_GetLobbyField(const char* name) {
 }
 
 extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
-    const char* master = NutBlast_GetMasterID();
-
-    if (master != nullptr && master == get_pid())
-        lobby_meta.insert_or_assign(key, value);
-    else
+    if (!key || !value)
         return;
 
-    ::ws_send({
-        {"type", "SetLobbyMeta"},
-        {"key", key},
-        {"value", value},
-    });
+    if (NutBlast_IsReady()) {
+        const char* master = NutBlast_GetMasterID();
+
+        if (!master || master != get_pid())
+            return;
+    }
+
+    lobby_meta.insert_or_assign(key, value);
+
+    if (NutBlast_IsReady()) {
+        ::ws_send({
+            {"type", "SetLobbyMeta"},
+            {"key", key},
+            {"value", value},
+        });
+    }
 }
 
 static void recv_shit();
@@ -490,7 +499,7 @@ extern "C" void NutBlast_Disconnect() {
 }
 
 extern "C" void NutBlast_FindLobbies() {
-    if (is_connected()) {
+    if (::blaster_ws) {
         info("You're already connected!");
     } else {
         ::listing = true;
@@ -500,8 +509,10 @@ extern "C" void NutBlast_FindLobbies() {
 }
 
 extern "C" void NutBlast_Join(const char* id) {
-    if (is_connected()) {
+    if (::blaster_ws) {
         info("You're already connected!");
+    } else if (!id) {
+        info("wtf bro");
     } else {
         ::hosting = false, ::listing = false, ::lid = id;
         join_pro();
@@ -510,8 +521,10 @@ extern "C" void NutBlast_Join(const char* id) {
 }
 
 extern "C" void NutBlast_Host(const char* id, int max) {
-    if (is_connected()) {
+    if (::blaster_ws) {
         info("You're already connected!");
+    } else if (!id) {
+        info("wtf bro");
     } else {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing = false, ::lid = id ? id : generate_id();
@@ -521,7 +534,7 @@ extern "C" void NutBlast_Host(const char* id, int max) {
 }
 
 extern "C" int NutBlast_GetPlayerCount() {
-    if (!is_connected())
+    if (!NutBlast_IsReady())
         return 0;
     return static_cast<int>(1 + peers.size());
 }
@@ -544,11 +557,11 @@ extern "C" const char* NutBlast_GetOurID() {
 }
 
 extern "C" const char* NutBlast_GetMasterID() {
-    return is_connected() ? ::master.c_str() : nullptr;
+    return NutBlast_IsReady() ? ::master.c_str() : nullptr;
 }
 
 extern "C" bool NutBlast_IsPlayerAlive(const char* id) {
-    if (!is_connected() || !id)
+    if (!id || !NutBlast_IsReady())
         return false;
 
     if (id == get_pid())
@@ -641,9 +654,11 @@ static const std::unordered_map<std::string, std::function<void(const nlohmann::
 static void recv_shit() {
     std::lock_guard guard(::sync);
 
-    const auto copy = copy_and_clear(::ws_in); // NOTE: this copy solves a hardcrash on exit???
+    if (!NutBlast_IsReady())
+        return;
 
-    for (const auto& msg : copy) {
+    // NOTE: this copy solves a hardcrash on exit???
+    for (const auto& msg : copy_and_clear(::ws_in)) {
         try {
             const auto obj = nlohmann::json::parse(msg);
 
@@ -665,7 +680,7 @@ static void send_updates() {
     std::lock_guard guard(::sync);
 
     for (auto& [id, peer] : ::peers) {
-        for (const auto& candidate : peer.state->outgoing_candidates) {
+        for (const auto& candidate : copy_and_clear(peer.state->outgoing_candidates)) {
             ::ws_send({
                 {"type", "Candidate"},
                 {"to", id},
@@ -673,28 +688,24 @@ static void send_updates() {
                 {"mid", candidate.mid()},
             });
         }
-
-        peer.state->outgoing_candidates.clear();
     }
 }
 
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat);
 
-    if (is_connected() && !listing && beater)
+    if (NutBlast_IsReady() && !listing && beater)
         send_updates();
 }
 
 extern "C" void NutBlast_Update() {
-    if (is_connected()) {
-        recv_shit();
-        NutBlast_Flush();
-    }
+    recv_shit();
+    NutBlast_Flush();
 }
 
 static void greatest_technician_thats_ever_lived(
     NutBlast_ChannelID chan, const char* id, const char* msg, int size, bool reliable) {
-    if (!is_connected())
+    if (!id || !msg || !NutBlast_PeerAlive(id))
         return;
 
     if (size < 0)
@@ -710,7 +721,6 @@ static void greatest_technician_thats_ever_lived(
         const auto& peer = ::peers.at(id);
         const auto& dc = reliable ? peer.state->reliable_dc : peer.state->unreliable_dc;
         dc && dc->send(buf);
-    } catch (const std::out_of_range&) {
     } catch (const std::runtime_error&) {}
 }
 
@@ -738,6 +748,23 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
     out->from = msg.from.c_str();
 
     return true;
+}
+
+extern "C" bool NutBlast_PeerAlive(const char* id) {
+    if (!id || !NutBlast_IsReady())
+        return false;
+
+    if (get_pid() == id)
+        return true;
+
+    if (!::peers.contains(id))
+        return false;
+
+    return peers.at(id).is_alive();
+}
+
+extern "C" bool NutBlast_IsReady() {
+    return ::blaster_ws && ::blaster_ws->isOpen();
 }
 
 extern "C" void NutBlast_OnConnected(void (*cb)()) {

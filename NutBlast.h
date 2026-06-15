@@ -56,6 +56,9 @@ typedef struct {
     uint8_t players, capacity;
 } NutBlast_Lobby;
 
+/// Returns true if you are connected to a NutBlaster and ready to accept connections from peers.
+bool NutBlast_IsReady();
+
 /// Sets the NutBlaster address.
 void NutBlast_SetNutBlaster(const char*);
 
@@ -81,6 +84,9 @@ void NutBlast_OnLobbiesFound(void (*)(const NutBlast_Lobby*, size_t));
 
 /// Returns true and copies the incoming message if there is a message waiting in the queue for the specified channel.
 bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
+
+/// Returns true if the peer with the specified ID has a connection established to our machine.
+bool NutBlast_PeerAlive(const char*);
 
 /// Sends a null-terminated string to the specified peer. Failures are silent. Delivery is not guaranteed.
 ///
