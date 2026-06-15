@@ -508,22 +508,22 @@ impl Connection {
         };
 
         let queue = {
-            let state = state.fucking_lock();
-            state.players.get(&pid).map(|p| p.queue.clone())
+            let mut state = state.fucking_lock();
+
+            state.players.get_mut(&pid).map(|p| {
+                let queue = p.queue.clone();
+                p.queue.clear();
+                queue
+            })
         };
 
-        let Some(queue) = queue else {
-            return;
-        };
-
-        for resp in queue {
-            if !self.send_json(sender, &resp).await {
-                continue;
+        if let Some(queue) = queue {
+            for resp in queue {
+                if !self.send_json(sender, &resp).await {
+                    continue;
+                }
             }
         }
-
-        let mut state = state.fucking_lock();
-        state.players.get_mut(&pid).map(|p| p.queue.clear());
     }
 
     async fn finalize(
@@ -627,22 +627,23 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
         let _ = ws.close(None).await;
     }
 
-    let mut state = state.fucking_lock();
+    {
+        let mut state = state.fucking_lock();
+        let mut nonempty = HashSet::new();
 
-    let mut nonempty = HashSet::new();
-
-    for ref player in state.players.values() {
-        nonempty.insert(player.lid.clone());
-    }
-
-    state.lobbies.retain(move |k, _| {
-        if nonempty.contains(k) {
-            return true;
-        } else {
-            info!("bye lober: {:?}", k);
-            return false;
+        for ref player in state.players.values() {
+            nonempty.insert(player.lid.clone());
         }
-    });
+
+        state.lobbies.retain(move |k, _| {
+            if nonempty.contains(k) {
+                return true;
+            } else {
+                info!("bye lober: {:?}", k);
+                return false;
+            }
+        });
+    }
 }
 
 trait ArcMutexStateExt {
