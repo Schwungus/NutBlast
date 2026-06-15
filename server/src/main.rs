@@ -37,6 +37,12 @@ struct Player {
     queue: Vec<Response>,
 }
 
+impl Player {
+    fn send(&mut self, response: Response) {
+        self.queue.push(response);
+    }
+}
+
 struct State {
     lobbies: HashMap<LobbyId, Lobby>,
     players: HashMap<String, Player>,
@@ -348,29 +354,29 @@ impl Connection {
                 {
                     let player = state.players.get_mut(&pid).unwrap();
 
-                    player.queue.push(Response::CapacitySet {
+                    player.send(Response::CapacitySet {
                         capacity: max_players,
                     });
 
                     for (key, value) in meta {
-                        player.queue.push(Response::LobbyMetaSet { key, value });
+                        player.send(Response::LobbyMetaSet { key, value });
                     }
 
                     for (other, meta) in &pmeta {
-                        player.queue.push(Response::Joined {
+                        player.send(Response::Joined {
                             id: other.to_string(),
                             meta: meta.clone(),
                         });
                     }
 
                     if let Some(mastah) = mastah {
-                        player.queue.push(Response::NewMaster { id: mastah });
+                        player.send(Response::NewMaster { id: mastah });
                     }
                 }
 
                 for other in pmeta.keys() {
                     if let Some(other) = state.players.get_mut(other) {
-                        other.queue.push(Response::Joined {
+                        other.send(Response::Joined {
                             id: pid.to_string(),
                             meta: peer_meta.clone(),
                         })
@@ -382,7 +388,7 @@ impl Connection {
                     return Outcome::Good;
                 };
 
-                to.queue.push(Response::Candidate {
+                to.send(Response::Candidate {
                     from: pid.to_string(),
                     candidate,
                     mid,
@@ -393,7 +399,7 @@ impl Connection {
                     return Outcome::Good;
                 };
 
-                to.queue.push(Response::Offer {
+                to.send(Response::Offer {
                     from: pid.to_string(),
                     sdp,
                 });
@@ -403,7 +409,7 @@ impl Connection {
                     return Outcome::Good;
                 };
 
-                to.queue.push(Response::Answer {
+                to.send(Response::Answer {
                     from: pid.to_string(),
                     sdp,
                 });
@@ -421,7 +427,7 @@ impl Connection {
 
                 for (_, player) in &mut state.players {
                     if player.lid == *lid {
-                        player.queue.push(Response::CapacitySet { capacity });
+                        player.send(Response::CapacitySet { capacity });
                     }
                 }
             }
@@ -438,7 +444,7 @@ impl Connection {
 
                 for (_, player) in &mut state.players {
                     if player.lid == *lid {
-                        player.queue.push(Response::PeerMetaSet {
+                        player.send(Response::PeerMetaSet {
                             peer: pid.to_string(),
                             key: key.to_string(),
                             value: value.to_string(),
@@ -461,7 +467,7 @@ impl Connection {
 
                 for (_, player) in &mut state.players {
                     if player.lid == *lid {
-                        player.queue.push(Response::LobbyMetaSet {
+                        player.send(Response::LobbyMetaSet {
                             key: key.to_string(),
                             value: value.to_string(),
                         });
@@ -608,12 +614,12 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
 
         for (other, player) in &mut state.players {
             if player.lid == *lid && other != pid {
-                player.queue.push(Response::Left {
+                player.send(Response::Left {
                     id: pid.to_string(),
                 });
 
                 if let Some(ref mastah) = mastah {
-                    player.queue.push(Response::NewMaster {
+                    player.send(Response::NewMaster {
                         id: mastah.to_string(),
                     })
                 };
