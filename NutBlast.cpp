@@ -523,8 +523,6 @@ extern "C" void NutBlast_Join(const char* id) {
 extern "C" void NutBlast_Host(const char* id, int max) {
     if (::blaster_ws) {
         info("You're already connected!");
-    } else if (!id) {
-        info("wtf bro");
     } else {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing = false, ::lid = id ? id : generate_id();
