@@ -512,7 +512,7 @@ extern "C" void NutBlast_Join(const char* id) {
     if (::blaster_ws) {
         info("You're already connected!");
     } else if (!id) {
-        info("wtf bro");
+        info("No ID specified!");
     } else {
         ::hosting = false, ::listing = false, ::lid = id;
         join_pro();
@@ -525,7 +525,7 @@ extern "C" void NutBlast_Host(const char* id, int max) {
         info("You're already connected!");
     } else {
         NutBlast_SetMaxPlayers(max);
-        ::hosting = true, ::listing = false, ::lid = id ? id : generate_id();
+        ::hosting = true, ::listing = false, ::lid = (id && id[0] != '\0') ? id : generate_id();
         join_pro();
         info("Trying to host '{}' at: {}", *lid, get_blaster());
     }
@@ -552,6 +552,10 @@ extern "C" const char** NutBlast_GetPlayerIDs() {
 extern "C" const char* NutBlast_GetOurID() {
     get_pid();
     return ::pid.c_str();
+}
+
+extern "C" const char* NutBlast_GetLobbyID() {
+    return (NutBlast_IsReady() && ::lid) ? ::lid->c_str() : nullptr;
 }
 
 extern "C" const char* NutBlast_GetMasterID() {

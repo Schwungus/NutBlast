@@ -134,6 +134,9 @@ int NutBlast_GetPlayerCount();
 /// Returns your player's ID.
 const char* NutBlast_GetOurID();
 
+/// Returns the lobby's ID.
+const char* NutBlast_GetLobbyID();
+
 /// Returns the lobby's master's ID.
 const char* NutBlast_GetMasterID();
 
