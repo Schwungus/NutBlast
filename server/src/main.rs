@@ -271,6 +271,7 @@ impl Connection {
                 gid,
                 lid,
                 max_players,
+                // TODO: add peer & lobby metadata here so it's available as soon as the fucker joins
             } if (1..=MAX_PLAYERS).contains(&max_players)
                 && self.pid.is_none()
                 && self.lid.is_none()
@@ -430,6 +431,7 @@ impl Connection {
                     && let Some(ref pid) = self.pid =>
             {
                 if let Some(player) = state.players.get_mut(pid) {
+                    // TODO: add field count checks.
                     player.meta.insert(key.to_string(), value.to_string());
                 } else {
                     return Outcome::Good;
@@ -451,6 +453,7 @@ impl Connection {
                 if let Some(lober) = state.lobbies.get_mut(&lid)
                     && master == self.pid
                 {
+                    // TODO: add field count checks.
                     lober.meta.insert(key.to_string(), value.to_string());
                 } else {
                     return Outcome::Good;

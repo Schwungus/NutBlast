@@ -74,19 +74,36 @@ static const rtc::Configuration rtc_config = {
     },
 };
 
+static std::unordered_map<std::string, std::vector<rtc::Candidate>> incoming_candidates;
+static std::unordered_map<std::string, std::vector<rtc::Description>> incoming_offers;
+
+template <typename V> static std::vector<V> copy_and_clear(std::vector<V>& vec) {
+    const auto copy = vec;
+    vec.clear();
+    return copy;
+}
+
 struct PeerSharedState {
+    const std::string id;
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr;
-    std::vector<rtc::Candidate> outgoing_candidates, incoming_candidates;
+    std::vector<rtc::Candidate> outgoing_candidates;
 
-    void drain_incoming_candidates() {
-        const auto copy = incoming_candidates;
-        incoming_candidates.clear();
+    PeerSharedState(const std::string& id) : id(id) {}
 
-        for (const auto& candidate : copy) {
-            try {
-                pc->addRemoteCandidate(candidate);
-            } catch (const std::logic_error&) { return; }
+    void drain_incoming_offers_and_candidates() {
+        if (!::incoming_offers.contains(id))
+            return;
+
+        for (const auto& offer : copy_and_clear(::incoming_offers.at(id)))
+            pc->setRemoteDescription(offer);
+
+        if (::incoming_candidates.contains(id)) {
+            for (const auto& candidate : copy_and_clear(::incoming_candidates.at(id))) {
+                try {
+                    pc->addRemoteCandidate(candidate);
+                } catch (const std::logic_error&) { return; }
+            }
         }
     }
 };
@@ -108,7 +125,7 @@ struct Message {
 };
 
 static std::string gid = "", pid = "";
-static std::optional<std::string> blaster, lid, disconnect_reason;
+static std::optional<std::string> blaster, lid, disconnection_reason;
 
 static NutBlast_ChannelID max_chan = 1;
 static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
@@ -146,9 +163,6 @@ extern "C" uint64_t NutBlast_TimeNS() {
 static void ws_send(nlohmann::json&& obj) {
     ws_out.push_back(obj);
 
-    if (!::blaster_ws)
-        ws_out.clear();
-
     if (!::blaster_ws || !::blaster_ws->isOpen())
         return;
 
@@ -180,7 +194,7 @@ struct Ticker {
     }
 };
 
-Peer::Peer(const std::string& id) : state(new PeerSharedState()), id(id) {
+Peer::Peer(const std::string& id) : state(new PeerSharedState(id)), id(id) {
     state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
     const std::weak_ptr<PeerSharedState> st = state;
 
@@ -397,8 +411,9 @@ static void recv_shit();
 
 static void join_pro() {
     get_blaster();
-    ::master = "", ::disconnect_reason = std::nullopt;
+    ::master = "", ::disconnection_reason = std::nullopt;
     ::ws_in.clear(), ::ws_out.clear();
+    ::incoming_candidates.clear(), ::incoming_offers.clear();
 
     for (auto& queue : recv_queues)
         queue.clear();
@@ -432,7 +447,16 @@ static void join_pro() {
                 {"pid", ::get_pid()},
                 {"lid", ::lid},
                 {"max_players", ::max_players},
+                // TODO: stick peer-metadata in here
             });
+
+            for (const auto& [key, value] : ::peer_meta) {
+                ::ws_send({
+                    {"type", "SetPeerMeta"},
+                    {"key", key},
+                    {"value", value},
+                });
+            }
         }
 
         fire(::on_connected);
@@ -471,7 +495,7 @@ extern "C" void NutBlast_Disconnect() {
         recv_shit();
 
         info("NutBlaster out!");
-        fire(::on_disconnected, ::disconnect_reason ? ::disconnect_reason->c_str() : "Disconnected");
+        fire(::on_disconnected, ::disconnection_reason ? ::disconnection_reason->c_str() : nullptr);
 
         try {
             ::blaster_ws->close();
@@ -557,23 +581,21 @@ extern "C" bool NutBlast_IsPlayerAlive(const char* id) {
 static void handle_offer_answer(const nlohmann::json& obj) {
     const std::string& id = obj["from"];
 
-    if (!::peers.contains(id))
-        return;
+    if (!::incoming_offers.contains(id))
+        ::incoming_offers.insert({id, {}});
 
-    auto& peer = ::peers.at(id);
-    peer.state->pc->setRemoteDescription({obj["sdp"], obj["type"] == "Offer" ? "offer" : "answer"});
-    peer.state->drain_incoming_candidates();
+    auto& queue = incoming_offers.at(id);
+    queue.emplace_back(obj["sdp"], obj["type"] == "Offer" ? "offer" : "answer");
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
     const std::string& id = obj["from"];
 
-    if (!::peers.contains(id))
-        return;
+    if (!::incoming_candidates.contains(id))
+        ::incoming_candidates.insert({id, {}});
 
-    auto& peer = ::peers.at(id);
-    peer.state->incoming_candidates.emplace_back(obj["candidate"], obj["mid"]);
-    peer.state->drain_incoming_candidates();
+    auto& queue = ::incoming_candidates.at(id);
+    queue.emplace_back(obj["candidate"], obj["mid"]);
 }
 
 static void handle_list(const nlohmann::json& obj) {
@@ -590,13 +612,14 @@ static void handle_list(const nlohmann::json& obj) {
         });
     }
 
-    fire(::on_lobbies_found, const_cast<const NutBlast_Lobby*>(lobbies.data()), lobbies.size());
+    const auto data = const_cast<const NutBlast_Lobby*>(lobbies.data());
+    fire(::on_lobbies_found, data, lobbies.size());
 }
 
 static const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> payload_types{
     {"Bye",
         [](const auto& obj) {
-            ::disconnect_reason = obj["reason"];
+            ::disconnection_reason = obj["reason"];
             NutBlast_Disconnect();
         }},
     {"CapacitySet",
@@ -626,7 +649,6 @@ static const std::unordered_map<std::string, std::function<void(const nlohmann::
                 ::peers.erase(obj["id"]);
         }},
     {"Offer", handle_offer_answer},
-    {"Offer", handle_offer_answer},
     {"Answer", handle_offer_answer},
     {"Candidate", handle_candidate},
     {"List", handle_list},
@@ -635,8 +657,7 @@ static const std::unordered_map<std::string, std::function<void(const nlohmann::
 static void recv_shit() {
     std::lock_guard guard(::sync);
 
-    const auto copy = ::ws_in; // NOTE: this copy solves a hardcrash on exit???
-    ::ws_in.clear();
+    const auto copy = copy_and_clear(::ws_in); // NOTE: this copy solves a hardcrash on exit???
 
     for (const auto& msg : copy) {
         try {
@@ -651,6 +672,9 @@ static void recv_shit() {
                 payload_types.at(type)(obj);
         } catch (const nlohmann::json::parse_error&) { continue; }
     }
+
+    for (auto& [id, peer] : ::peers)
+        peer.state->drain_incoming_offers_and_candidates();
 }
 
 static void send_updates() {

@@ -177,7 +177,8 @@ static void recv_shit() {
 }
 
 static void on_disconnected(const char* reason) {
-    TraceLog(LOG_ERROR, "%s", reason);
+    if (reason)
+        TraceLog(LOG_ERROR, "%s", reason);
     reset();
 }
 

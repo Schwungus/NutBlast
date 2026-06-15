@@ -66,6 +66,8 @@ void NutBlast_SetMaxChannels(NutBlast_ChannelID);
 void NutBlast_OnConnected(void (*)());
 
 /// Registers a callback to fire when you are disconnected from the NutBlaster.
+///
+/// Receives a disconnection reason, or null upon a graceful disconnection.
 void NutBlast_OnDisconnected(void (*)(const char*));
 
 /// Registers a callback to fire whenever a new peer connects to your machine.
