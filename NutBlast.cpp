@@ -26,7 +26,6 @@
 #include <array>
 #include <ctime>
 #include <format>
-#include <mutex>
 #include <optional>
 #include <random>
 #include <string>
@@ -52,8 +51,6 @@ using Metadata = std::unordered_map<std::string, std::string>;
 
 static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(const char*),
             (*on_player_left)(const char*), (*on_lobbies_found)(const NutBlast_Lobby*, size_t);
-
-static std::recursive_mutex sync;
 
 template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
     if (cb != nullptr)
@@ -170,8 +167,6 @@ extern "C" uint64_t NutBlast_TimeNS() {
 }
 
 static void ws_send(nlohmann::json&& obj) {
-    std::lock_guard guard(::sync);
-
     ws_out.push_back(obj);
 
     if (NutBlast_IsReady()) {
@@ -231,20 +226,16 @@ Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedSt
 
     const auto setup_dc = [id](rtc::DataChannel& dc) {
         dc.onOpen([id]() {
-            std::lock_guard guard(::sync);
             fire(::on_player_joined, id.c_str());
         });
 
         dc.onClosed([id]() {
-            std::lock_guard guard(::sync);
             fire(::on_player_left, id.c_str());
         });
 
         dc.onMessage([id](const auto& variant) {
             if (!std::holds_alternative<rtc::binary>(variant))
                 return;
-
-            std::lock_guard guard(::sync);
 
             auto bytes = std::get<rtc::binary>(variant);
 
@@ -260,22 +251,6 @@ Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedSt
         });
     };
 
-    state->pc->onDataChannel([id, st, setup_dc](const auto& dc) {
-        if (st.expired())
-            return;
-
-        std::lock_guard sync_guard(::sync);
-        const auto state = st.lock();
-
-        if (dc->label() == "reliable")
-            state->reliable_dc = dc;
-        else
-            state->unreliable_dc = dc;
-
-        setup_dc(*dc);
-        fire(::on_player_joined, id.c_str());
-    });
-
     if (is_offerer()) {
         state->unreliable_dc = state->pc->createDataChannel("unreliable", {
             .reliability = {.unordered = true, .maxRetransmits = 0, },
@@ -288,6 +263,21 @@ Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedSt
         });
 
         setup_dc(*state->reliable_dc);
+    } else {
+        state->pc->onDataChannel([id, st, setup_dc](const auto& dc) {
+            if (st.expired())
+                return;
+
+            const auto state = st.lock();
+
+            if (dc->label() == "reliable")
+                state->reliable_dc = dc;
+            else
+                state->unreliable_dc = dc;
+
+            setup_dc(*dc);
+            fire(::on_player_joined, id.c_str());
+        });
     }
 }
 
@@ -419,6 +409,8 @@ extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
 static void recv_shit();
 
 static void join_pro() {
+    rtc::Preload();
+
     get_blaster();
     ::master = "", ::disconnection_reason = std::nullopt;
     ::ws_in.clear(), ::ws_out.clear();
@@ -443,8 +435,6 @@ static void join_pro() {
     );
 
     ::blaster_ws->onOpen([]() {
-        std::lock_guard guard(::sync);
-
         if (listing) {
             ::ws_send({
                 {"type", "List"},
@@ -467,10 +457,8 @@ static void join_pro() {
     });
 
     ::blaster_ws->onMessage([](const auto& msg) {
-        if (std::holds_alternative<rtc::string>(msg)) {
-            std::lock_guard guard(::sync);
+        if (std::holds_alternative<rtc::string>(msg))
             ws_in.push_back(std::get<rtc::string>(msg));
-        }
     });
 
     ::blaster_ws->onClosed(NutBlast_Disconnect);
@@ -479,8 +467,6 @@ static void join_pro() {
 }
 
 extern "C" void NutBlast_Disconnect() {
-    std::lock_guard sync_guard(::sync);
-
     if (::blaster_ws) {
         ::blaster_ws->onClosed(nullptr);
 
@@ -515,6 +501,7 @@ extern "C" void NutBlast_Join(const char* id) {
         info("No ID specified!");
     } else {
         ::hosting = false, ::listing = false, ::lid = id;
+
         join_pro();
         info("Trying to join '{}' at: {}", id, get_blaster());
     }
@@ -525,7 +512,9 @@ extern "C" void NutBlast_Host(const char* id, int max) {
         info("You're already connected!");
     } else {
         NutBlast_SetMaxPlayers(max);
-        ::hosting = true, ::listing = false, ::lid = (id && id[0] != '\0') ? id : generate_id();
+        ::hosting = true, ::listing = false;
+        ::lid = (id && id[0] != '\0') ? id : generate_id();
+
         join_pro();
         info("Trying to host '{}' at: {}", *lid, get_blaster());
     }
@@ -542,8 +531,10 @@ extern "C" const char** NutBlast_GetPlayerIDs() {
 
     size_t i = 0;
 
-    for (const auto& [key, player] : peers)
-        buf[i++] = key.c_str();
+    for (const auto& [id, player] : peers)
+        if (NutBlast_IsPlayerAlive(id.c_str()))
+            buf[i++] = id.c_str();
+
     buf[i] = nullptr;
 
     return buf;
@@ -640,6 +631,7 @@ static const std::unordered_map<std::string, std::function<void(const nlohmann::
     {"Joined",
         [](const auto& obj) {
             const std::string id = obj["id"];
+            info("shalom {}", id);
             ::peers.insert({id, Peer(id, obj["meta"])});
         }},
     {"Left",
@@ -654,11 +646,6 @@ static const std::unordered_map<std::string, std::function<void(const nlohmann::
 };
 
 static void recv_shit() {
-    std::lock_guard guard(::sync);
-
-    if (!NutBlast_IsReady())
-        return;
-
     // NOTE: this copy solves a hardcrash on exit???
     for (const auto& msg : copy_and_clear(::ws_in)) {
         try {
@@ -679,8 +666,6 @@ static void recv_shit() {
 }
 
 static void send_updates() {
-    std::lock_guard guard(::sync);
-
     for (auto& [id, peer] : ::peers) {
         for (const auto& candidate : copy_and_clear(peer.state->outgoing_candidates)) {
             ::ws_send({
