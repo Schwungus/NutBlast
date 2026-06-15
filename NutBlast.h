@@ -56,6 +56,9 @@ typedef struct {
     uint8_t players, capacity;
 } NutBlast_Lobby;
 
+/// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.
+void NutBlast_Cleanup();
+
 /// Returns true if you are connected to a NutBlaster and ready to accept connections from peers.
 bool NutBlast_IsReady();
 

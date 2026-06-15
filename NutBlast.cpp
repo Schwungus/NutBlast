@@ -788,3 +788,8 @@ extern "C" void NutBlast_SleepMS(int _ms) {
     do { res = nanosleep(&ts, &ts); } while (res && errno == EINTR);
 #endif
 }
+
+extern "C" void NutBlast_Cleanup() {
+    NutBlast_Disconnect();
+    rtc::Cleanup().wait();
+}

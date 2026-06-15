@@ -227,6 +227,7 @@ int main(int argc, char* argv[]) {
     }
 
     CloseWindow();
+    NutBlast_Cleanup();
 
     return EXIT_SUCCESS;
 }

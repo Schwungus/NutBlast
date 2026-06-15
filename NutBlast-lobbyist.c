@@ -38,5 +38,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    NutBlast_Cleanup();
+
     return EXIT_SUCCESS;
 }
