@@ -471,22 +471,10 @@ static void join_pro() {
 
 extern "C" void NutBlast_Disconnect() {
     std::lock_guard sync_guard(::sync);
-    static bool recursion_cycle = false;
-
-    if (recursion_cycle)
-        return;
-
-    struct Guard {
-        Guard() {
-            recursion_cycle = true;
-        }
-
-        ~Guard() {
-            recursion_cycle = false;
-        }
-    } recursion_guard;
 
     if (::blaster_ws) {
+        ::blaster_ws->onClosed(nullptr);
+
         recv_shit();
 
         info("NutBlaster out!");
