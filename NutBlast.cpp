@@ -152,7 +152,7 @@ namespace ns {
 };
 
 namespace interval {
-    constexpr const std::uint64_t beat = ::ns::second / 60;
+    constexpr const std::uint64_t beat = ::ns::second / 62;
 };
 
 template <typename... Args> static inline void info(std::format_string<Args...> fmt, Args&&... args) {
@@ -451,9 +451,9 @@ static void join_pro() {
                 {"peer_meta", ::peer_meta},
                 {"lobby_meta", ::lobby_meta},
             });
-        }
 
-        fire(::on_connected);
+            fire(::on_connected);
+        }
     });
 
     ::blaster_ws->onMessage([](const auto& msg) {
@@ -605,7 +605,7 @@ static void handle_list(const nlohmann::json& obj) {
     fire(::on_lobbies_found, data, lobbies.size());
 }
 
-static const std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> payload_types{
+static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> payload_types{
     {"Bye",
         [](const auto& obj) {
             ::disconnection_reason = obj["reason"];
@@ -649,7 +649,7 @@ static void recv_shit() {
     // NOTE: this copy solves a hardcrash on exit???
     for (const auto& msg : copy_and_clear(::ws_in)) {
         try {
-            const auto obj = nlohmann::json::parse(msg);
+            auto obj = nlohmann::json::parse(msg);
 
             if (!obj.contains("type"))
                 continue;
@@ -657,7 +657,7 @@ static void recv_shit() {
             const std::string type = obj["type"];
 
             if (payload_types.contains(type))
-                payload_types.at(type)(obj);
+                payload_types.at(type)(std::move(obj));
         } catch (const nlohmann::json::parse_error&) { continue; }
     }
 
@@ -665,7 +665,12 @@ static void recv_shit() {
         peer.state->drain_incoming_offers_and_candidates();
 }
 
-static void send_updates() {
+extern "C" void NutBlast_Flush() {
+    static Ticker beater(interval::beat);
+
+    if (!NutBlast_IsReady() || listing || !beater)
+        return;
+
     for (auto& [id, peer] : ::peers) {
         for (const auto& candidate : copy_and_clear(peer.state->outgoing_candidates)) {
             ::ws_send({
@@ -676,13 +681,6 @@ static void send_updates() {
             });
         }
     }
-}
-
-extern "C" void NutBlast_Flush() {
-    static Ticker beater(interval::beat);
-
-    if (NutBlast_IsReady() && !listing && beater)
-        send_updates();
 }
 
 extern "C" void NutBlast_Update() {

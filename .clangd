@@ -1,6 +1,6 @@
 Completion:
   HeaderInsertion: Never
 Diagnostics:
-  Suppress: [c23-extensions, format-security]
+  Suppress: [c23-extensions]
 CompileFlags:
   Remove: [-fdeps-format=*, -fmodules-ts, -fmodule-mapper=*]
