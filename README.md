@@ -1,4 +1,10 @@
+<!-- markdownlint-disable MD033 -->
+
 # NutBlast
+
+[header]: NutBlast.h
+
+<img align="right" alt="An explosive peanut sign" src=".github/assets/nutblast256.png">
 
 TODO: explain.
 
