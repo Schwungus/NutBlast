@@ -365,7 +365,8 @@ extern "C" const char* NutBlast_GetPeerField(const char* pee, const char* name) 
 }
 
 extern "C" void NutBlast_SetPeerField(const char* key, const char* value) {
-    peer_meta.insert_or_assign(key, value);
+    if (!key || !value)
+        return;
 
     ::ws_send({
         {"type", "SetPeerMeta"},
@@ -388,22 +389,11 @@ extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
     if (!key || !value)
         return;
 
-    if (NutBlast_IsReady()) {
-        const char* master = NutBlast_GetMasterID();
-
-        if (!master || master != get_pid())
-            return;
-    }
-
-    lobby_meta.insert_or_assign(key, value);
-
-    if (NutBlast_IsReady()) {
-        ::ws_send({
-            {"type", "SetLobbyMeta"},
-            {"key", key},
-            {"value", value},
-        });
-    }
+    ::ws_send({
+        {"type", "SetLobbyMeta"},
+        {"key", key},
+        {"value", value},
+    });
 }
 
 static void recv_shit();
