@@ -391,6 +391,15 @@ extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
     if (!key || !value)
         return;
 
+    if (NutBlast_IsReady()) {
+        const char* master = NutBlast_GetMasterID();
+
+        if (!master || master != get_pid())
+            return;
+    }
+
+    lobby_meta.insert_or_assign(key, value);
+
     ::ws_send({
         {"type", "SetLobbyMeta"},
         {"key", key},
