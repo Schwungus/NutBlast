@@ -8,7 +8,7 @@
 
 NutBlast is a static library that enables peer-to-peer multiplayer using WebSockets/WebRTC. The client is written in C++, has C bindings and works on Windows, Linux and Emscripten!
 
-Requires [libdatachannel](https://github.com/paullouisageneau/libdatachannel). Comes with a [public instance](#public-instance) for out-of-the-box integration.
+Requires [libdatachannel](https://github.com/paullouisageneau/libdatachannel). Comes with a public server instance for out-of-the-box integration.
 
 :heavy_check_mark: [Schwungus](https://github.com/Schwungus)-certified.
 
@@ -25,7 +25,7 @@ You can **set up your VPN client to ignore NutBlast-powered games** rather than 
 
 ## Introductory Lecture
 
-This library implements peer-to-peer networking, where **each peer directly communicates to others**. It's a complex model, and it could be counterproductive to use if you don't know what you're doing.
+This library implements peer-to-peer networking, where **players directly communicate to each other** instead of completely relying on a server. It's a complex model, and it could be counterproductive to use if you don't know what you're doing.
 
 The current server implementation uses a lobby-based approach, where each lobby supports up to 16 peers and is identified by a unique 8-character string. [The complete example](NutBlast-test.c) might be overwhelming at first, but make sure to skim through it before you do any heavy networking. Here's the general usage guide for NutBlast:
 
