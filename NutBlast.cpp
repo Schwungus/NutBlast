@@ -368,6 +368,8 @@ extern "C" void NutBlast_SetPeerField(const char* key, const char* value) {
     if (!key || !value)
         return;
 
+    peer_meta.insert_or_assign(key, value);
+
     ::ws_send({
         {"type", "SetPeerMeta"},
         {"key", key},
