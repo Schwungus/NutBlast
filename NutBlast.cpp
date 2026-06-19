@@ -142,8 +142,7 @@ static std::string master = "";
 static std::unordered_map<std::string, Peer> peers;
 
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
-static std::vector<std::string> ws_in;
-static std::vector<nlohmann::json> ws_out;
+static std::vector<nlohmann::json> ws_in, ws_out;
 
 static Metadata peer_meta, lobby_meta;
 
@@ -169,12 +168,13 @@ extern "C" uint64_t NutBlast_TimeNS() {
 static void ws_send(nlohmann::json&& obj) {
     ws_out.push_back(obj);
 
-    if (NutBlast_IsReady()) {
-        try {
-            for (const auto& obj : copy_and_clear(ws_out))
-                ::blaster_ws->send(obj.dump());
-        } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
-    }
+    if (!NutBlast_IsReady())
+        return;
+
+    try {
+        for (const auto& obj : copy_and_clear(ws_out))
+            ::blaster_ws->send(obj.dump());
+    } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
 }
 
 struct Ticker {
@@ -458,8 +458,12 @@ static void join_pro() {
     });
 
     ::blaster_ws->onMessage([](const auto& msg) {
-        if (std::holds_alternative<rtc::string>(msg))
-            ws_in.push_back(std::get<rtc::string>(msg));
+        if (!std::holds_alternative<rtc::string>(msg))
+            return;
+
+        try {
+            ws_in.push_back(nlohmann::json::parse(std::get<std::string>(msg)));
+        } catch (const nlohmann::json::parse_error&) {}
     });
 
     ::blaster_ws->onClosed(NutBlast_Disconnect);
@@ -647,19 +651,14 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
 };
 
 static void recv_shit() {
-    // NOTE: this copy solves a hardcrash on exit???
-    for (const auto& msg : copy_and_clear(::ws_in)) {
-        try {
-            auto obj = nlohmann::json::parse(msg);
+    for (const auto& obj : copy_and_clear(::ws_in)) {
+        if (!obj.contains("type"))
+            continue;
 
-            if (!obj.contains("type"))
-                continue;
+        const std::string type = obj["type"];
 
-            const std::string type = obj["type"];
-
-            if (payload_types.contains(type))
-                payload_types.at(type)(std::move(obj));
-        } catch (const nlohmann::json::parse_error&) { continue; }
+        if (payload_types.contains(type))
+            payload_types.at(type)(std::move(obj));
     }
 
     for (auto& [id, peer] : ::peers)
