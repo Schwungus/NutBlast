@@ -89,8 +89,11 @@ struct PeerSharedState {
         if (!::incoming_offers.contains(id))
             return;
 
-        for (const auto& offer : copy_and_clear(::incoming_offers.at(id)))
-            pc->setRemoteDescription(offer);
+        for (const auto& offer : copy_and_clear(::incoming_offers.at(id))) {
+            try {
+                pc->setRemoteDescription(offer);
+            } catch (const std::invalid_argument&) { continue; }
+        }
 
         if (!::incoming_candidates.contains(id))
             return;
