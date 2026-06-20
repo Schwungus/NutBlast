@@ -49,8 +49,8 @@ static constexpr const bool WINDOSE =
 
 using Metadata = std::unordered_map<std::string, std::string>;
 
-static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(const char*),
-            (*on_player_left)(const char*), (*on_lobbies_found)(const NutBlast_Lobby*, size_t);
+static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(NutBlast_ID),
+            (*on_player_left)(NutBlast_ID), (*on_lobbies_found)(const NutBlast_Lobby*, size_t);
 
 template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
     if (cb != nullptr)
@@ -181,6 +181,33 @@ static void ws_send(nlohmann::json&& obj) {
     } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
 }
 
+static NutBlast_ID sid_to_nid(const std::string& sid) {
+    NutBlast_ID nid = 0;
+    const char* cstr = sid.c_str();
+    for (size_t i = 0; i < sizeof(nid); i++) {
+        const char c = cstr[i];
+        if (c == '\0')
+            break;
+
+        ((char*)(&nid))[i] = c;
+    }
+
+    return nid;
+}
+
+static std::string nid_to_sid(NutBlast_ID nid) {
+    std::string sid = "";
+    for (size_t i = 0; i < sizeof(NutBlast_ID); i++) {
+        const char c = ((char*)(&nid))[i];
+        if (c == '\0')
+            break;
+
+        sid += c;
+    }
+
+    return sid;
+}
+
 struct Ticker {
     const std::uint64_t interval;
     std::uint64_t last_tick = 0;
@@ -233,11 +260,11 @@ Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedSt
 
     const auto setup_dc = [id](rtc::DataChannel& dc) {
         dc.onOpen([id]() {
-            fire(::on_player_joined, id.c_str());
+            fire(::on_player_joined, sid_to_nid(id));
         });
 
         dc.onClosed([id]() {
-            fire(::on_player_left, id.c_str());
+            fire(::on_player_left, sid_to_nid(id));
         });
 
         dc.onMessage([id](const auto& variant) {
@@ -283,7 +310,7 @@ Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedSt
                 state->unreliable_dc = dc;
 
             setup_dc(*dc);
-            fire(::on_player_joined, id.c_str());
+            fire(::on_player_joined, sid_to_nid(id));
         });
     }
 }
@@ -350,20 +377,21 @@ extern "C" void NutBlast_SetMaxPlayers(int max) {
     });
 }
 
-extern "C" const char* NutBlast_GetPeerField(const char* pee, const char* name) {
+extern "C" const char* NutBlast_GetPeerField(NutBlast_ID pee, const char* name) {
     if (!pee || !name)
         return nullptr;
 
-    if (pee == get_pid())
+    if (pee == sid_to_nid(get_pid()))
         return peer_meta.at(name).c_str();
 
     if (!NutBlast_IsReady())
         return nullptr;
 
-    if (!::peers.contains(pee))
+    std::string sid = nid_to_sid(pee);
+    if (!::peers.contains(sid))
         return nullptr;
 
-    const auto& peer = ::peers.at(pee);
+    const auto& peer = ::peers.at(sid);
 
     if (peer.meta.contains(name))
         return peer.meta.at(name).c_str();
@@ -399,9 +427,8 @@ extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
         return;
 
     if (NutBlast_IsReady()) {
-        const char* master = NutBlast_GetMasterID();
-
-        if (!master || master != get_pid())
+        NutBlast_ID master = NutBlast_GetMasterID();
+        if (!master || master != NutBlast_GetOurID())
             return;
     }
 
@@ -508,26 +535,26 @@ extern "C" void NutBlast_FindLobbies() {
     }
 }
 
-extern "C" void NutBlast_Join(const char* id) {
+extern "C" void NutBlast_Join(NutBlast_ID id) {
     if (::blaster_ws) {
         info("You're already connected!");
     } else if (!id) {
         info("No ID specified!");
     } else {
-        ::hosting = false, ::listing = false, ::lid = id;
+        ::hosting = false, ::listing = false, ::lid = nid_to_sid(id);
 
         join_pro();
         info("Trying to join '{}' at: {}", id, get_blaster());
     }
 }
 
-extern "C" void NutBlast_Host(const char* id, int max) {
+extern "C" void NutBlast_Host(NutBlast_ID id, int max) {
     if (::blaster_ws) {
         info("You're already connected!");
     } else {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing = false;
-        ::lid = (id && id[0] != '\0') ? id : generate_id();
+        ::lid = id ? nid_to_sid(id) : generate_id();
 
         join_pro();
         info("Trying to host '{}' at: {}", *lid, get_blaster());
@@ -540,42 +567,43 @@ extern "C" int NutBlast_GetPlayerCount() {
     return static_cast<int>(1 + peers.size());
 }
 
-extern "C" const char** NutBlast_GetPlayerIDs() {
-    static const char* buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
+extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
+    static NutBlast_ID buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
 
     size_t i = 0;
 
-    for (const auto& [id, player] : peers)
-        if (NutBlast_IsPlayerAlive(id.c_str()))
-            buf[i++] = id.c_str();
+    for (const auto& [id, player] : peers) {
+        NutBlast_ID nid = sid_to_nid(id);
+        if (NutBlast_IsPlayerAlive(nid))
+            buf[i++] = nid;
+    }
 
-    buf[i] = nullptr;
+    buf[i] = 0;
 
     return buf;
 }
 
-extern "C" const char* NutBlast_GetOurID() {
-    get_pid();
-    return ::pid.c_str();
+extern "C" NutBlast_ID NutBlast_GetOurID() {
+    return sid_to_nid(get_pid());
 }
 
-extern "C" const char* NutBlast_GetLobbyID() {
-    return (NutBlast_IsReady() && ::lid) ? ::lid->c_str() : nullptr;
+extern "C" NutBlast_ID NutBlast_GetLobbyID() {
+    return (NutBlast_IsReady() && ::lid) ? sid_to_nid(::lid.value()) : 0;
 }
 
-extern "C" const char* NutBlast_GetMasterID() {
-    return NutBlast_IsReady() ? ::master.c_str() : nullptr;
+extern "C" NutBlast_ID NutBlast_GetMasterID() {
+    return NutBlast_IsReady() ? sid_to_nid(::master.c_str()) : 0;
 }
 
-extern "C" bool NutBlast_IsPlayerAlive(const char* id) {
+extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
     if (!id || !NutBlast_IsReady())
         return false;
 
-    if (id == get_pid())
+    if (id == sid_to_nid(get_pid()))
         return true;
 
     for (const auto& [key, player] : peers)
-        if (id == key)
+        if (id == sid_to_nid(key))
             return true;
 
     return false;
@@ -609,7 +637,7 @@ static void handle_list(const nlohmann::json& obj) {
         tmp.push_back(lober["id"]);
 
         lobbies.push_back({
-            .id = tmp.back().c_str(),
+            .id = sid_to_nid(tmp.back()),
             .players = lober["players"],
             .capacity = lober["max"],
         });
@@ -699,7 +727,7 @@ extern "C" void NutBlast_Update() {
 }
 
 static void greatest_technician_thats_ever_lived(
-    NutBlast_ChannelID chan, const char* id, const char* msg, int size, bool reliable) {
+    NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size, bool reliable) {
     if (!id || !msg || !NutBlast_PeerAlive(id))
         return;
 
@@ -713,17 +741,17 @@ static void greatest_technician_thats_ever_lived(
         buf[i + 1] = static_cast<std::byte>(msg[i]);
 
     try {
-        const auto& peer = ::peers.at(id);
+        const auto& peer = ::peers.at(nid_to_sid(id));
         const auto& dc = reliable ? peer.state->reliable_dc : peer.state->unreliable_dc;
         dc && dc->send(buf);
     } catch (const std::runtime_error&) {}
 }
 
-extern "C" void NutBlast_SendTo(NutBlast_ChannelID chan, const char* id, const char* msg, int size) {
+extern "C" void NutBlast_SendTo(NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size) {
     greatest_technician_thats_ever_lived(chan, id, msg, size, false);
 }
 
-extern "C" void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, const char* id, const char* msg, int size) {
+extern "C" void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size) {
     greatest_technician_thats_ever_lived(chan, id, msg, size, true);
 }
 
@@ -740,22 +768,23 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
 
     out->data = reinterpret_cast<const char*>(msg.bytes.data());
     out->size = msg.bytes.size();
-    out->from = msg.from.c_str();
+    out->from = sid_to_nid(msg.from);
 
     return true;
 }
 
-extern "C" bool NutBlast_PeerAlive(const char* id) {
+extern "C" bool NutBlast_PeerAlive(NutBlast_ID id) {
     if (!id || !NutBlast_IsReady())
         return false;
 
-    if (get_pid() == id)
+    if (sid_to_nid(get_pid()) == id)
         return true;
 
-    if (!::peers.contains(id))
+    std::string sid = nid_to_sid(id);
+    if (!::peers.contains(sid))
         return false;
 
-    return peers.at(id).is_alive();
+    return peers.at(sid).is_alive();
 }
 
 extern "C" bool NutBlast_IsReady() {
@@ -770,11 +799,11 @@ extern "C" void NutBlast_OnDisconnected(void (*cb)(const char*)) {
     ::on_disconnected = cb;
 }
 
-extern "C" void NutBlast_OnPlayerJoined(void (*cb)(const char*)) {
+extern "C" void NutBlast_OnPlayerJoined(void (*cb)(NutBlast_ID)) {
     ::on_player_joined = cb;
 }
 
-extern "C" void NutBlast_OnPlayerLeft(void (*cb)(const char*)) {
+extern "C" void NutBlast_OnPlayerLeft(void (*cb)(NutBlast_ID)) {
     ::on_player_left = cb;
 }
 
