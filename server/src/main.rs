@@ -212,12 +212,6 @@ async fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-struct Connection {
-    addr: SocketAddr,
-    pid: Option<String>,
-    lid: Option<LobbyId>,
-}
-
 enum Outcome {
     Good,
     Bye(Option<Response>),
@@ -230,40 +224,45 @@ impl Outcome {
     }
 }
 
+struct Connection {
+    state: Arc<Mutex<State>>,
+    addr: SocketAddr,
+    pid: Option<String>,
+    lid: Option<LobbyId>,
+}
+
 impl Connection {
     async fn recv(
         &mut self,
-        state: Arc<Mutex<State>>,
         msg: Option<Result<Message, TungError>>,
-        peer_addr: SocketAddr,
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
     ) -> bool {
         match msg {
             Some(Ok(msg)) => {
-                match self.handle(state.clone(), msg) {
+                match self.handle(msg) {
                     Outcome::Good => {}
                     Outcome::Boot(reason) => {
-                        warn!("boot to the face for {}: {}", peer_addr, reason);
+                        warn!("boot to the face for {}: {}", self.addr, reason);
 
                         let fatality = Some(Response::Bye {
                             reason: Some(reason),
                         });
 
-                        self.finalize(state.clone(), sender, fatality).await;
+                        self.finalize(sender, fatality).await;
 
                         return false;
                     }
                     Outcome::Bye(fatality) => {
-                        self.finalize(state.clone(), sender, fatality).await;
+                        self.finalize(sender, fatality).await;
                         return false;
                     }
                 }
 
-                self.flush(state.clone(), sender).await;
+                self.flush(sender).await;
             }
             Some(Err(e)) => {
                 if !matches!(e, TungError::ConnectionClosed) {
-                    error!("{}: {}", peer_addr, e);
+                    error!("{}: {}", self.addr, e);
                 }
 
                 return false;
@@ -276,7 +275,7 @@ impl Connection {
         return true;
     }
 
-    fn handle(&mut self, state: Arc<Mutex<State>>, msg: Message) -> Outcome {
+    fn handle(&mut self, msg: Message) -> Outcome {
         let json = match msg {
             Message::Text(text) => text.to_string(),
             Message::Close(_) => return Outcome::Bye(None),
@@ -292,7 +291,7 @@ impl Connection {
             }
         };
 
-        let mut state = state.fucking_lock();
+        let mut state = self.state.fucking_lock();
 
         match payload {
             Payload::List { gid } => {
@@ -552,17 +551,13 @@ impl Connection {
         true
     }
 
-    async fn flush(
-        &mut self,
-        state: Arc<Mutex<State>>,
-        sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-    ) {
+    async fn flush(&mut self, sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>) {
         let Some(pid) = self.pid.to_owned() else {
             return;
         };
 
         let queue = {
-            let mut state = state.fucking_lock();
+            let mut state = self.state.fucking_lock();
 
             state.players.get_mut(&pid).map(|p| {
                 let queue = p.queue.clone();
@@ -578,11 +573,10 @@ impl Connection {
 
     async fn finalize(
         &mut self,
-        state: Arc<Mutex<State>>,
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
         fatality: Option<Response>,
     ) {
-        let _ = self.flush(state.clone(), sender).await;
+        let _ = self.flush(sender).await;
 
         if let Some(fatality) = fatality {
             let _ = self.send_json(sender, &fatality).await;
@@ -609,6 +603,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
     };
 
     let mut conn = Connection {
+        state: state.clone(),
         addr: peer_addr,
         pid: None,
         lid: None,
@@ -617,12 +612,12 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
     loop {
         tokio::select! {
             msg = ws_receiver.next() => {
-                if !conn.recv(state.clone(), msg, peer_addr, &mut ws_sender).await {
+                if !conn.recv(msg, &mut ws_sender).await {
                     break;
                 }
             }
             _ = tokio::time::sleep(TICK_DELAY) => {
-                conn.flush(state.clone(), &mut ws_sender).await;
+                conn.flush( &mut ws_sender).await;
             }
         }
     }
