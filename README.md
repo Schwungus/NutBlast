@@ -5,7 +5,7 @@
 [header]: NutBlast.h
 [example]: NutBlast-test.c
 
-<img align="right" alt="An explosive peanut sign" src=".github/assets/nutblast256.png">
+<img align="right" alt="An explosive peanut sign." src=".github/assets/nutblast256.png">
 
 NutBlast is a library that enables **peer-to-peer multiplayer** in games using **WebSockets/WebRTC**. The client is written in C++, has C bindings, and works on Windows, Linux, _and_ **Emscripten**!
 
