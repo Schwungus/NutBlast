@@ -18,7 +18,7 @@ The spiritual successor of the desktop-only [NutPunch](https://github.com/Schwun
 ## Troubleshooting
 
 > [!NOTE]
-> The public NutBlast instance does not provide [TURN](https://en.wikipedia.org/wiki/Traversal_Using_Relays_around_NAT) relaying at the moment. I don't feel comfortable paying $5000 DDoS bills just yet.
+> Due to heavy resource usage and operating costs, the public NutBlaster instance does not provide [TURN](https://en.wikipedia.org/wiki/Traversal_Using_Relays_around_NAT).
 
 If you're having **connectivity issues in a game powered by NutBlast**, please make sure (1) you aren't mangling UDP packets (**disable [zapret](https://github.com/bol-van/zapret)**) and (2) **there is a direct route to your computer** from the public network. Using a proxy service for accessing the Web shouldn't interfere as long as **you aren't routing your game through it**.
 
