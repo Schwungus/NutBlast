@@ -225,7 +225,6 @@ Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedSt
         if (st.expired())
             return;
 
-        info("cool!");
         st.lock()->outgoing_candidates.push_back(candidate);
     });
 
@@ -643,7 +642,6 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"Joined",
         [](const auto& obj) {
             const std::string id = obj["id"];
-            info("shalom {}", id);
             ::peers.insert({id, Peer(id, obj["meta"])});
         }},
     {"Left",
@@ -667,7 +665,6 @@ static void recv_shit() {
         if (!payload_types.contains(type))
             continue;
 
-        info("oh nice");
         payload_types.at(type)(obj);
     }
 
