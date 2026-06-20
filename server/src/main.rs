@@ -12,7 +12,10 @@ use color_eyre::eyre;
 use futures_util::{SinkExt as _, StreamExt as _, stream::SplitSink};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::{Error, Message},
+};
 
 const ID_MIN: usize = 1;
 const ID_MAX: usize = 8;
@@ -259,7 +262,11 @@ impl Connection {
                 self.flush(state.clone(), sender).await;
             }
             Some(Err(e)) => {
-                error!("{}: {}", peer_addr, e);
+                if !matches!(e, Error::ConnectionClosed) {
+                    error!("{}: {}", peer_addr, e);
+                }
+
+                return false;
             }
             None => {
                 return false;
