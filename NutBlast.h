@@ -43,16 +43,17 @@ extern "C" {
 #define NUTBLAST_MAX_PLAYERS (16)
 
 // NOTE: make sure to sync this with `src/main.rs`.
-typedef char NutBlast_ID[8];
+typedef uint64_t NutBlast_ID;
 typedef uint8_t NutBlast_ChannelID;
 
 typedef struct {
-    const char *data, *from;
+    const char* data;
+    NutBlast_ID from;
     size_t size;
 } NutBlast_Message;
 
 typedef struct {
-    const char* id;
+    NutBlast_ID id;
     uint8_t players, capacity;
 } NutBlast_Lobby;
 
@@ -77,10 +78,10 @@ void NutBlast_OnConnected(void (*)());
 void NutBlast_OnDisconnected(void (*)(const char*));
 
 /// Registers a callback to fire whenever a new peer connects to your machine.
-void NutBlast_OnPlayerJoined(void (*)(const char*));
+void NutBlast_OnPlayerJoined(void (*)(NutBlast_ID));
 
 /// Registers a callback to fire whenever a peer disconnects from your machine.
-void NutBlast_OnPlayerLeft(void (*)(const char*));
+void NutBlast_OnPlayerLeft(void (*)(NutBlast_ID));
 
 /// Registers a callback to fire whenever `NutBlast_FindLobbies` receives a list of lobbies.
 void NutBlast_OnLobbiesFound(void (*)(const NutBlast_Lobby*, size_t));
@@ -89,15 +90,15 @@ void NutBlast_OnLobbiesFound(void (*)(const NutBlast_Lobby*, size_t));
 bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
 
 /// Returns true if the peer with the specified ID has a connection established to our machine.
-bool NutBlast_PeerAlive(const char*);
+bool NutBlast_PeerAlive(NutBlast_ID);
 
 /// Sends a null-terminated string to the specified peer. Failures are silent. Delivery is not guaranteed.
 ///
 /// Set `size` to -1 to assume `msg` is a zero-terminated string.
-void NutBlast_SendTo(NutBlast_ChannelID chan, const char* peer, const char* msg, int size);
+void NutBlast_SendTo(NutBlast_ChannelID chan, NutBlast_ID peer, const char* msg, int size);
 
 /// A reliable-delivery version of `NutBlast_SendTo`, which see.
-void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, const char* peer, const char* msg, int size);
+void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID peer, const char* msg, int size);
 
 /// Call this every frame to send, receive, and process data from the NutBlaster and the peers.
 void NutBlast_Update();
@@ -116,14 +117,14 @@ void NutBlast_SetGameID(const char*);
 void NutBlast_SetMaxPlayers(int);
 
 /// Joins a lobby by its ID. Note that different games have different sets of lobbies.
-void NutBlast_Join(const char* id);
+void NutBlast_Join(NutBlast_ID id);
 
 /// Hosts a lobby with a given ID and maximum player count.
 ///
 /// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
 ///
-/// Pass a null ID if you want NutBlast to generate one for you.
-void NutBlast_Host(const char* id, int players);
+/// Pass 0 for the ID if you want NutBlast to generate one for you.
+void NutBlast_Host(NutBlast_ID id, int players);
 
 /// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
 void NutBlast_FindLobbies();
@@ -135,22 +136,22 @@ void NutBlast_Disconnect();
 int NutBlast_GetPlayerCount();
 
 /// Returns your player's ID.
-const char* NutBlast_GetOurID();
+NutBlast_ID NutBlast_GetOurID();
 
 /// Returns the lobby's ID.
-const char* NutBlast_GetLobbyID();
+NutBlast_ID NutBlast_GetLobbyID();
 
 /// Returns the lobby's master's ID.
-const char* NutBlast_GetMasterID();
+NutBlast_ID NutBlast_GetMasterID();
 
-/// Returns a NULL-terminated array of IDs of the players that are in the lobby, except our own.
-const char** NutBlast_GetPlayerIDs();
+/// Returns a 0-terminated array of IDs of the players that are in the lobby, except our own.
+const NutBlast_ID* NutBlast_GetPlayerIDs();
 
 /// Returns true if the player identified by their ID is in the lobby, and false otherwise.
-bool NutBlast_IsPlayerAlive(const char*);
+bool NutBlast_IsPlayerAlive(NutBlast_ID);
 
 /// Returns peer's metadata as a null-terminated string.
-const char* NutBlast_GetPeerField(const char* peer, const char* name);
+const char* NutBlast_GetPeerField(NutBlast_ID peer, const char* name);
 
 /// Sets our peer's metadata to a null-terminated string.
 void NutBlast_SetPeerField(const char* name, const char* value);

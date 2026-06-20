@@ -70,21 +70,21 @@ static void restart() {
         .color = RED,
     };
 
-    TinyDictPut(&players, NutBlast_GetOurID(), &us, sizeof(us));
+    TinyMapPut(&players, NutBlast_GetOurID(), &us, sizeof(us));
 }
 
-static void on_player_joined(const char* id) {
+static void on_player_joined(NutBlast_ID id) {
     Player p = {
         .x = (GetScreenWidth() - psize) / 2,
         .y = (GetScreenHeight() - psize) / 2,
         .color = GREEN,
     };
 
-    TinyDictPut(&players, id, &p, sizeof(p));
+    TinyMapPut(&players, id, &p, sizeof(p));
 }
 
-static void on_player_left(const char* id) {
-    TinyDictErase(&players, id);
+static void on_player_left(NutBlast_ID id) {
+    TinyMapErase(&players, id);
 }
 
 static void draw_players() {
@@ -103,7 +103,7 @@ static void draw_gui() {
         DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
     i++;
 
-    for (const char** ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
+    for (const NutBlast_ID* ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
         name = NutBlast_GetPeerField(*ptr, "NAME");
         if (name)
             DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
@@ -114,7 +114,7 @@ static void draw_gui() {
 }
 
 static void move_our_rect() {
-    Player* p = (Player*)TinyDictGet(&players, NutBlast_GetOurID());
+    Player* p = (Player*)TinyMapGet(&players, NutBlast_GetOurID());
 
     if (!p)
         return;
@@ -125,15 +125,15 @@ static void move_our_rect() {
 }
 
 static void send_our_position() {
-    const Player* p = (const Player*)TinyDictGet(&players, NutBlast_GetOurID());
+    const Player* p = (const Player*)TinyMapGet(&players, NutBlast_GetOurID());
 
     if (!p)
         return;
 
-    const char** peers = NutBlast_GetPlayerIDs();
+    const NutBlast_ID* peers = NutBlast_GetPlayerIDs();
 
     for (;;) {
-        const char* id = *peers++;
+        const NutBlast_ID id = *peers++;
 
         if (!id)
             break;
@@ -148,10 +148,10 @@ static void maybe_chat() {
     if (!IsKeyPressed(KEY_T))
         return;
 
-    const char** peers = NutBlast_GetPlayerIDs();
+    const NutBlast_ID* peers = NutBlast_GetPlayerIDs();
 
     for (;;) {
-        const char* id = *peers++;
+        const NutBlast_ID id = *peers++;
 
         if (!id)
             break;
@@ -164,7 +164,7 @@ static void recv_shit() {
     NutBlast_Message msg = {0};
 
     while (NutBlast_NextMessage(CHAN_POS, &msg)) {
-        Player* p = (Player*)TinyDictGet(&players, msg.from);
+        Player* p = (Player*)TinyMapGet(&players, msg.from);
 
         if (!p)
             continue;
@@ -203,11 +203,17 @@ int main(int argc, char* argv[]) {
     NutBlast_OnPlayerJoined(on_player_joined);
     NutBlast_OnPlayerLeft(on_player_left);
 
+    static NutBlast_ID lid = 0;
+    ((char*)(&lid))[0] = 't';
+    ((char*)(&lid))[1] = 'e';
+    ((char*)(&lid))[2] = 's';
+    ((char*)(&lid))[3] = 't';
+
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H))
-            NutBlast_Host("test", 2);
+            NutBlast_Host(lid, 2);
         else if (IsKeyPressed(KEY_J))
-            NutBlast_Join("test");
+            NutBlast_Join(lid);
         else if (IsKeyPressed(KEY_K))
             NutBlast_Disconnect();
 
