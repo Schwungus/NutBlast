@@ -5,6 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
 };
 
 use color_eyre::eyre;
@@ -18,6 +19,7 @@ const ID_MAX: usize = 8;
 const GAME_ID_LEN: usize = 16;
 const MAX_PLAYERS: usize = 16;
 const MAX_FIELDS: usize = 8;
+const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct LobbyId {
@@ -226,6 +228,47 @@ impl Outcome {
 }
 
 impl Connection {
+    async fn recv(
+        &mut self,
+        state: Arc<Mutex<State>>,
+        msg: Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
+        peer_addr: SocketAddr,
+        sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+    ) -> bool {
+        match msg {
+            Some(Ok(msg)) => {
+                match self.handle(state.clone(), msg) {
+                    Outcome::Good => {}
+                    Outcome::Boot(reason) => {
+                        warn!("boot to the face for {}: {}", peer_addr, reason);
+
+                        let fatality = Some(Response::Bye {
+                            reason: Some(reason),
+                        });
+
+                        self.finalize(state.clone(), sender, fatality).await;
+
+                        return false;
+                    }
+                    Outcome::Bye(fatality) => {
+                        self.finalize(state.clone(), sender, fatality).await;
+                        return false;
+                    }
+                }
+
+                self.flush(state.clone(), sender).await;
+            }
+            Some(Err(e)) => {
+                error!("{}: {}", peer_addr, e);
+            }
+            None => {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     fn handle(&mut self, state: Arc<Mutex<State>>, msg: Message) -> Outcome {
         let json = match msg {
             Message::Text(text) => text.to_string(),
@@ -351,9 +394,7 @@ impl Connection {
                     })
                     .collect();
 
-                {
-                    let player = state.players.get_mut(&pid).unwrap();
-
+                if let Some(player) = state.players.get_mut(&pid) {
                     player.send(Response::CapacitySet {
                         capacity: max_players,
                     });
@@ -523,12 +564,8 @@ impl Connection {
             })
         };
 
-        if let Some(queue) = queue {
-            for resp in queue {
-                if !self.send_json(sender, &resp).await {
-                    continue;
-                }
-            }
+        for resp in queue.unwrap_or_default() {
+            self.send_json(sender, &resp).await;
         }
     }
 
@@ -571,35 +608,14 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
     };
 
     loop {
-        match ws_receiver.next().await {
-            Some(Ok(msg)) => {
-                match conn.handle(state.clone(), msg) {
-                    Outcome::Good => {}
-                    Outcome::Boot(reason) => {
-                        warn!("boot to the face for {}: {}", peer_addr, reason);
-
-                        let fatality = Some(Response::Bye {
-                            reason: Some(reason),
-                        });
-
-                        conn.finalize(state.clone(), &mut ws_sender, fatality).await;
-
-                        break;
-                    }
-                    Outcome::Bye(fatality) => {
-                        conn.finalize(state.clone(), &mut ws_sender, fatality).await;
-                        break;
-                    }
+        tokio::select! {
+            msg = ws_receiver.next() => {
+                if !conn.recv(state.clone(), msg, peer_addr, &mut ws_sender).await {
+                    break;
                 }
-
+            }
+            _ = tokio::time::sleep(TICK_DELAY) => {
                 conn.flush(state.clone(), &mut ws_sender).await;
-            }
-            Some(Err(e)) => {
-                error!("{}: {}", peer_addr, e);
-                break;
-            }
-            None => {
-                break;
             }
         }
     }

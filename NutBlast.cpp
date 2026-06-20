@@ -78,6 +78,7 @@ template <typename V> static std::vector<V> copy_and_clear(std::vector<V>& vec) 
 
 struct PeerSharedState {
     const std::string id;
+
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr;
     std::vector<rtc::Candidate> outgoing_candidates;
@@ -196,8 +197,9 @@ struct Ticker {
 };
 
 Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedState(id)), id(id), meta(meta) {
-    state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
     const std::weak_ptr<PeerSharedState> st = state;
+
+    state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
 
     state->pc->onLocalDescription([id, st](const auto& local_desc) {
         if (st.expired())
@@ -220,8 +222,11 @@ Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedSt
     });
 
     state->pc->onLocalCandidate([st](const auto& candidate) {
-        if (!st.expired())
-            st.lock()->outgoing_candidates.push_back(candidate);
+        if (st.expired())
+            return;
+
+        info("cool!");
+        st.lock()->outgoing_candidates.push_back(candidate);
     });
 
     const auto setup_dc = [id](rtc::DataChannel& dc) {
@@ -286,8 +291,8 @@ static std::string generate_id() {
     mt.seed(NutBlast_TimeNS());
 
     std::uniform_int_distribution<> dtype(0, 1), dalpha('A', 'Z'), ddigit('0', '9');
-
     std::string id = "";
+
     for (size_t i = 0; i < sizeof(NutBlast_ID); i++)
         id.push_back(static_cast<char>(dtype(mt) ? ddigit(mt) : dalpha(mt)));
 
@@ -479,7 +484,9 @@ extern "C" void NutBlast_Disconnect() {
 
         info("NutBlaster out!");
         fire(::on_disconnected, ::disconnection_reason ? ::disconnection_reason->c_str() : nullptr);
+    }
 
+    if (::blaster_ws) { // `recv_shit` could've nuked the socket so we check for null once again
         try {
             ::blaster_ws->close();
         } catch (const std::runtime_error&) {}
@@ -657,8 +664,11 @@ static void recv_shit() {
 
         const std::string type = obj["type"];
 
-        if (payload_types.contains(type))
-            payload_types.at(type)(std::move(obj));
+        if (!payload_types.contains(type))
+            continue;
+
+        info("oh nice");
+        payload_types.at(type)(obj);
     }
 
     for (auto& [id, peer] : ::peers)
