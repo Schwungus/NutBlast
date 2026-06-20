@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{
     WebSocketStream,
-    tungstenite::{Error, Message},
+    tungstenite::{Error as TungError, Message},
 };
 
 const ID_MIN: usize = 1;
@@ -234,7 +234,7 @@ impl Connection {
     async fn recv(
         &mut self,
         state: Arc<Mutex<State>>,
-        msg: Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
+        msg: Option<Result<Message, TungError>>,
         peer_addr: SocketAddr,
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
     ) -> bool {
@@ -262,7 +262,7 @@ impl Connection {
                 self.flush(state.clone(), sender).await;
             }
             Some(Err(e)) => {
-                if !matches!(e, Error::ConnectionClosed) {
+                if !matches!(e, TungError::ConnectionClosed) {
                     error!("{}: {}", peer_addr, e);
                 }
 
