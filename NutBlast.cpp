@@ -136,7 +136,7 @@ struct Message {
 
 static std::string gid = "";
 static NutBlast_ID pid = 0, lid = 0;
-static std::optional<std::string> blaster, disconnection_reason;
+static std::optional<std::string> blaster, disconnection_reason, lname;
 
 static NutBlast_ChannelID max_chan = 1;
 static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
@@ -455,6 +455,7 @@ static void join_pro() {
                 {"gid", ::gid},
                 {"pid", ::get_pid()},
                 {"lid", ::lid},
+                {"lname", ::lname},
                 {"max_players", ::max_players},
                 {"peer_meta", ::peer_meta},
                 {"lobby_meta", ::lobby_meta},
@@ -494,7 +495,7 @@ extern "C" void NutBlast_Disconnect() {
         } catch (const std::runtime_error&) {}
     }
 
-    ::blaster_ws = nullptr, ::lid = 0;
+    ::blaster_ws = nullptr, ::lid = 0, ::lname = std::nullopt;
     ::peers.clear(), ::ws_in.clear(), ::ws_out.clear();
 }
 
@@ -514,20 +515,23 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
     } else if (!id) {
         info("No ID specified!");
     } else {
-        ::hosting = false, ::listing = false, ::lid = id;
+        ::hosting = false, ::listing = false;
+        ::lid = id, ::lname = std::nullopt;
 
         join_pro();
         info("Trying to join '{}' at: {}", id, get_blaster());
     }
 }
 
-extern "C" void NutBlast_Host(NutBlast_ID id, int max) {
+extern "C" void NutBlast_Host(NutBlast_ID id, const char* name, int max) {
     if (::blaster_ws) {
         info("You're already connected!");
+    } else if (!name || !name[0]) {
+        info("Lobby name cannot be null or empty");
     } else {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing = false;
-        ::lid = id ? id : generate_id();
+        ::lid = id ? id : generate_id(), ::lname = name;
 
         join_pro();
         info("Trying to host '{}' at: {}", lid, get_blaster());

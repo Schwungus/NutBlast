@@ -18,6 +18,8 @@ use tokio_tungstenite::{
 };
 
 const GAME_ID_LEN: usize = 16;
+const LOBBY_NAME_LEN: usize = 32;
+
 const MAX_PLAYERS: usize = 16;
 const MAX_FIELDS: usize = 8;
 const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
@@ -72,6 +74,7 @@ enum Payload {
         pid: BasicId,
         #[serde(flatten)]
         lid: LobbyId,
+        lname: Option<String>,
         max_players: usize,
         peer_meta: HashMap<String, String>,
         lobby_meta: HashMap<String, String>,
@@ -331,6 +334,7 @@ impl Connection {
                 mode,
                 pid,
                 lid,
+                lname,
                 max_players,
                 peer_meta,
                 lobby_meta,
@@ -354,10 +358,18 @@ impl Connection {
                 } else {
                     info!("new lobby max={1} {:?}", lid, max_players);
 
+                    let lname = if let Some(lname) = lname
+                        && (1..=LOBBY_NAME_LEN).contains(&lname.len())
+                    {
+                        lname
+                    } else {
+                        return Outcome::boot("Invalid lobby name");
+                    };
+
                     state.lobbies.insert(
                         lid.clone(),
                         Lobby {
-                            name: "REPLACEME".to_string(), // TODO: lobby names
+                            name: lname.to_string(),
                             meta: lobby_meta,
                             max_players,
                         },

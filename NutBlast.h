@@ -120,12 +120,12 @@ void NutBlast_SetMaxPlayers(int);
 /// Joins a lobby by its ID. Note that different games have different sets of lobbies.
 void NutBlast_Join(NutBlast_ID id);
 
-/// Hosts a lobby with a given ID and maximum player count.
+/// Hosts a lobby with a given ID, name, and maximum player count.
 ///
 /// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
 ///
 /// Pass 0 for the ID if you want NutBlast to generate one for you.
-void NutBlast_Host(NutBlast_ID id, int players);
+void NutBlast_Host(NutBlast_ID id, const char* name, int players);
 
 /// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
 void NutBlast_FindLobbies();
