@@ -576,19 +576,15 @@ impl Connection {
 async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAddr) {
     info!("conn: {}", peer_addr);
 
-    let (mut ws_sender, mut ws_receiver) = {
-        let ws_stream = match tokio_tungstenite::accept_async(stream).await {
-            Ok(ws) => {
-                info!("hi {}", peer_addr);
-                ws
-            }
-            Err(e) => {
-                error!("{}: {}", peer_addr, e);
-                return;
-            }
-        };
-
-        ws_stream.split()
+    let (mut ws_sender, mut ws_receiver) = match tokio_tungstenite::accept_async(stream).await {
+        Ok(ws) => {
+            info!("hi {}", peer_addr);
+            ws.split()
+        }
+        Err(e) => {
+            error!("{}: {}", peer_addr, e);
+            return;
+        }
     };
 
     let mut conn = Connection {
