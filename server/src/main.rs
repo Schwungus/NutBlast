@@ -17,20 +17,21 @@ use tokio_tungstenite::{
     tungstenite::{Error as TungError, Message},
 };
 
-const ID_MIN: usize = 1;
-const ID_MAX: usize = 8;
 const GAME_ID_LEN: usize = 16;
 const MAX_PLAYERS: usize = 16;
 const MAX_FIELDS: usize = 8;
 const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+type BasicId = u64;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 struct LobbyId {
-    game: String,
-    name: String,
+    lid: BasicId,
+    gid: String,
 }
 
 struct Lobby {
+    name: String,
     meta: HashMap<String, String>,
     max_players: usize,
 }
@@ -50,7 +51,7 @@ impl Player {
 
 struct State {
     lobbies: HashMap<LobbyId, Lobby>,
-    players: HashMap<String, Player>,
+    players: HashMap<BasicId, Player>,
     counter: u64,
 }
 
@@ -68,9 +69,9 @@ enum Payload {
     },
     Connect {
         mode: ConnectionMode,
-        pid: String,
-        gid: String,
-        lid: String,
+        pid: BasicId,
+        #[serde(flatten)]
+        lid: LobbyId,
         max_players: usize,
         peer_meta: HashMap<String, String>,
         lobby_meta: HashMap<String, String>,
@@ -87,23 +88,24 @@ enum Payload {
         value: String,
     },
     Candidate {
-        to: String,
+        to: BasicId,
         candidate: String,
         mid: String,
     },
     Offer {
-        to: String,
+        to: BasicId,
         sdp: String,
     },
     Answer {
-        to: String,
+        to: BasicId,
         sdp: String,
     },
 }
 
 #[derive(Clone, Serialize)]
 struct LobbyListing {
-    id: String,
+    lid: BasicId,
+    name: String,
     players: usize,
     max: usize,
     meta: HashMap<String, String>,
@@ -119,7 +121,7 @@ enum Response {
         capacity: usize,
     },
     PeerMetaSet {
-        peer: String,
+        peer: BasicId,
         key: String,
         value: String,
     },
@@ -128,26 +130,26 @@ enum Response {
         value: String,
     },
     NewMaster {
-        id: String,
+        id: BasicId,
     },
     Joined {
-        id: String,
+        id: BasicId,
         meta: HashMap<String, String>,
     },
     Left {
-        id: String,
+        id: BasicId,
     },
     Candidate {
-        from: String,
+        from: BasicId,
         candidate: String,
         mid: String,
     },
     Offer {
-        from: String,
+        from: BasicId,
         sdp: String,
     },
     Answer {
-        from: String,
+        from: BasicId,
         sdp: String,
     },
     List {
@@ -156,12 +158,12 @@ enum Response {
 }
 
 impl State {
-    fn master_of(&self, lobby: &LobbyId) -> Option<String> {
+    fn master_of(&self, lobby: &LobbyId) -> Option<BasicId> {
         self.players
             .iter()
             .filter(|(_, v)| v.lid == *lobby)
             .min_by(|(_, a), (_, b)| a.counter.cmp(&b.counter))
-            .map(|(k, _)| k.to_string())
+            .map(|(k, _)| *k)
     }
 
     fn players_in(&self, lobby: &LobbyId) -> usize {
@@ -227,7 +229,7 @@ impl Outcome {
 struct Connection {
     state: Arc<Mutex<State>>,
     addr: SocketAddr,
-    pid: Option<String>,
+    pid: Option<BasicId>,
     lid: Option<LobbyId>,
 }
 
@@ -299,12 +301,13 @@ impl Connection {
                     .lobbies
                     .iter()
                     .filter_map(|(lid, lobby)| {
-                        if lid.game != gid {
+                        if lid.gid != gid {
                             return None;
                         }
 
                         let lobby = LobbyListing {
-                            id: lid.name.to_string(),
+                            name: lobby.name.to_string(),
+                            lid: lid.lid,
                             max: lobby.max_players,
                             players: 0,
                             meta: lobby.meta.clone(),
@@ -327,7 +330,6 @@ impl Connection {
             Payload::Connect {
                 mode,
                 pid,
-                gid,
                 lid,
                 max_players,
                 peer_meta,
@@ -336,16 +338,9 @@ impl Connection {
                 && self.pid.is_none()
                 && self.lid.is_none()
                 && !state.players.contains_key(&pid)
-                && (ID_MIN..=ID_MAX).contains(&pid.len())
-                && (ID_MIN..=ID_MAX).contains(&lid.len())
-                && (1..=GAME_ID_LEN).contains(&gid.len()) =>
+                && (1..=GAME_ID_LEN).contains(&lid.gid.len()) =>
             {
-                let lid = LobbyId {
-                    game: gid.to_string(),
-                    name: lid.to_string(),
-                };
-
-                self.pid = Some(pid.to_string());
+                self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
                 match (mode, state.lobbies.contains_key(&lid)) {
@@ -362,6 +357,7 @@ impl Connection {
                     state.lobbies.insert(
                         lid.clone(),
                         Lobby {
+                            name: "REPLACEME".to_string(), // TODO: lobby names
                             meta: lobby_meta,
                             max_players,
                         },
@@ -383,7 +379,7 @@ impl Connection {
                     queue: Vec::new(),
                 };
 
-                state.players.insert(pid.to_string(), p);
+                state.players.insert(pid, p);
 
                 let mastah = state.master_of(&lid);
                 let meta = state.lobbies[&lid].meta.clone();
@@ -393,7 +389,7 @@ impl Connection {
                     .iter()
                     .filter_map(|(id, p)| {
                         if id != &pid && p.lid == lid {
-                            Some((id.to_string(), p.meta.clone()))
+                            Some((*id, p.meta.clone()))
                         } else {
                             None
                         }
@@ -411,7 +407,7 @@ impl Connection {
 
                     for (other, meta) in &pmeta {
                         player.send(Response::Joined {
-                            id: other.to_string(),
+                            id: *other,
                             meta: meta.clone(),
                         });
                     }
@@ -424,42 +420,32 @@ impl Connection {
                 for other in pmeta.keys() {
                     if let Some(other) = state.players.get_mut(other) {
                         other.send(Response::Joined {
-                            id: pid.to_string(),
+                            id: pid,
                             meta: peer_meta.clone(),
                         })
                     };
                 }
             }
-            Payload::Candidate { to, candidate, mid } if let Some(ref pid) = self.pid => {
+            Payload::Candidate { to, candidate, mid } if let Some(pid) = self.pid => {
                 let Some(to) = state.players.get_mut(&to) else {
                     return Outcome::Good;
                 };
 
                 to.send(Response::Candidate {
-                    from: pid.to_string(),
+                    from: pid,
                     candidate,
                     mid,
                 });
             }
-            Payload::Offer { to, sdp } if let Some(ref pid) = self.pid => {
-                let Some(to) = state.players.get_mut(&to) else {
-                    return Outcome::Good;
+            Payload::Offer { to, sdp } if let Some(from) = self.pid => {
+                if let Some(to) = state.players.get_mut(&to) {
+                    to.send(Response::Offer { from, sdp });
                 };
-
-                to.send(Response::Offer {
-                    from: pid.to_string(),
-                    sdp,
-                });
             }
-            Payload::Answer { to, sdp } if let Some(ref pid) = self.pid => {
-                let Some(to) = state.players.get_mut(&to) else {
-                    return Outcome::Good;
+            Payload::Answer { to, sdp } if let Some(from) = self.pid => {
+                if let Some(to) = state.players.get_mut(&to) {
+                    to.send(Response::Answer { from, sdp });
                 };
-
-                to.send(Response::Answer {
-                    from: pid.to_string(),
-                    sdp,
-                });
             }
             Payload::SetCapacity { capacity } if let Some(ref lid) = self.lid => {
                 let master = state.master_of(&lid);
@@ -492,7 +478,7 @@ impl Connection {
                 for (_, player) in &mut state.players {
                     if player.lid == *lid {
                         player.send(Response::PeerMetaSet {
-                            peer: pid.to_string(),
+                            peer: *pid,
                             key: key.to_string(),
                             value: value.to_string(),
                         });
@@ -632,14 +618,10 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
 
         for (other, player) in &mut state.players {
             if player.lid == *lid && other != pid {
-                player.send(Response::Left {
-                    id: pid.to_string(),
-                });
+                player.send(Response::Left { id: *pid });
 
-                if let Some(ref mastah) = mastah {
-                    player.send(Response::NewMaster {
-                        id: mastah.to_string(),
-                    })
+                if let Some(mastah) = mastah {
+                    player.send(Response::NewMaster { id: mastah })
                 };
             }
         }
@@ -655,7 +637,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
         let mut state = state.fucking_lock();
         let mut nonempty = HashSet::new();
 
-        for ref player in state.players.values() {
+        for player in state.players.values() {
             nonempty.insert(player.lid.clone());
         }
 

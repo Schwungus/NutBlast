@@ -67,8 +67,8 @@ static const rtc::Configuration rtc_config = {
     },
 };
 
-static std::unordered_map<std::string, std::vector<rtc::Candidate>> incoming_candidates;
-static std::unordered_map<std::string, std::vector<rtc::Description>> incoming_offers;
+static std::unordered_map<NutBlast_ID, std::vector<rtc::Candidate>> incoming_candidates;
+static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers;
 
 template <typename V> static std::vector<V> copy_and_clear(std::vector<V>& vec) {
     const auto copy = vec;
@@ -77,13 +77,13 @@ template <typename V> static std::vector<V> copy_and_clear(std::vector<V>& vec) 
 }
 
 struct PeerSharedState {
-    const std::string id;
+    const NutBlast_ID id;
 
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr;
     std::vector<rtc::Candidate> outgoing_candidates;
 
-    PeerSharedState(const std::string& id) : id(id) {}
+    PeerSharedState(NutBlast_ID id) : id(id) {}
 
     void drain_incoming_offers_and_candidates() {
         if (!::incoming_offers.contains(id))
@@ -116,10 +116,10 @@ struct PeerSharedState {
 struct Peer {
     Metadata meta;
     std::shared_ptr<PeerSharedState> state;
-    const std::string id;
+    const NutBlast_ID id;
 
-    Peer(const std::string& id) : Peer(id, {}) {}
-    Peer(const std::string&, const Metadata&);
+    Peer(NutBlast_ID id) : Peer(id, {}) {}
+    Peer(NutBlast_ID, const Metadata&);
 
     bool is_offerer() const;
 
@@ -130,20 +130,21 @@ struct Peer {
 };
 
 struct Message {
-    std::string from;
+    NutBlast_ID from;
     std::vector<std::byte> bytes;
 };
 
-static std::string gid = "", pid = "";
-static std::optional<std::string> blaster, lid, disconnection_reason;
+static std::string gid = "";
+static NutBlast_ID pid = 0, lid = 0;
+static std::optional<std::string> blaster, disconnection_reason;
 
 static NutBlast_ChannelID max_chan = 1;
 static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
 
 static bool hosting = false, listing = false;
-static std::string master = "";
+static NutBlast_ID master = 0;
 
-static std::unordered_map<std::string, Peer> peers;
+static std::unordered_map<NutBlast_ID, Peer> peers;
 
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
 static std::vector<nlohmann::json> ws_in, ws_out;
@@ -181,33 +182,6 @@ static void ws_send(nlohmann::json&& obj) {
     } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
 }
 
-static NutBlast_ID sid_to_nid(const std::string& sid) {
-    NutBlast_ID nid = 0;
-    const char* cstr = sid.c_str();
-    for (size_t i = 0; i < sizeof(nid); i++) {
-        const char c = cstr[i];
-        if (c == '\0')
-            break;
-
-        ((char*)(&nid))[i] = c;
-    }
-
-    return nid;
-}
-
-static std::string nid_to_sid(NutBlast_ID nid) {
-    std::string sid = "";
-    for (size_t i = 0; i < sizeof(NutBlast_ID); i++) {
-        const char c = ((char*)(&nid))[i];
-        if (c == '\0')
-            break;
-
-        sid += c;
-    }
-
-    return sid;
-}
-
 struct Ticker {
     const std::uint64_t interval;
     std::uint64_t last_tick = 0;
@@ -226,7 +200,7 @@ struct Ticker {
     }
 };
 
-Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedState(id)), id(id), meta(meta) {
+Peer::Peer(NutBlast_ID id, const Metadata& meta) : state(new PeerSharedState(id)), id(id), meta(meta) {
     const std::weak_ptr<PeerSharedState> st = state;
 
     state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
@@ -260,11 +234,11 @@ Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedSt
 
     const auto setup_dc = [id](rtc::DataChannel& dc) {
         dc.onOpen([id]() {
-            fire(::on_player_joined, sid_to_nid(id));
+            fire(::on_player_joined, id);
         });
 
         dc.onClosed([id]() {
-            fire(::on_player_left, sid_to_nid(id));
+            fire(::on_player_left, id);
         });
 
         dc.onMessage([id](const auto& variant) {
@@ -310,26 +284,26 @@ Peer::Peer(const std::string& id, const Metadata& meta) : state(new PeerSharedSt
                 state->unreliable_dc = dc;
 
             setup_dc(*dc);
-            fire(::on_player_joined, sid_to_nid(id));
+            fire(::on_player_joined, id);
         });
     }
 }
 
-static std::string generate_id() {
+static NutBlast_ID generate_id() {
     std::mt19937 mt;
     mt.seed(NutBlast_TimeNS());
 
     std::uniform_int_distribution<> dtype(0, 1), dalpha('A', 'Z'), ddigit('0', '9');
-    std::string id = "";
+    static char id[sizeof(NutBlast_ID)] = "";
 
     for (size_t i = 0; i < sizeof(NutBlast_ID); i++)
-        id.push_back(static_cast<char>(dtype(mt) ? ddigit(mt) : dalpha(mt)));
+        id[i] = static_cast<char>(dtype(mt) ? ddigit(mt) : dalpha(mt));
 
-    return id;
+    return *reinterpret_cast<NutBlast_ID*>(id);
 }
 
-static std::string get_pid() {
-    if (pid.empty()) {
+static NutBlast_ID get_pid() {
+    if (!pid) {
         pid = generate_id();
         info("You are {}", pid);
     }
@@ -381,17 +355,16 @@ extern "C" const char* NutBlast_GetPeerField(NutBlast_ID pee, const char* name) 
     if (!pee || !name)
         return nullptr;
 
-    if (pee == sid_to_nid(get_pid()))
+    if (pee == get_pid())
         return peer_meta.at(name).c_str();
 
     if (!NutBlast_IsReady())
         return nullptr;
 
-    std::string sid = nid_to_sid(pee);
-    if (!::peers.contains(sid))
+    if (!::peers.contains(pee))
         return nullptr;
 
-    const auto& peer = ::peers.at(sid);
+    const auto& peer = ::peers.at(pee);
 
     if (peer.meta.contains(name))
         return peer.meta.at(name).c_str();
@@ -447,7 +420,7 @@ static void join_pro() {
     rtc::Preload();
 
     get_blaster();
-    ::master = "", ::disconnection_reason = std::nullopt;
+    ::master = 0, ::disconnection_reason = std::nullopt;
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
 
@@ -521,7 +494,7 @@ extern "C" void NutBlast_Disconnect() {
         } catch (const std::runtime_error&) {}
     }
 
-    ::blaster_ws = nullptr, ::lid = std::nullopt;
+    ::blaster_ws = nullptr, ::lid = 0;
     ::peers.clear(), ::ws_in.clear(), ::ws_out.clear();
 }
 
@@ -541,7 +514,7 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
     } else if (!id) {
         info("No ID specified!");
     } else {
-        ::hosting = false, ::listing = false, ::lid = nid_to_sid(id);
+        ::hosting = false, ::listing = false, ::lid = id;
 
         join_pro();
         info("Trying to join '{}' at: {}", id, get_blaster());
@@ -554,10 +527,10 @@ extern "C" void NutBlast_Host(NutBlast_ID id, int max) {
     } else {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing = false;
-        ::lid = id ? nid_to_sid(id) : generate_id();
+        ::lid = id ? id : generate_id();
 
         join_pro();
-        info("Trying to host '{}' at: {}", *lid, get_blaster());
+        info("Trying to host '{}' at: {}", lid, get_blaster());
     }
 }
 
@@ -572,11 +545,9 @@ extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
 
     size_t i = 0;
 
-    for (const auto& [id, player] : peers) {
-        NutBlast_ID nid = sid_to_nid(id);
-        if (NutBlast_IsPlayerAlive(nid))
-            buf[i++] = nid;
-    }
+    for (const auto& [id, player] : peers)
+        if (NutBlast_IsPlayerAlive(id))
+            buf[i++] = id;
 
     buf[i] = 0;
 
@@ -584,33 +555,33 @@ extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
 }
 
 extern "C" NutBlast_ID NutBlast_GetOurID() {
-    return sid_to_nid(get_pid());
+    return get_pid();
 }
 
 extern "C" NutBlast_ID NutBlast_GetLobbyID() {
-    return (NutBlast_IsReady() && ::lid) ? sid_to_nid(::lid.value()) : 0;
+    return (NutBlast_IsReady() && ::lid) ? ::lid : 0;
 }
 
 extern "C" NutBlast_ID NutBlast_GetMasterID() {
-    return NutBlast_IsReady() ? sid_to_nid(::master.c_str()) : 0;
+    return NutBlast_IsReady() ? ::master : 0;
 }
 
 extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
     if (!id || !NutBlast_IsReady())
         return false;
 
-    if (id == sid_to_nid(get_pid()))
+    if (id == get_pid())
         return true;
 
     for (const auto& [key, player] : peers)
-        if (id == sid_to_nid(key))
+        if (id == key)
             return true;
 
     return false;
 }
 
 static void handle_offer_answer(const nlohmann::json& obj) {
-    const std::string& id = obj["from"];
+    const NutBlast_ID& id = obj["from"];
 
     if (!::incoming_offers.contains(id))
         ::incoming_offers.insert({id, {}});
@@ -620,7 +591,7 @@ static void handle_offer_answer(const nlohmann::json& obj) {
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
-    const std::string& id = obj["from"];
+    const NutBlast_ID& id = obj["from"];
 
     if (!::incoming_candidates.contains(id))
         ::incoming_candidates.insert({id, {}});
@@ -634,10 +605,11 @@ static void handle_list(const nlohmann::json& obj) {
     std::vector<std::string> tmp;
 
     for (const auto& lober : obj["list"]) {
-        tmp.push_back(lober["id"]);
+        tmp.push_back(lober["name"]);
 
         lobbies.push_back({
-            .id = sid_to_nid(tmp.back()),
+            .id = lober["lid"],
+            .name = tmp.back().c_str(),
             .players = lober["players"],
             .capacity = lober["max"],
         });
@@ -672,7 +644,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
         }},
     {"Joined",
         [](const auto& obj) {
-            const std::string id = obj["id"];
+            const NutBlast_ID id = obj["id"];
             ::peers.insert({id, Peer(id, obj["meta"])});
         }},
     {"Left",
@@ -741,7 +713,7 @@ static void greatest_technician_thats_ever_lived(
         buf[i + 1] = static_cast<std::byte>(msg[i]);
 
     try {
-        const auto& peer = ::peers.at(nid_to_sid(id));
+        const auto& peer = ::peers.at(id);
         const auto& dc = reliable ? peer.state->reliable_dc : peer.state->unreliable_dc;
         dc && dc->send(buf);
     } catch (const std::runtime_error&) {}
@@ -768,7 +740,7 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
 
     out->data = reinterpret_cast<const char*>(msg.bytes.data());
     out->size = msg.bytes.size();
-    out->from = sid_to_nid(msg.from);
+    out->from = msg.from;
 
     return true;
 }
@@ -777,14 +749,13 @@ extern "C" bool NutBlast_PeerAlive(NutBlast_ID id) {
     if (!id || !NutBlast_IsReady())
         return false;
 
-    if (sid_to_nid(get_pid()) == id)
+    if (get_pid() == id)
         return true;
 
-    std::string sid = nid_to_sid(id);
-    if (!::peers.contains(sid))
+    if (!::peers.contains(id))
         return false;
 
-    return peers.at(sid).is_alive();
+    return peers.at(id).is_alive();
 }
 
 extern "C" bool NutBlast_IsReady() {

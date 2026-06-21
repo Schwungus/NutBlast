@@ -54,6 +54,7 @@ typedef struct {
 
 typedef struct {
     NutBlast_ID id;
+    const char* name;
     uint8_t players, capacity;
 } NutBlast_Lobby;
 

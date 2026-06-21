@@ -11,7 +11,7 @@ static void on_found(const NutBlast_Lobby* list, size_t count) {
 
     for (size_t i = 0; i < count; i++) {
         const NutBlast_Lobby lober = list[i];
-        printf("%llu: %d/%d\n", lober.id, lober.players, lober.capacity);
+        printf("%lu \"%s\": %d/%d\n", lober.id, lober.name, lober.players, lober.capacity);
     }
 
     printf("\n");
