@@ -79,11 +79,15 @@ int main(int argc, char* argv[]) {
     (void)argc, (void)argv;
 
     NutBlast_SetGameID("My Cool Game");
-    NutBlast_Join("My Lobby");
+
+    if (/* hosting */)
+        NutBlast_Host(1337, "My Lobby", 8);
+    else
+        NutBlast_Join(1337);
 
     for (;;) { // your game's main loop goes here...
         NutBlast_Update();
-        NutBlast_Sleep(1000 / 60);
+        NutBlast_SleepMS(1000 / 60);
     }
 
     NutBlast_Cleanup();
