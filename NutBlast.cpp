@@ -356,7 +356,7 @@ extern "C" const char* NutBlast_GetPeerField(NutBlast_ID pee, const char* name) 
         return nullptr;
 
     if (pee == get_pid())
-        return peer_meta.at(name).c_str();
+        return ::peer_meta.contains(name) ? ::peer_meta.at(name).c_str() : nullptr;
 
     if (!NutBlast_IsReady())
         return nullptr;
@@ -365,11 +365,7 @@ extern "C" const char* NutBlast_GetPeerField(NutBlast_ID pee, const char* name) 
         return nullptr;
 
     const auto& peer = ::peers.at(pee);
-
-    if (peer.meta.contains(name))
-        return peer.meta.at(name).c_str();
-
-    return nullptr;
+    return peer.meta.contains(name) ? peer.meta.at(name).c_str() : nullptr;
 }
 
 extern "C" void NutBlast_SetPeerField(const char* key, const char* value) {
