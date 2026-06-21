@@ -98,13 +98,8 @@ static void draw_gui() {
     const int fs = 28;
     int i = 0;
 
-    const char* name = NutBlast_GetPeerField(NutBlast_GetOurID(), "NAME");
-    if (name)
-        DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
-    i++;
-
     for (const NutBlast_ID* ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
-        name = NutBlast_GetPeerField(*ptr, "NAME");
+        const char* name = NutBlast_GetPeerField(*ptr, "NAME");
         if (name)
             DrawText(name, GetScreenWidth() - MeasureText(name, fs), fs * i, fs, BLACK);
         i++;

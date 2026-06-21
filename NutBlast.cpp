@@ -123,9 +123,8 @@ struct Peer {
 
     bool is_offerer() const;
 
-    bool is_alive() const {
-        return state && state->unreliable_dc && state->unreliable_dc->isOpen() && state->reliable_dc
-               && state->reliable_dc->isOpen();
+    bool is_available() const {
+        return state && state->unreliable_dc && state->reliable_dc;
     }
 };
 
@@ -544,7 +543,7 @@ extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
     static NutBlast_ID buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
 
     size_t i = 0;
-
+    buf[i++] = get_pid();
     for (const auto& [id, player] : peers)
         if (NutBlast_IsPlayerAlive(id))
             buf[i++] = id;
@@ -573,11 +572,7 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
     if (id == get_pid())
         return true;
 
-    for (const auto& [key, player] : peers)
-        if (id == key)
-            return true;
-
-    return false;
+    return ::peers.contains(id);
 }
 
 static void handle_offer_or_answer(const nlohmann::json& obj) {
@@ -702,7 +697,11 @@ extern "C" void NutBlast_Update() {
 
 static void greatest_technician_thats_ever_lived(
     NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size, bool reliable) {
-    if (!id || !msg || !NutBlast_PeerAlive(id))
+    if (!id || id == get_pid() || !NutBlast_IsPlayerAlive(id) || !msg)
+        return;
+
+    const auto& peer = ::peers.at(id);
+    if (!peer.is_available())
         return;
 
     if (size < 0)
@@ -715,7 +714,6 @@ static void greatest_technician_thats_ever_lived(
         buf[i + 1] = static_cast<std::byte>(msg[i]);
 
     try {
-        const auto& peer = ::peers.at(id);
         const auto& dc = reliable ? peer.state->reliable_dc : peer.state->unreliable_dc;
         dc && dc->send(buf);
     } catch (const std::runtime_error&) {}
@@ -745,19 +743,6 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
     out->from = msg.from;
 
     return true;
-}
-
-extern "C" bool NutBlast_PeerAlive(NutBlast_ID id) {
-    if (!id || !NutBlast_IsReady())
-        return false;
-
-    if (get_pid() == id)
-        return true;
-
-    if (!::peers.contains(id))
-        return false;
-
-    return peers.at(id).is_alive();
 }
 
 extern "C" bool NutBlast_IsReady() {

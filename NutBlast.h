@@ -90,9 +90,6 @@ void NutBlast_OnLobbiesFound(void (*)(const NutBlast_Lobby*, size_t));
 /// Returns true and copies the incoming message if there is a message waiting in the queue for the specified channel.
 bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
 
-/// Returns true if the peer with the specified ID has a connection established to our machine.
-bool NutBlast_PeerAlive(NutBlast_ID);
-
 /// Sends a null-terminated string to the specified peer. Failures are silent. Delivery is not guaranteed.
 ///
 /// Set `size` to -1 to assume `msg` is a zero-terminated string.
@@ -145,7 +142,7 @@ NutBlast_ID NutBlast_GetLobbyID();
 /// Returns the lobby's master's ID.
 NutBlast_ID NutBlast_GetMasterID();
 
-/// Returns a 0-terminated array of IDs of the players that are in the lobby, except our own.
+/// Returns a 0-terminated array of IDs of every player in the lobby, including yourself.
 const NutBlast_ID* NutBlast_GetPlayerIDs();
 
 /// Returns true if the player identified by their ID is in the lobby, and false otherwise.
