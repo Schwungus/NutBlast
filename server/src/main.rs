@@ -417,9 +417,9 @@ impl Connection {
                         player.send(Response::LobbyMetaSet { key, value });
                     }
 
-                    for (other, meta) in &pmeta {
+                    for (&other, meta) in &pmeta {
                         player.send(Response::Joined {
-                            id: *other,
+                            id: other,
                             meta: meta.clone(),
                         });
                     }
@@ -429,8 +429,8 @@ impl Connection {
                     }
                 }
 
-                for other in pmeta.keys() {
-                    if let Some(other) = state.players.get_mut(other) {
+                for &other in pmeta.keys() {
+                    if let Some(other) = state.players.get_mut(&other) {
                         other.send(Response::Joined {
                             id: pid,
                             meta: peer_meta.clone(),
@@ -478,8 +478,8 @@ impl Connection {
             }
             Request::SetPeerMeta { key, value }
                 if let Some(ref lid) = self.lid
-                    && let Some(ref pid) = self.pid
-                    && let Some(player) = state.players.get_mut(pid) =>
+                    && let Some(pid) = self.pid
+                    && let Some(player) = state.players.get_mut(&pid) =>
             {
                 if !player.meta.contains_key(&key) && player.meta.len() >= MAX_FIELDS {
                     return Outcome::Good;
@@ -490,7 +490,7 @@ impl Connection {
                 for (_, player) in &mut state.players {
                     if player.lid == *lid {
                         player.send(Response::PeerMetaSet {
-                            peer: *pid,
+                            peer: pid,
                             key: key.to_string(),
                             value: value.to_string(),
                         });
@@ -620,17 +620,17 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
         }
     }
 
-    if let Some(ref pid) = conn.pid
+    if let Some(pid) = conn.pid
         && let Some(ref lid) = conn.lid
     {
         let mut state = state.fucking_lock();
-        state.players.remove(pid);
+        state.players.remove(&pid);
 
         let mastah = state.master_of(lid);
 
-        for (other, player) in &mut state.players {
+        for (&other, player) in &mut state.players {
             if player.lid == *lid && other != pid {
-                player.send(Response::Left { id: *pid });
+                player.send(Response::Left { id: pid });
 
                 if let Some(mastah) = mastah {
                     player.send(Response::NewMaster { id: mastah })
