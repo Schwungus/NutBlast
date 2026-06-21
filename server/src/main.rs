@@ -10,6 +10,7 @@ use std::{
 
 use color_eyre::eyre;
 use futures_util::{SinkExt as _, StreamExt as _, stream::SplitSink};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{
@@ -39,7 +40,6 @@ struct Lobby {
 }
 
 struct Player {
-    counter: u64, // keeps player ordering stable (e.g. master doesn't change if a new player joins)
     lid: LobbyId,
     meta: HashMap<String, String>,
     queue: Vec<Response>,
@@ -53,8 +53,7 @@ impl Player {
 
 struct State {
     lobbies: HashMap<LobbyId, Lobby>,
-    players: HashMap<BasicId, Player>,
-    counter: u64,
+    players: IndexMap<BasicId, Player>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,7 +164,7 @@ impl State {
         self.players
             .iter()
             .filter(|(_, v)| v.lid == *lobby)
-            .min_by(|(_, a), (_, b)| a.counter.cmp(&b.counter))
+            .next()
             .map(|(k, _)| *k)
     }
 
@@ -179,12 +178,6 @@ impl State {
         }
 
         counter
-    }
-
-    fn next_counter(&mut self) -> u64 {
-        let next = self.counter;
-        self.counter += 1;
-        next
     }
 }
 
@@ -206,8 +199,7 @@ async fn main() -> eyre::Result<()> {
 
     let state = Arc::new(Mutex::new(State {
         lobbies: HashMap::new(),
-        players: HashMap::new(),
-        counter: 0,
+        players: IndexMap::new(),
     }));
 
     while let Ok((stream, peer_addr)) = listener.accept().await {
@@ -385,7 +377,6 @@ impl Connection {
                 }
 
                 let p = Player {
-                    counter: state.next_counter(),
                     lid: lid.clone(),
                     meta: peer_meta.clone(),
                     queue: Vec::new(),
@@ -624,7 +615,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
         && let Some(ref lid) = conn.lid
     {
         let mut state = state.fucking_lock();
-        state.players.remove(&pid);
+        state.players.shift_remove(&pid);
 
         let mastah = state.master_of(lid);
 

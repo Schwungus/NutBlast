@@ -7,6 +7,7 @@ edition = "2024"
 color-eyre = "0.6.5"
 env_logger = "0.11.10"
 futures-util = "0.3.32"
+indexmap = "2.14.0"
 log = "0.4.32"
 serde = { version = "1.0.228", features = ["alloc", "derive"] }
 serde_json = { version = "1.0.150", features = ["alloc"] }
