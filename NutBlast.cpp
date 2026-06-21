@@ -212,9 +212,9 @@ Peer::Peer(NutBlast_ID id, const Metadata& meta) : state(new PeerSharedState(id)
         std::string type;
 
         if (local_desc.typeString() == "offer")
-            type = "Offer";
+            type = "PassOffer";
         else if (local_desc.typeString() == "answer")
-            type = "Answer";
+            type = "PassAnswer";
         else
             return;
 
@@ -584,14 +584,16 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
     return false;
 }
 
-static void handle_offer_answer(const nlohmann::json& obj) {
+static void handle_offer_or_answer(const nlohmann::json& obj) {
     const NutBlast_ID& id = obj["from"];
 
     if (!::incoming_offers.contains(id))
         ::incoming_offers.insert({id, {}});
 
     auto& queue = incoming_offers.at(id);
-    queue.emplace_back(obj["sdp"], obj["type"] == "Offer" ? "offer" : "answer");
+
+    const auto type = obj["type"] == "Offer" ? "offer" : "answer";
+    queue.emplace_back(obj["sdp"], type);
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
@@ -656,8 +658,8 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
             if (::peers.contains(obj["id"]))
                 ::peers.erase(obj["id"]);
         }},
-    {"Offer", handle_offer_answer},
-    {"Answer", handle_offer_answer},
+    {"Offer", handle_offer_or_answer},
+    {"Answer", handle_offer_or_answer},
     {"Candidate", handle_candidate},
     {"List", handle_list},
 };
@@ -688,7 +690,7 @@ extern "C" void NutBlast_Flush() {
     for (auto& [id, peer] : ::peers) {
         for (const auto& candidate : copy_and_clear(peer.state->outgoing_candidates)) {
             ::ws_send({
-                {"type", "Candidate"},
+                {"type", "PassCandidate"},
                 {"to", id},
                 {"candidate", (rtc::string)candidate},
                 {"mid", candidate.mid()},

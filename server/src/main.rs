@@ -65,7 +65,7 @@ enum ConnectionMode {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
-enum Payload {
+enum Request {
     List {
         gid: String,
     },
@@ -90,16 +90,16 @@ enum Payload {
         key: String,
         value: String,
     },
-    Candidate {
+    PassCandidate {
         to: BasicId,
         candidate: String,
         mid: String,
     },
-    Offer {
+    PassOffer {
         to: BasicId,
         sdp: String,
     },
-    Answer {
+    PassAnswer {
         to: BasicId,
         sdp: String,
     },
@@ -288,7 +288,7 @@ impl Connection {
             _ => return Outcome::Good,
         };
 
-        let payload = match serde_json::from_str(&json) {
+        let request = match serde_json::from_str(&json) {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", self.addr, err);
@@ -298,8 +298,8 @@ impl Connection {
 
         let mut state = self.state.fucking_lock();
 
-        match payload {
-            Payload::List { gid } => {
+        match request {
+            Request::List { gid } => {
                 let mut list: HashMap<LobbyId, LobbyListing> = state
                     .lobbies
                     .iter()
@@ -330,7 +330,7 @@ impl Connection {
                     list: list.into_values().collect(),
                 }));
             }
-            Payload::Connect {
+            Request::Connect {
                 mode,
                 pid,
                 lid,
@@ -438,7 +438,7 @@ impl Connection {
                     };
                 }
             }
-            Payload::Candidate { to, candidate, mid } if let Some(pid) = self.pid => {
+            Request::PassCandidate { to, candidate, mid } if let Some(pid) = self.pid => {
                 let Some(to) = state.players.get_mut(&to) else {
                     return Outcome::Good;
                 };
@@ -449,17 +449,17 @@ impl Connection {
                     mid,
                 });
             }
-            Payload::Offer { to, sdp } if let Some(from) = self.pid => {
+            Request::PassOffer { to, sdp } if let Some(from) = self.pid => {
                 if let Some(to) = state.players.get_mut(&to) {
                     to.send(Response::Offer { from, sdp });
                 };
             }
-            Payload::Answer { to, sdp } if let Some(from) = self.pid => {
+            Request::PassAnswer { to, sdp } if let Some(from) = self.pid => {
                 if let Some(to) = state.players.get_mut(&to) {
                     to.send(Response::Answer { from, sdp });
                 };
             }
-            Payload::SetCapacity { capacity } if let Some(ref lid) = self.lid => {
+            Request::SetCapacity { capacity } if let Some(ref lid) = self.lid => {
                 let master = state.master_of(&lid);
 
                 if master == self.pid
@@ -476,7 +476,7 @@ impl Connection {
                     }
                 }
             }
-            Payload::SetPeerMeta { key, value }
+            Request::SetPeerMeta { key, value }
                 if let Some(ref lid) = self.lid
                     && let Some(ref pid) = self.pid
                     && let Some(player) = state.players.get_mut(pid) =>
@@ -497,7 +497,7 @@ impl Connection {
                     }
                 }
             }
-            Payload::SetLobbyMeta { key, value }
+            Request::SetLobbyMeta { key, value }
                 if let Some(ref lid) = self.lid
                     && let master = state.master_of(&lid)
                     && let Some(lober) = state.lobbies.get_mut(&lid) =>
