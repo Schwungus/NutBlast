@@ -135,6 +135,9 @@ void NutBlast_Disconnect();
 /// Returns the amount of players that are in the lobby, including yourself.
 int NutBlast_GetPlayerCount();
 
+/// Returns the maximum player count the current lobby can take, or 0 if you aren't in a lobby.
+int NutBlast_GetMaxPlayers();
+
 /// Returns your player's ID.
 NutBlast_ID NutBlast_GetOurID();
 

@@ -554,9 +554,11 @@ extern "C" void NutBlast_Host(NutBlast_ID id, const char* name, int max) {
 }
 
 extern "C" int NutBlast_GetPlayerCount() {
-    if (!NutBlast_IsReady())
-        return 0;
-    return static_cast<int>(1 + peers.size());
+    return NutBlast_IsReady() ? static_cast<int>(1 + peers.size()) : 0;
+}
+
+extern "C" int NutBlast_GetMaxPlayers() {
+    return NutBlast_IsReady() ? ::max_players : 0;
 }
 
 extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
