@@ -346,11 +346,11 @@ static std::string get_blaster() {
 static int max_players = NUTBLAST_MAX_PLAYERS;
 
 extern "C" void NutBlast_SetNutBlaster(const char* blaster) {
-    ::blaster = blaster;
+    ::blaster = (blaster == nullptr ? NUTBLAST_DEFAULT_SERVER : blaster);
 }
 
 extern "C" void NutBlast_SetGameID(const char* gid) {
-    ::gid = gid;
+    ::gid = gid; // TODO: do a null check?
 }
 
 extern "C" void NutBlast_SetMaxChannels(NutBlast_ChannelID max) {

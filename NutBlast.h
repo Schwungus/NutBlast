@@ -65,6 +65,8 @@ void NutBlast_Cleanup();
 bool NutBlast_IsReady();
 
 /// Sets the NutBlaster address.
+///
+/// Pass NULL to reset the address to its default value.
 void NutBlast_SetNutBlaster(const char*);
 
 /// Sets the maximum amount of channels to receive messages on. Defaults to 1 channel if unspecified.
