@@ -53,9 +53,15 @@ typedef struct {
 } NutBlast_Message;
 
 typedef struct {
+    const char *key, *value;
+} NutBlast_LobbyField;
+
+typedef struct {
     NutBlast_ID id;
     const char* name;
     uint8_t players, capacity;
+    const NutBlast_LobbyField* metadata;
+    size_t field_count;
 } NutBlast_Lobby;
 
 /// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.

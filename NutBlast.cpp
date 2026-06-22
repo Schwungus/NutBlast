@@ -668,18 +668,41 @@ static void handle_candidate(const nlohmann::json& obj) {
     queue.emplace_back(obj["candidate"], obj["mid"]);
 }
 
+struct LobbyInfo {
+    std::string name;
+    std::vector<std::pair<std::string, std::string>> fields;
+    std::vector<NutBlast_LobbyField> meta;
+};
+
 static void handle_list(const nlohmann::json& obj) {
     std::vector<NutBlast_Lobby> lobbies;
-    std::vector<std::string> tmp;
+    std::vector<LobbyInfo> tmp;
 
-    for (const auto& lober : obj["list"]) {
-        tmp.push_back(lober["name"]);
+    const auto& lobers = obj["list"];
+    tmp.reserve(lobers.size());
+    for (const auto& lober : lobers) {
+        tmp.push_back({});
+        LobbyInfo& tlob = tmp.back();
+
+        tlob.name = lober["name"];
+
+        const auto& read_meta = lober["meta"];
+        tlob.fields.reserve(read_meta.size());
+        for (const auto& field : read_meta.items()) {
+            tlob.fields.push_back({field.key(), field.value().get<std::string>()});
+            tlob.meta.push_back({
+                .key = tlob.fields.back().first.c_str(),
+                .value = tlob.fields.back().second.c_str(),
+            });
+        }
 
         lobbies.push_back({
             .id = lober["lid"],
-            .name = tmp.back().c_str(),
+            .name = tlob.name.c_str(),
             .players = lober["players"],
             .capacity = lober["max"],
+            .metadata = tlob.meta.data(),
+            .field_count = tlob.meta.size(),
         });
     }
 

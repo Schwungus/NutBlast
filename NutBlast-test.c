@@ -42,6 +42,14 @@
 
 static const char* names[] = {"Ninja", "Marsoyob", "Trollga", "Ficus", "Caccus", "jrb012345", "Utley"};
 
+static const char* motds[] = {
+    "When life gives you lemons, make lemonade.",
+    "Live every day like it's your last.",
+    "Be yourself. Everyone else is already taken.",
+    "Be the change you wish to see in the world.",
+    "Don't sweat the small stuff.",
+};
+
 enum {
     CHAN_POS,
     CHAN_CHAT,
@@ -216,6 +224,8 @@ int main(int argc, char* argv[]) {
     SetExitKey(EMS ? KEY_NULL : KEY_ESCAPE);
     SetRandomSeed(NutBlast_TimeNS());
 
+    NutBlast_SetLobbyField("NUTBLAST", "TEST");
+    NutBlast_SetLobbyField("MOTD", motds[GetRandomValue(0, sizeof(motds) / sizeof(*motds) - 1)]);
     NutBlast_SetPeerField("NAME", names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
     reset();
 
