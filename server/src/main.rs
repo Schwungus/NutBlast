@@ -66,6 +66,7 @@ enum ConnectionMode {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum Request {
+    Ping,
     List {
         gid: String,
     },
@@ -124,6 +125,7 @@ struct LobbyListing {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type")]
 enum Response {
+    Pong,
     Bye {
         reason: Option<String>,
     },
@@ -311,6 +313,11 @@ impl Connection {
         let mut state = self.state.fucking_lock();
 
         match request {
+            Request::Ping if let Some(pid) = self.pid => {
+                if let Some(p) = state.players.get_mut(&pid) {
+                    p.send(Response::Pong);
+                }
+            }
             Request::List { gid } => {
                 let mut list: HashMap<LobbyId, LobbyListing> = state
                     .lobbies

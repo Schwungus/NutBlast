@@ -64,6 +64,12 @@ void NutBlast_Cleanup();
 /// Returns true if you are connected to a NutBlaster and ready to accept connections from peers.
 bool NutBlast_IsReady();
 
+/// Returns the average round-trip time (in milliseconds) to the NutBlaster.
+int NutBlast_ServerPing();
+
+/// Returns the average round-trip time (in milliseconds) to the specified peer.
+int NutBlast_PlayerPing(NutBlast_ID);
+
 /// Sets the NutBlaster address.
 ///
 /// Pass NULL to reset the address to its default value.

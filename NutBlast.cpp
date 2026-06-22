@@ -82,8 +82,10 @@ struct PeerSharedState {
     const NutBlast_ID id;
     bool joined = false;
 
+    std::uint64_t last_ping = 0, last_roundtrip = 0;
+
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
-    std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr;
+    std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
     std::vector<rtc::Candidate> outgoing_candidates;
 
     PeerSharedState(NutBlast_ID id) : id(id) {}
@@ -117,9 +119,10 @@ struct PeerSharedState {
 };
 
 struct Peer {
+    const NutBlast_ID id;
+
     Metadata meta;
     std::shared_ptr<PeerSharedState> state;
-    const NutBlast_ID id;
 
     Peer(NutBlast_ID id) : Peer(id, {}) {}
     Peer(NutBlast_ID, const Metadata&);
@@ -148,6 +151,7 @@ static NutBlast_ID master = 0;
 
 static std::unordered_map<NutBlast_ID, Peer> peers;
 
+static std::uint64_t last_ws_ping = 0, last_ws_roundtrip = 0;
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
 static std::vector<nlohmann::json> ws_in, ws_out;
 
@@ -158,7 +162,7 @@ namespace ns {
 };
 
 namespace interval {
-    constexpr const std::uint64_t beat = ::ns::second / 62;
+    constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second;
 };
 
 template <typename... Args> static inline void info(std::format_string<Args...> fmt, Args&&... args) {
@@ -278,6 +282,22 @@ Peer::Peer(NutBlast_ID id, const Metadata& meta) : state(new PeerSharedState(id)
         });
     };
 
+    const auto on_ping = [st](const auto& msg) {
+        if (st.expired())
+            return;
+
+        if (!std::holds_alternative<rtc::string>(msg))
+            return;
+
+        const auto type = std::get<rtc::string>(msg);
+        const auto state = st.lock();
+
+        if (type == "PING")
+            state->ping_dc->send("PONG");
+        else if (type == "PONG")
+            state->last_roundtrip = (NutBlast_TimeNS() - state->last_ping) / (2 * ::ns::milli);
+    };
+
     if (is_offerer()) {
         state->unreliable_dc = state->pc->createDataChannel("unreliable", {
             .reliability = {.unordered = true, .maxRetransmits = 0, },
@@ -290,20 +310,32 @@ Peer::Peer(NutBlast_ID id, const Metadata& meta) : state(new PeerSharedState(id)
         });
 
         setup_dc(*state->reliable_dc);
+
+        state->ping_dc = state->pc->createDataChannel("ping", {
+            .reliability = {.unordered = true, .maxRetransmits = 0, },
+        });
+
+        state->ping_dc->onMessage(on_ping);
     } else {
-        state->pc->onDataChannel([id, st, setup_dc](const auto& dc) {
+        state->pc->onDataChannel([id, st, setup_dc, on_ping](const auto& dc) {
             if (st.expired())
                 return;
 
             const auto state = st.lock();
-            const bool reliable = (dc->label() == "reliable");
 
-            (reliable ? state->reliable_dc : state->unreliable_dc) = dc;
-            setup_dc(*dc);
+            if (dc->label() == "reliable" || dc->label() == "unreliable") {
+                const bool reliable = (dc->label() == "reliable");
 
-            if (!state->joined) {
-                fire(::on_player_joined, id);
-                state->joined = true;
+                (reliable ? state->reliable_dc : state->unreliable_dc) = dc;
+                setup_dc(*dc);
+
+                if (!state->joined) {
+                    fire(::on_player_joined, id);
+                    state->joined = true;
+                }
+            } else {
+                state->ping_dc = dc;
+                dc->onMessage(on_ping);
             }
         });
     }
@@ -452,6 +484,7 @@ static void join_pro() {
     ::master = 0, ::disconnection_reason = std::nullopt;
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
+    ::last_ws_ping = 0, ::last_ws_roundtrip = 0;
 
     for (auto& queue : recv_queues)
         queue.clear();
@@ -714,6 +747,10 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"Answer", handle_offer_or_answer},
     {"Candidate", handle_candidate},
     {"List", handle_list},
+    {"Pong",
+        [](const auto&) {
+            ::last_ws_roundtrip = (NutBlast_TimeNS() - ::last_ws_ping) / (2 * ::ns::milli);
+        }},
 };
 
 static void recv_shit() {
@@ -734,19 +771,39 @@ static void recv_shit() {
 }
 
 extern "C" void NutBlast_Flush() {
-    static Ticker beater(interval::beat);
+    static Ticker beater(interval::beat), pinger(interval::ping);
 
-    if (!NutBlast_IsReady() || listing_lobbies || !beater)
+    if (!NutBlast_IsReady() || listing_lobbies)
         return;
 
-    for (auto& [id, peer] : ::peers) {
-        for (const auto& candidate : copy_and_clear(peer.state->outgoing_candidates)) {
-            ::ws_send({
-                {"type", "PassCandidate"},
-                {"to", id},
-                {"candidate", (rtc::string)candidate},
-                {"mid", candidate.mid()},
-            });
+    if (pinger) {
+        const std::uint64_t now = NutBlast_TimeNS();
+        ::last_ws_ping = now;
+
+        for (auto& [id, peer] : ::peers) {
+            peer.state->last_ping = now;
+
+            const auto dc = peer.state->ping_dc.get();
+
+            if (dc && dc->isOpen())
+                dc->send("PING");
+        }
+
+        ::ws_send({
+            {"type", "Ping"},
+        });
+    }
+
+    if (beater) {
+        for (auto& [id, peer] : ::peers) {
+            for (const auto& candidate : copy_and_clear(peer.state->outgoing_candidates)) {
+                ::ws_send({
+                    {"type", "PassCandidate"},
+                    {"to", id},
+                    {"candidate", (rtc::string)candidate},
+                    {"mid", candidate.mid()},
+                });
+            }
         }
     }
 }
@@ -851,6 +908,16 @@ extern "C" void NutBlast_OnPeerMetadataChanged(void (*cb)(NutBlast_ID, const cha
 
 extern "C" void NutBlast_OnLobbyMetadataChanged(void (*cb)(const char*, const char*)) {
     ::on_lobby_meta_changed = cb;
+}
+
+extern "C" int NutBlast_ServerPing() {
+    return NutBlast_IsReady() ? (int)::last_ws_roundtrip : 0;
+}
+
+extern "C" int NutBlast_PlayerPing(NutBlast_ID id) {
+    if (!NutBlast_IsReady() || !::peers.contains(id))
+        return 0;
+    return (int)peers.at(id).state->last_roundtrip;
 }
 
 extern "C" void NutBlast_SleepMS(int _ms) {
