@@ -51,8 +51,9 @@ using Metadata = std::unordered_map<std::string, std::string>;
 
 static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(NutBlast_ID),
             (*on_player_left)(NutBlast_ID), (*on_lobbies_found)(const NutBlast_Lobby*, size_t),
-            (*on_master_changed)(NutBlast_ID), (*on_peer_meta_changed)(NutBlast_ID, const char*, const char*),
-            (*on_lobby_meta_changed)(const char*, const char*);
+            (*on_master_changed)(NutBlast_ID, NutBlast_ID),
+            (*on_peer_meta_changed)(NutBlast_ID, const char*, const char*, const char*),
+            (*on_lobby_meta_changed)(const char*, const char*, const char*);
 
 template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
     if (cb != nullptr)
@@ -711,27 +712,39 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"PeerMetaSet",
         [](const auto& obj) {
             const NutBlast_ID pee = obj["peer"];
-
             if (!::peers.contains(pee))
                 return;
 
             auto& meta = ::peers.at(pee).meta;
 
-            const std::string key = obj["key"], value = obj["value"];
-            fire(::on_peer_meta_changed, pee, key.c_str(), value.c_str());
-            meta.insert_or_assign(key, value);
+            const std::string key = obj["key"], new_value = obj["value"];
+            std::string old_value;
+            if (meta.contains(key))
+                old_value = meta.at(key);
+
+            if (old_value != new_value) {
+                meta.insert_or_assign(key, new_value);
+                fire(::on_peer_meta_changed, pee, key.c_str(), old_value.c_str(), new_value.c_str());
+            }
         }},
     {"LobbyMetaSet",
         [](const auto& obj) {
-            const std::string key = obj["key"], value = obj["value"];
-            fire(::on_lobby_meta_changed, key.c_str(), value.c_str());
-            ::lobby_meta.insert_or_assign(key, value);
+            const std::string key = obj["key"], new_value = obj["value"];
+            std::string old_value;
+            if (::lobby_meta.contains(key))
+                old_value = ::lobby_meta.at(key);
+
+            if (old_value != new_value) {
+                ::lobby_meta.insert_or_assign(key, new_value);
+                fire(::on_lobby_meta_changed, key.c_str(), old_value.c_str(), new_value.c_str());
+            }
         }},
     {"NewMaster",
         [](const auto& obj) {
             const auto old_master = ::master;
             ::master = obj["id"];
-            fire(::on_master_changed, old_master);
+            if (old_master != ::master)
+                fire(::on_master_changed, old_master, ::master);
         }},
     {"Joined",
         [](const auto& obj) {
@@ -898,15 +911,15 @@ extern "C" void NutBlast_OnLobbiesFound(void (*cb)(const NutBlast_Lobby*, size_t
     ::on_lobbies_found = cb;
 }
 
-extern "C" void NutBlast_OnMasterChanged(void (*cb)(NutBlast_ID)) {
+extern "C" void NutBlast_OnMasterChanged(void (*cb)(NutBlast_ID, NutBlast_ID)) {
     ::on_master_changed = cb;
 }
 
-extern "C" void NutBlast_OnPeerMetadataChanged(void (*cb)(NutBlast_ID, const char*, const char*)) {
+extern "C" void NutBlast_OnPeerMetadataChanged(void (*cb)(NutBlast_ID, const char*, const char*, const char*)) {
     ::on_peer_meta_changed = cb;
 }
 
-extern "C" void NutBlast_OnLobbyMetadataChanged(void (*cb)(const char*, const char*)) {
+extern "C" void NutBlast_OnLobbyMetadataChanged(void (*cb)(const char*, const char*, const char*)) {
     ::on_lobby_meta_changed = cb;
 }
 
