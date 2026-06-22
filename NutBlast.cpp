@@ -24,7 +24,7 @@
 // For more information, please refer to <https://unlicense.org>
 
 #include <array>
-#include <ctime>
+#include <chrono>
 #include <format>
 #include <optional>
 #include <random>
@@ -165,9 +165,8 @@ template <typename... Args> static inline void info(std::format_string<Args...> 
 }
 
 extern "C" uint64_t NutBlast_TimeNS() {
-    struct timespec ts = {0};
-    timespec_get(&ts, TIME_UTC);
-    return (std::uint64_t)ts.tv_sec * ns::second + (std::uint64_t)ts.tv_nsec;
+    const auto elapsed = std::chrono::high_resolution_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
 }
 
 static void ws_send(nlohmann::json&& obj) {
