@@ -587,7 +587,7 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
     }
 }
 
-static void host_pro(NutBlast_ID id, const char* name, int max, bool listed) {
+extern "C" void NutBlast_Host(NutBlast_ID id, const char* name, int max, bool listed) {
     if (::blaster_ws) {
         info("You're already connected!");
     } else if (!name || !name[0]) {
@@ -600,14 +600,6 @@ static void host_pro(NutBlast_ID id, const char* name, int max, bool listed) {
         join_pro();
         info("Trying to host '{}' at: {}", lid, get_blaster());
     }
-}
-
-extern "C" void NutBlast_Host(NutBlast_ID id, const char* name, int max) {
-    host_pro(id, name, max, true);
-}
-
-extern "C" void NutBlast_HostUnlisted(NutBlast_ID id, const char* name, int max) {
-    host_pro(id, name, max, false);
 }
 
 extern "C" int NutBlast_GetPlayerCount() {
