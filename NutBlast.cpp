@@ -143,7 +143,7 @@ static std::optional<std::string> blaster, disconnection_reason, lname;
 static NutBlast_ChannelID max_chan = 1;
 static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
 
-static bool hosting = false, listing = false;
+static bool hosting = false, listing_lobbies = false, hosting_listed_lobby = true;
 static NutBlast_ID master = 0;
 
 static std::unordered_map<NutBlast_ID, Peer> peers;
@@ -371,6 +371,19 @@ extern "C" void NutBlast_SetMaxPlayers(int max) {
     });
 }
 
+extern "C" void NutBlast_SetListed(bool listed) {
+    ::hosting_listed_lobby = listed;
+
+    ::ws_send({
+        {"type", "SetListed"},
+        {"listed", listed},
+    });
+}
+
+extern "C" bool NutBlast_IsListed() {
+    return ::hosting_listed_lobby;
+}
+
 extern "C" const char* NutBlast_GetPeerField(NutBlast_ID pee, const char* name) {
     if (!pee || !name)
         return nullptr;
@@ -459,7 +472,7 @@ static void join_pro() {
     );
 
     ::blaster_ws->onOpen([]() {
-        if (listing) {
+        if (listing_lobbies) {
             ::ws_send({
                 {"type", "List"},
                 {"gid", ::gid},
@@ -471,8 +484,9 @@ static void join_pro() {
                 {"gid", ::gid},
                 {"pid", ::get_pid()},
                 {"lid", ::lid},
-                {"lname", ::lname},
-                {"max_players", ::max_players},
+                {"name", ::lname},
+                {"capacity", ::max_players},
+                {"listed", ::hosting_listed_lobby},
                 {"peer_meta", ::peer_meta},
                 {"lobby_meta", ::lobby_meta},
             });
@@ -519,7 +533,7 @@ extern "C" void NutBlast_FindLobbies() {
     if (::blaster_ws) {
         info("You're already connected!");
     } else {
-        ::listing = true;
+        ::listing_lobbies = true;
         join_pro();
         info("Connecting to {}", get_blaster());
     }
@@ -531,7 +545,7 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
     } else if (!id) {
         info("No ID specified!");
     } else {
-        ::hosting = false, ::listing = false;
+        ::hosting = false, ::listing_lobbies = false;
         ::lid = id, ::lname = std::nullopt;
 
         join_pro();
@@ -539,19 +553,27 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
     }
 }
 
-extern "C" void NutBlast_Host(NutBlast_ID id, const char* name, int max) {
+static void host_pro(NutBlast_ID id, const char* name, int max, bool listed) {
     if (::blaster_ws) {
         info("You're already connected!");
     } else if (!name || !name[0]) {
         info("Lobby name cannot be null or empty");
     } else {
         NutBlast_SetMaxPlayers(max);
-        ::hosting = true, ::listing = false;
+        ::hosting = true, ::listing_lobbies = false, ::hosting_listed_lobby = listed;
         ::lid = id ? id : generate_id(), ::lname = name;
 
         join_pro();
         info("Trying to host '{}' at: {}", lid, get_blaster());
     }
+}
+
+extern "C" void NutBlast_Host(NutBlast_ID id, const char* name, int max) {
+    host_pro(id, name, max, true);
+}
+
+extern "C" void NutBlast_HostUnlisted(NutBlast_ID id, const char* name, int max) {
+    host_pro(id, name, max, false);
 }
 
 extern "C" int NutBlast_GetPlayerCount() {
@@ -645,6 +667,10 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
             ::disconnection_reason = obj["reason"];
             NutBlast_Disconnect();
         }},
+    {"ListedSet",
+        [](const auto& obj) {
+            ::hosting_listed_lobby = obj["listed"];
+        }},
     {"CapacitySet",
         [](const auto& obj) {
             ::max_players = obj["capacity"];
@@ -710,7 +736,7 @@ static void recv_shit() {
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat);
 
-    if (!NutBlast_IsReady() || listing || !beater)
+    if (!NutBlast_IsReady() || listing_lobbies || !beater)
         return;
 
     for (auto& [id, peer] : ::peers) {

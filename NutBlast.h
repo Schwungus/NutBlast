@@ -139,6 +139,9 @@ void NutBlast_Join(NutBlast_ID id);
 /// Pass 0 for the ID if you want NutBlast to generate one for you.
 void NutBlast_Host(NutBlast_ID id, const char* name, int players);
 
+/// Same as `NutBlast_Host` but also unlists your lobby before it is conceived.
+void NutBlast_HostUnlisted(NutBlast_ID id, const char* name, int players);
+
 /// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
 void NutBlast_FindLobbies();
 
@@ -147,6 +150,12 @@ void NutBlast_Disconnect();
 
 /// Kicks the specified player if you are the lobby's master. Silently ignored otherwise.
 void NutBlast_Kick(NutBlast_ID);
+
+/// Lists or unlists your lobby from public lobby listings.
+void NutBlast_SetListed(bool);
+
+/// Returns true if you are in a publicly listed lobby, and false otherwise.
+bool NutBlast_IsListed();
 
 /// Returns the amount of players that are in the lobby, including yourself.
 int NutBlast_GetPlayerCount();

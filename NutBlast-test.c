@@ -227,7 +227,7 @@ int main(int argc, char* argv[]) {
 
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H))
-            NutBlast_Host(lid, "NutBlast Test", 2);
+            NutBlast_HostUnlisted(lid, "NutBlast Test", 2);
         else if (IsKeyPressed(KEY_J))
             NutBlast_Join(lid);
         else if (IsKeyPressed(KEY_K))

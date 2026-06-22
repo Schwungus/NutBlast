@@ -36,7 +36,8 @@ struct LobbyId {
 struct Lobby {
     name: String,
     meta: HashMap<String, String>,
-    max_players: usize,
+    capacity: usize,
+    listed: bool,
 }
 
 struct Player {
@@ -73,10 +74,14 @@ enum Request {
         pid: BasicId,
         #[serde(flatten)]
         lid: LobbyId,
-        lname: Option<String>,
-        max_players: usize,
+        name: Option<String>,
+        capacity: usize,
+        listed: bool,
         peer_meta: HashMap<String, String>,
         lobby_meta: HashMap<String, String>,
+    },
+    SetListed {
+        listed: bool,
     },
     SetCapacity {
         capacity: usize,
@@ -121,6 +126,9 @@ struct LobbyListing {
 enum Response {
     Bye {
         reason: Option<String>,
+    },
+    ListedSet {
+        listed: bool,
     },
     CapacitySet {
         capacity: usize,
@@ -181,6 +189,15 @@ impl State {
         }
 
         counter
+    }
+
+    fn send_to_all(&mut self, lid: &LobbyId, response: impl Fn(BasicId, &mut Player) -> Response) {
+        for (&id, player) in &mut self.players {
+            if player.lid == *lid {
+                let r = response(id, player);
+                player.send(r);
+            }
+        }
     }
 }
 
@@ -299,14 +316,14 @@ impl Connection {
                     .lobbies
                     .iter()
                     .filter_map(|(lid, lobby)| {
-                        if lid.gid != gid {
+                        if lid.gid != gid || !lobby.listed {
                             return None;
                         }
 
                         let lobby = LobbyListing {
                             name: lobby.name.to_string(),
                             lid: lid.lid,
-                            max: lobby.max_players,
+                            max: lobby.capacity,
                             players: 0,
                             meta: lobby.meta.clone(),
                         };
@@ -329,11 +346,12 @@ impl Connection {
                 mode,
                 pid,
                 lid,
-                lname,
-                max_players,
+                name,
+                capacity,
+                listed,
                 peer_meta,
                 lobby_meta,
-            } if (1..=MAX_PLAYERS).contains(&max_players)
+            } if (1..=MAX_PLAYERS).contains(&capacity)
                 && self.pid.is_none()
                 && self.lid.is_none()
                 && !state.players.contains_key(&pid)
@@ -348,12 +366,12 @@ impl Connection {
                     _ => {}
                 }
 
-                let max_players = if state.lobbies.contains_key(&lid) {
-                    state.lobbies[&lid].max_players
+                let capacity = if state.lobbies.contains_key(&lid) {
+                    state.lobbies[&lid].capacity
                 } else {
-                    info!("new lobby max={1} {:?}", lid, max_players);
+                    info!("new lobby max={1} {:?}", lid, capacity);
 
-                    let lname = if let Some(lname) = lname
+                    let lname = if let Some(lname) = name
                         && (1..=LOBBY_NAME_LEN).contains(&lname.len())
                     {
                         lname
@@ -361,20 +379,20 @@ impl Connection {
                         return Outcome::boot("Invalid lobby name");
                     };
 
-                    state.lobbies.insert(
-                        lid.clone(),
-                        Lobby {
-                            name: lname.to_string(),
-                            meta: lobby_meta,
-                            max_players,
-                        },
-                    );
+                    let lober = Lobby {
+                        name: lname.to_string(),
+                        meta: lobby_meta,
+                        capacity,
+                        listed,
+                    };
 
-                    max_players
+                    state.lobbies.insert(lid.clone(), lober);
+
+                    capacity
                 };
 
-                if let Some(Lobby { max_players, .. }) = state.lobbies.get(&lid)
-                    && state.players_in(&lid) >= *max_players
+                if let Some(Lobby { capacity, .. }) = state.lobbies.get(&lid)
+                    && state.players_in(&lid) >= *capacity
                 {
                     return Outcome::boot("Lobby is full");
                 }
@@ -403,9 +421,9 @@ impl Connection {
                     .collect();
 
                 if let Some(player) = state.players.get_mut(&pid) {
-                    player.send(Response::CapacitySet {
-                        capacity: max_players,
-                    });
+                    player.send(Response::ListedSet { listed });
+
+                    player.send(Response::CapacitySet { capacity });
 
                     for (key, value) in meta {
                         player.send(Response::LobbyMetaSet { key, value });
@@ -453,21 +471,26 @@ impl Connection {
                     to.send(Response::Answer { from, sdp });
                 };
             }
-            Request::SetCapacity { capacity } if let Some(ref lid) = self.lid => {
-                let master = state.master_of(&lid);
-
-                if master == self.pid
-                    && let Some(lober) = state.lobbies.get_mut(&lid)
+            Request::SetListed { listed }
+                if let Some(pid) = self.pid
+                    && let Some(ref lid) = self.lid =>
+            {
+                if state.master_of(lid) == Some(pid)
+                    && let Some(lober) = state.lobbies.get_mut(lid)
                 {
-                    lober.max_players = capacity;
-                } else {
-                    return Outcome::Good;
+                    lober.listed = listed;
+                    state.send_to_all(lid, |_, _| Response::ListedSet { listed });
                 }
-
-                for (_, player) in &mut state.players {
-                    if player.lid == *lid {
-                        player.send(Response::CapacitySet { capacity });
-                    }
+            }
+            Request::SetCapacity { capacity }
+                if let Some(pid) = self.pid
+                    && let Some(ref lid) = self.lid =>
+            {
+                if state.master_of(lid) == Some(pid)
+                    && let Some(lober) = state.lobbies.get_mut(lid)
+                {
+                    lober.capacity = capacity;
+                    state.send_to_all(lid, |_, _| Response::CapacitySet { capacity });
                 }
             }
             Request::SetPeerMeta { key, value }
@@ -475,20 +498,14 @@ impl Connection {
                     && let Some(pid) = self.pid
                     && let Some(player) = state.players.get_mut(&pid) =>
             {
-                if !player.meta.contains_key(&key) && player.meta.len() >= MAX_FIELDS {
-                    return Outcome::Good;
-                } else {
+                if player.meta.contains_key(&key) || player.meta.len() < MAX_FIELDS {
                     player.meta.insert(key.to_string(), value.to_string());
-                }
 
-                for (_, player) in &mut state.players {
-                    if player.lid == *lid {
-                        player.send(Response::PeerMetaSet {
-                            peer: pid,
-                            key: key.to_string(),
-                            value: value.to_string(),
-                        });
-                    }
+                    state.send_to_all(lid, |_, _| Response::PeerMetaSet {
+                        peer: pid,
+                        key: key.to_string(),
+                        value: value.to_string(),
+                    });
                 }
             }
             Request::SetLobbyMeta { key, value }
@@ -500,17 +517,11 @@ impl Connection {
                     && (lober.meta.contains_key(&key) || lober.meta.len() < MAX_FIELDS)
                 {
                     lober.meta.insert(key.to_string(), value.to_string());
-                } else {
-                    return Outcome::Good;
-                }
 
-                for (_, player) in &mut state.players {
-                    if player.lid == *lid {
-                        player.send(Response::LobbyMetaSet {
-                            key: key.to_string(),
-                            value: value.to_string(),
-                        });
-                    }
+                    state.send_to_all(lid, |_, _| Response::LobbyMetaSet {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                    });
                 }
             }
             Request::Kick { id }
