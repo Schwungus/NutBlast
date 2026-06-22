@@ -89,6 +89,19 @@ void NutBlast_OnPlayerLeft(void (*)(NutBlast_ID));
 /// Registers a callback to fire whenever `NutBlast_FindLobbies` receives a list of lobbies.
 void NutBlast_OnLobbiesFound(void (*)(const NutBlast_Lobby*, size_t));
 
+/// Registers a callback to fire whenever the lobby's master changed. Takes the old master's ID.
+void NutBlast_OnMasterChanged(void (*)(NutBlast_ID));
+
+/// Registers a callback to fire whenever a peer's metadata field changes.
+///
+/// Takes the new value of the field but keeps the old value available through `NutBlast_GetPeerField`.
+void NutBlast_OnPeerMetadataChanged(void (*)(NutBlast_ID, const char*, const char*));
+
+/// Registers a callback to fire whenever the lobby's metadata changes.
+///
+/// Takes the new value of the field but keeps the old value available through `NutBlast_GetLobbyField`.
+void NutBlast_OnLobbyMetadataChanged(void (*)(const char*, const char*));
+
 /// Returns true and copies the incoming message if there is a message waiting in the queue for the specified channel.
 bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
 
