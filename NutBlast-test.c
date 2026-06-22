@@ -74,6 +74,8 @@ static void restart() {
 }
 
 static void on_player_joined(NutBlast_ID id) {
+    TraceLog(LOG_INFO, "Hi, %s!", NutBlast_GetPeerField(id, "NAME"));
+
     Player p = {
         .x = (GetScreenWidth() - psize) / 2,
         .y = (GetScreenHeight() - psize) / 2,
@@ -84,6 +86,7 @@ static void on_player_joined(NutBlast_ID id) {
 }
 
 static void on_player_left(NutBlast_ID id) {
+    TraceLog(LOG_INFO, "Bye, %s!", NutBlast_GetPeerField(id, "NAME"));
     TinyMapErase(&players, id);
 }
 
@@ -105,7 +108,7 @@ static void draw_gui() {
         i++;
     }
 
-    DrawText("H to host, J to join, K to reset", 0, GetScreenHeight() - fs, fs, BLACK);
+    DrawText("H to host, J to join, K to reset, T to chat (reliable)", 0, GetScreenHeight() - fs, fs, BLACK);
 }
 
 static void move_our_rect() {

@@ -78,6 +78,7 @@ template <typename V> static std::vector<V> copy_and_clear(std::vector<V>& vec) 
 
 struct PeerSharedState {
     const NutBlast_ID id;
+    bool joined = false;
 
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr;
@@ -231,13 +232,31 @@ Peer::Peer(NutBlast_ID id, const Metadata& meta) : state(new PeerSharedState(id)
         st.lock()->outgoing_candidates.push_back(candidate);
     });
 
-    const auto setup_dc = [id](rtc::DataChannel& dc) {
-        dc.onOpen([id]() {
+    const auto setup_dc = [st, id](rtc::DataChannel& dc) {
+        dc.onOpen([st, id]() {
+            if (st.expired())
+                return;
+
+            const auto state = st.lock();
+
+            if (state->joined)
+                return;
+
             fire(::on_player_joined, id);
+            state->joined = true;
         });
 
-        dc.onClosed([id]() {
+        dc.onClosed([st, id]() {
+            if (st.expired())
+                return;
+
+            const auto state = st.lock();
+
+            if (!state->joined)
+                return;
+
             fire(::on_player_left, id);
+            state->joined = false;
         });
 
         dc.onMessage([id](const auto& variant) {
@@ -276,14 +295,15 @@ Peer::Peer(NutBlast_ID id, const Metadata& meta) : state(new PeerSharedState(id)
                 return;
 
             const auto state = st.lock();
+            const bool reliable = (dc->label() == "reliable");
 
-            if (dc->label() == "reliable")
-                state->reliable_dc = dc;
-            else
-                state->unreliable_dc = dc;
-
+            (reliable ? state->reliable_dc : state->unreliable_dc) = dc;
             setup_dc(*dc);
-            fire(::on_player_joined, id);
+
+            if (!state->joined) {
+                fire(::on_player_joined, id);
+                state->joined = true;
+            }
         });
     }
 }
@@ -701,6 +721,7 @@ static void greatest_technician_thats_ever_lived(
         return;
 
     const auto& peer = ::peers.at(id);
+
     if (!peer.is_available())
         return;
 
