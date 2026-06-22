@@ -730,6 +730,16 @@ extern "C" void NutBlast_Update() {
     NutBlast_Flush();
 }
 
+extern "C" void NutBlast_Kick(NutBlast_ID guy) {
+    if (NutBlast_GetMasterID() != NutBlast_GetOurID())
+        return;
+
+    ::ws_send({
+        {"type", "Kick"},
+        {"id", guy},
+    });
+}
+
 static void greatest_technician_thats_ever_lived(
     NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size, bool reliable) {
     if (!id || id == get_pid() || !NutBlast_IsPlayerAlive(id) || !msg)

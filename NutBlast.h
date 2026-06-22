@@ -145,6 +145,9 @@ void NutBlast_FindLobbies();
 /// Disconnects you from the lobby if you are in one, and resets the networking state.
 void NutBlast_Disconnect();
 
+/// Kicks the specified player if you are the lobby's master. Silently ignored otherwise.
+void NutBlast_Kick(NutBlast_ID);
+
 /// Returns the amount of players that are in the lobby, including yourself.
 int NutBlast_GetPlayerCount();
 

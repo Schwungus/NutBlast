@@ -108,7 +108,8 @@ static void draw_gui() {
         i++;
     }
 
-    DrawText("H to host, J to join, K to reset, T to chat (reliable)", 0, GetScreenHeight() - fs, fs, BLACK);
+    DrawText("H to host, J to join, K to reset", 0, GetScreenHeight() - fs * 2, fs, BLACK);
+    DrawText("T to chat (reliable), L to kick everyone", 0, GetScreenHeight() - fs * 1, fs, BLACK);
 }
 
 static void move_our_rect() {
@@ -155,6 +156,23 @@ static void maybe_chat() {
             break;
 
         NutBlast_SendReliablyTo(CHAN_CHAT, id, "Hello!", -1);
+    }
+}
+
+static void maybe_kick() {
+    if (!IsKeyPressed(KEY_L))
+        return;
+
+    const NutBlast_ID* peers = NutBlast_GetPlayerIDs();
+
+    for (;;) {
+        const NutBlast_ID id = *peers++;
+
+        if (!id)
+            break;
+
+        if (id != NutBlast_GetOurID())
+            NutBlast_Kick(id);
     }
 }
 
@@ -218,6 +236,7 @@ int main(int argc, char* argv[]) {
         move_our_rect();
         send_our_position();
         maybe_chat();
+        maybe_kick();
         NutBlast_Update();
         recv_shit();
 

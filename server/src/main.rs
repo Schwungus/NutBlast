@@ -102,6 +102,9 @@ enum Request {
         to: BasicId,
         sdp: String,
     },
+    Kick {
+        id: BasicId,
+    },
 }
 
 #[derive(Clone, Serialize)]
@@ -510,6 +513,23 @@ impl Connection {
                     }
                 }
             }
+            Request::Kick { id }
+                if let Some(lid) = self.lid.clone()
+                    && let Some(pid) = self.pid
+                    && let Some(mastah) = state.master_of(&lid) =>
+            {
+                if pid != mastah || id == pid {
+                    return Outcome::Good;
+                }
+
+                if let Some(guy) = state.players.get_mut(&id)
+                    && guy.lid == lid
+                {
+                    guy.send(Response::Bye {
+                        reason: Some(String::from("Kicked by lobby's master")),
+                    });
+                }
+            }
             other => {
                 debug!("bad: {:?}", other);
                 return Outcome::boot("Bad payload");
@@ -557,6 +577,10 @@ impl Connection {
 
         for resp in queue.unwrap_or_default() {
             self.send_json(sender, &resp).await;
+
+            if let Response::Bye { .. } = resp {
+                break;
+            }
         }
     }
 
