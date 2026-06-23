@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -11,7 +12,7 @@ static void on_found(const NutBlast_Lobby* list, size_t count) {
 
     for (size_t i = 0; i < count; i++) {
         const NutBlast_Lobby lober = list[i];
-        printf("%llu \"%s\": %u/%u\n", lober.id, lober.name, lober.players, lober.capacity);
+        printf("%" PRIu64 " \"%s\": %u/%u\n", lober.id, lober.name, lober.players, lober.capacity);
         printf("  %zu field(s):\n", lober.field_count);
         for (size_t j = 0; j < lober.field_count; j++)
             printf("    %s = %s\n", lober.metadata[j].key, lober.metadata[j].value);
