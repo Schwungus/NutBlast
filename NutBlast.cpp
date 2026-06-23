@@ -49,11 +49,13 @@ static constexpr const bool WINDOSE =
 
 using Metadata = std::unordered_map<std::string, std::string>;
 
-static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(NutBlast_ID),
-            (*on_player_left)(NutBlast_ID), (*on_lobbies_found)(const NutBlast_Lobby*, size_t),
-            (*on_master_changed)(NutBlast_ID, NutBlast_ID),
-            (*on_peer_meta_changed)(NutBlast_ID, const char*, const char*, const char*),
-            (*on_lobby_meta_changed)(const char*, const char*, const char*);
+namespace ns {
+    constexpr const std::uint64_t second = 1000000000, milli = second / 1000;
+};
+
+namespace interval {
+    constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second;
+};
 
 template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
     if (cb != nullptr)
@@ -79,11 +81,31 @@ template <typename V> static std::vector<V> copy_and_clear(std::vector<V>& vec) 
     return copy;
 }
 
+struct Pinger {
+    std::uint64_t last_ping = 0, last_roundtrip = 0;
+
+    int millis() const {
+        return (int)last_roundtrip;
+    }
+
+    void reset() {
+        last_ping = last_roundtrip = 0;
+    }
+
+    void ping() {
+        last_ping = NutBlast_TimeNS();
+    }
+
+    void pong() {
+        if (last_ping)
+            last_roundtrip = (NutBlast_TimeNS() - last_ping) / (2 * ::ns::milli);
+    }
+};
+
 struct PeerSharedState {
     const NutBlast_ID id;
     bool joined = false;
-
-    std::uint64_t last_ping = 0, last_roundtrip = 0;
+    Pinger pinger;
 
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
@@ -152,19 +174,17 @@ static NutBlast_ID master = 0;
 
 static std::unordered_map<NutBlast_ID, Peer> peers;
 
-static std::uint64_t last_ws_ping = 0, last_ws_roundtrip = 0;
+static Pinger ws_pinger;
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
 static std::vector<nlohmann::json> ws_in, ws_out;
 
 static Metadata peer_meta, lobby_meta;
 
-namespace ns {
-    constexpr const std::uint64_t second = 1000000000, milli = second / 1000;
-};
-
-namespace interval {
-    constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second;
-};
+static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(NutBlast_ID),
+            (*on_player_left)(NutBlast_ID), (*on_lobbies_found)(const NutBlast_Lobby*, size_t),
+            (*on_master_changed)(NutBlast_ID, NutBlast_ID),
+            (*on_peer_meta_changed)(NutBlast_ID, const char*, const char*, const char*),
+            (*on_lobby_meta_changed)(const char*, const char*, const char*);
 
 template <typename... Args> static inline void info(std::format_string<Args...> fmt, Args&&... args) {
     std::fprintf(stdout, "%s\n", std::vformat(fmt.get(), std::make_format_args(args...)).c_str());
@@ -296,7 +316,7 @@ Peer::Peer(NutBlast_ID id, const Metadata& meta) : state(new PeerSharedState(id)
         if (type == "PING")
             state->ping_dc->send("PONG");
         else if (type == "PONG")
-            state->last_roundtrip = (NutBlast_TimeNS() - state->last_ping) / (2 * ::ns::milli);
+            state->pinger.pong();
     };
 
     if (is_offerer()) {
@@ -485,7 +505,7 @@ static void join_pro() {
     ::master = 0, ::disconnection_reason = std::nullopt;
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
-    ::last_ws_ping = 0, ::last_ws_roundtrip = 0;
+    ::ws_pinger.reset();
 
     for (auto& queue : recv_queues)
         queue.clear();
@@ -780,7 +800,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"List", handle_list},
     {"Pong",
         [](const auto&) {
-            ::last_ws_roundtrip = (NutBlast_TimeNS() - ::last_ws_ping) / (2 * ::ns::milli);
+            ::ws_pinger.pong();
         }},
 };
 
@@ -808,16 +828,15 @@ extern "C" void NutBlast_Flush() {
         return;
 
     if (pinger) {
-        const std::uint64_t now = NutBlast_TimeNS();
-        ::last_ws_ping = now;
+        ::ws_pinger.ping();
 
         for (auto& [id, peer] : ::peers) {
-            peer.state->last_ping = now;
-
             const auto dc = peer.state->ping_dc.get();
 
-            if (dc && dc->isOpen())
+            if (dc && dc->isOpen()) {
+                peer.state->pinger.ping();
                 dc->send("PING");
+            }
         }
 
         ::ws_send({
@@ -942,13 +961,13 @@ extern "C" void NutBlast_OnLobbyMetadataChanged(void (*cb)(const char*, const ch
 }
 
 extern "C" int NutBlast_ServerPing() {
-    return NutBlast_IsReady() ? (int)::last_ws_roundtrip : 0;
+    return NutBlast_IsReady() ? ::ws_pinger.millis() : 0;
 }
 
 extern "C" int NutBlast_PlayerPing(NutBlast_ID id) {
     if (!NutBlast_IsReady() || !::peers.contains(id))
         return 0;
-    return (int)peers.at(id).state->last_roundtrip;
+    return peers.at(id).state->pinger.millis();
 }
 
 extern "C" void NutBlast_SleepMS(int _ms) {
