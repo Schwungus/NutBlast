@@ -680,16 +680,19 @@ static void handle_list(const nlohmann::json& obj) {
 
     const auto& lobers = obj["list"];
     tmp.reserve(lobers.size());
+
     for (const auto& lober : lobers) {
         tmp.push_back({});
-        LobbyInfo& tlob = tmp.back();
 
+        LobbyInfo& tlob = tmp.back();
         tlob.name = lober["name"];
 
         const auto& read_meta = lober["meta"];
         tlob.fields.reserve(read_meta.size());
-        for (const auto& field : read_meta.items()) {
-            tlob.fields.push_back({field.key(), field.value().get<std::string>()});
+
+        for (const auto& [key, value] : read_meta.items()) {
+            tlob.fields.push_back({key, value.get<std::string>()});
+
             tlob.meta.push_back({
                 .key = tlob.fields.back().first.c_str(),
                 .value = tlob.fields.back().second.c_str(),
