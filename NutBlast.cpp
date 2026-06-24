@@ -59,8 +59,10 @@ namespace interval {
 
 extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
     switch (level) {
-    default:
-        return "FUCKYOU";
+    case NB_LogInfo:
+        return "INFO";
+    case NB_LogError:
+        return "ERROR";
     }
 }
 
