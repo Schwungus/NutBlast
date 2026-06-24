@@ -218,6 +218,8 @@ static int nb_to_rl(NutBlast_LogLevel level) {
     case NB_LogError:
         return LOG_ERROR;
     }
+
+    return 0;
 }
 
 static void rl_logger(NutBlast_LogLevel level, const char* line) {

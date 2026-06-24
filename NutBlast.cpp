@@ -64,6 +64,8 @@ extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
     case NB_LogError:
         return "ERROR";
     }
+
+    return "";
 }
 
 static void (*logger)(NutBlast_LogLevel, const char*) = nullptr;
