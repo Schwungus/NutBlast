@@ -40,9 +40,11 @@ extern "C" {
 #define NUTBLAST_DEFAULT_SERVER "wss://nutblast.schwung.us/v1"
 #endif
 
+// NOTE: make sure to sync these limits with `src/main.rs`.
 #define NUTBLAST_MAX_PLAYERS (16)
 
-// NOTE: make sure to sync this with `src/main.rs`.
+#define NUTBLAST_MAX_FIELDS (16)
+
 typedef uint64_t NutBlast_ID;
 typedef uint8_t NutBlast_ChannelID;
 
