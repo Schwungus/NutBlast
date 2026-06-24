@@ -505,8 +505,8 @@ impl Connection {
                     state.send_to_all(lid, |_, _| Response::CapacitySet { capacity });
                 }
             }
+            // ok to boot since the size limits are enforced client-side
             Request::SetPeerMeta { key, value }
-                // ok to boot since the size limits are enforced client-side
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && (0..=FIELD_VALUE_MAX).contains(&value.len())
                     && let Some(ref lid) = self.lid
@@ -523,8 +523,8 @@ impl Connection {
                     });
                 }
             }
+            // ok to boot since the size limits are enforced client-side
             Request::SetLobbyMeta { key, value }
-               // ok to boot since the size limits are enforced client-side
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && (0..=FIELD_VALUE_MAX).contains(&value.len())
                     && let Some(ref lid) = self.lid
