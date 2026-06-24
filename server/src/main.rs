@@ -341,7 +341,7 @@ impl Connection {
 
                         Some((lid.clone(), lobby))
                     })
-                    .take(Ord::clamp(limit, 1, MAX_LOBBIES_IN_LIST))
+                    .take(limit.clamp(1, MAX_LOBBIES_IN_LIST))
                     .collect();
 
                 for (_, player) in state.players.iter() {
