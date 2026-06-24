@@ -481,14 +481,18 @@ extern "C" void NutBlast_SetPeerField(const char* key, const char* value) {
     if (!key || !value)
         return;
 
-    if (::peer_meta.size() < NUTBLAST_MAX_FIELDS || ::peer_meta.contains(key)) {
-        ::peer_meta.insert_or_assign(key, value);
-        ::ws_send({
-            {"type", "SetPeerMeta"},
-            {"key", key},
-            {"value", value},
-        });
+    if (::peer_meta.size() >= NUTBLAST_MAX_FIELDS && !::peer_meta.contains(key)) {
+        log(NB_LogError, "Reached {} peer fields limit", NUTBLAST_MAX_FIELDS);
+        return;
     }
+
+    ::peer_meta.insert_or_assign(key, value);
+
+    ::ws_send({
+        {"type", "SetPeerMeta"},
+        {"key", key},
+        {"value", value},
+    });
 }
 
 extern "C" const char* NutBlast_GetLobbyField(const char* name) {
@@ -506,19 +510,24 @@ extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
         return;
 
     if (NutBlast_IsReady()) {
-        NutBlast_ID master = NutBlast_GetMasterID();
+        const auto master = NutBlast_GetMasterID();
+
         if (!master || master != NutBlast_GetOurID())
             return;
     }
 
-    if (::lobby_meta.size() < NUTBLAST_MAX_FIELDS || ::lobby_meta.contains(key)) {
-        ::lobby_meta.insert_or_assign(key, value);
-        ::ws_send({
-            {"type", "SetLobbyMeta"},
-            {"key", key},
-            {"value", value},
-        });
+    if (::lobby_meta.size() >= NUTBLAST_MAX_FIELDS && !::lobby_meta.contains(key)) {
+        log(NB_LogError, "Reached {} lobby fields limit", NUTBLAST_MAX_FIELDS);
+        return;
     }
+
+    ::lobby_meta.insert_or_assign(key, value);
+
+    ::ws_send({
+        {"type", "SetLobbyMeta"},
+        {"key", key},
+        {"value", value},
+    });
 }
 
 static void recv_shit();
