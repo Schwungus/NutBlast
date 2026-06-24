@@ -20,11 +20,13 @@ The spiritual successor of the desktop-only [NutPunch](https://github.com/Schwun
 > [!NOTE]
 > Due to heavy resource usage and operating costs, the public NutBlaster instance does not provide [TURN](https://en.wikipedia.org/wiki/Traversal_Using_Relays_around_NAT).
 
-If you're having **connectivity issues in a game powered by NutBlast**, please make sure (1) you aren't mangling UDP packets (**disable [zapret](https://github.com/bol-van/zapret)**) and (2) **there is a direct route to your computer** from the public network. Using a proxy service for accessing the Web shouldn't interfere as long as **you aren't routing your game through it**.
+If you're having **connectivity issues in a game powered by NutBlast**, please make sure (1) you aren't mangling your traffic (**disable [zapret](https://github.com/bol-van/zapret)**) and (2) **there is a direct route to your computer** from the public network. Using a proxy service for accessing the Web shouldn't interfere as long as **you aren't routing your game through it**.
 
 You can **set up your VPN client to ignore NutBlast-powered games** rather than route them through the target proxy server. For example, in [AmneziaVPN](https://amnezia.org), use the split tunneling feature to **exclude the game's binary from VPN routing**. Just follow this infographic from [**their split-tunneling docs**](https://docs.amnezia.org/documentation/instructions/vpn-split-tunneling#split-tunneling-by-apps-on-windows):
 
 ![An infographic telling you to how to enable per-app split-tunnelling.](.github/assets/amnezia.png)
+
+This advice isn't guaranteed to fix your connectivity, but it's a good starting point for figuring out what exactly is wrong with your setup.
 
 ## Introductory Lecture
 
