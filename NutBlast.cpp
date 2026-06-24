@@ -607,7 +607,7 @@ extern "C" void NutBlast_Disconnect() {
 
 extern "C" void NutBlast_FindLobbies() {
     if (::blaster_ws) {
-        log(NB_LogInfo, "You're already connected!");
+        log(NB_LogError, "You're already connected!");
     } else {
         ::listing_lobbies = true;
         join_pro();
@@ -617,9 +617,9 @@ extern "C" void NutBlast_FindLobbies() {
 
 extern "C" void NutBlast_Join(NutBlast_ID id) {
     if (::blaster_ws) {
-        log(NB_LogInfo, "You're already connected!");
+        log(NB_LogError, "You're already connected!");
     } else if (!id) {
-        log(NB_LogInfo, "No ID specified!");
+        log(NB_LogError, "No ID specified!");
     } else {
         ::hosting = false, ::listing_lobbies = false;
         ::lid = id, ::lname = std::nullopt;
@@ -631,9 +631,9 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
 
 extern "C" void NutBlast_Host(NutBlast_ID id, const char* name, int max, bool listed) {
     if (::blaster_ws) {
-        log(NB_LogInfo, "You're already connected!");
+        log(NB_LogError, "You're already connected!");
     } else if (!name || !name[0]) {
-        log(NB_LogInfo, "Lobby name cannot be null or empty");
+        log(NB_LogError, "Lobby name cannot be null or empty");
     } else {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing_lobbies = false, ::hosting_listed_lobby = listed;
