@@ -210,9 +210,8 @@ static Metadata peer_meta, lobby_meta;
 
 static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(NutBlast_ID),
             (*on_player_left)(NutBlast_ID), (*on_lobbies_found)(const NutBlast_Lobby*, size_t),
-            (*on_master_changed)(NutBlast_ID, NutBlast_ID),
-            (*on_peer_meta_changed)(NutBlast_ID, const char*, const char*, const char*),
-            (*on_lobby_meta_changed)(const char*, const char*, const char*);
+            (*on_master_changed)(NutBlast_ID), (*on_peer_meta_changed)(NutBlast_ID, NutBlast_FieldDiff),
+            (*on_lobby_meta_changed)(NutBlast_FieldDiff);
 
 template <typename... Args> static void fire(void (*cb)(Args...), const std::decay_t<Args>&... args) {
     if (cb != nullptr)
@@ -779,33 +778,48 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
             auto& meta = ::peers.at(pee).meta;
 
             const std::string key = obj["key"], new_value = obj["value"];
-            std::string old_value;
+            std::optional<std::string> old_value;
+
             if (meta.contains(key))
                 old_value = meta.at(key);
 
             if (old_value != new_value) {
                 meta.insert_or_assign(key, new_value);
-                fire(::on_peer_meta_changed, pee, key.c_str(), old_value.c_str(), new_value.c_str());
+
+                NutBlast_FieldDiff diff = {0};
+                diff.name = key.c_str();
+                diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
+                diff.new_value = new_value.c_str();
+
+                fire(::on_peer_meta_changed, pee, diff);
             }
         }},
     {"LobbyMetaSet",
         [](const auto& obj) {
             const std::string key = obj["key"], new_value = obj["value"];
-            std::string old_value;
+            std::optional<std::string> old_value;
+
             if (::lobby_meta.contains(key))
                 old_value = ::lobby_meta.at(key);
 
             if (old_value != new_value) {
                 ::lobby_meta.insert_or_assign(key, new_value);
-                fire(::on_lobby_meta_changed, key.c_str(), old_value.c_str(), new_value.c_str());
+
+                NutBlast_FieldDiff diff = {0};
+                diff.name = key.c_str();
+                diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
+                diff.new_value = new_value.c_str();
+
+                fire(::on_lobby_meta_changed, diff);
             }
         }},
     {"NewMaster",
         [](const auto& obj) {
             const auto old_master = ::master;
             ::master = obj["id"];
+
             if (old_master != ::master)
-                fire(::on_master_changed, old_master, ::master);
+                fire(::on_master_changed, old_master);
         }},
     {"Joined",
         [](const auto& obj) {
@@ -930,6 +944,11 @@ extern "C" void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID id,
 }
 
 extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
+    if (!out) {
+        log(NB_LogError, "NutBlast_NextMessage wants a non-null pointer instead");
+        return false;
+    }
+
     auto& queue = recv_queues[chan];
 
     if (queue.empty())
@@ -951,37 +970,19 @@ extern "C" bool NutBlast_IsReady() {
     return ::blaster_ws && ::blaster_ws->isOpen();
 }
 
-extern "C" void NutBlast_OnConnected(void (*cb)()) {
-    ::on_connected = cb;
-}
+#define MakeCb(name, var, ...)                                                                                         \
+    extern "C" void NutBlast_##name(void (*cb)(__VA_ARGS__)) {                                                         \
+        (var) = cb;                                                                                                    \
+    }
 
-extern "C" void NutBlast_OnDisconnected(void (*cb)(const char*)) {
-    ::on_disconnected = cb;
-}
-
-extern "C" void NutBlast_OnPlayerJoined(void (*cb)(NutBlast_ID)) {
-    ::on_player_joined = cb;
-}
-
-extern "C" void NutBlast_OnPlayerLeft(void (*cb)(NutBlast_ID)) {
-    ::on_player_left = cb;
-}
-
-extern "C" void NutBlast_OnLobbiesFound(void (*cb)(const NutBlast_Lobby*, size_t)) {
-    ::on_lobbies_found = cb;
-}
-
-extern "C" void NutBlast_OnMasterChanged(void (*cb)(NutBlast_ID, NutBlast_ID)) {
-    ::on_master_changed = cb;
-}
-
-extern "C" void NutBlast_OnPeerMetadataChanged(void (*cb)(NutBlast_ID, const char*, const char*, const char*)) {
-    ::on_peer_meta_changed = cb;
-}
-
-extern "C" void NutBlast_OnLobbyMetadataChanged(void (*cb)(const char*, const char*, const char*)) {
-    ::on_lobby_meta_changed = cb;
-}
+MakeCb(OnConnected, ::on_connected);
+MakeCb(OnDisconnected, ::on_disconnected, const char*);
+MakeCb(OnPlayerJoined, ::on_player_joined, NutBlast_ID);
+MakeCb(OnPlayerLeft, ::on_player_left, NutBlast_ID);
+MakeCb(OnLobbiesFound, ::on_lobbies_found, const NutBlast_Lobby*, size_t);
+MakeCb(OnMasterChanged, ::on_master_changed, NutBlast_ID);
+MakeCb(OnPeerMetadataChanged, ::on_peer_meta_changed, NutBlast_ID, NutBlast_FieldDiff);
+MakeCb(OnLobbyMetadataChanged, ::on_lobby_meta_changed, NutBlast_FieldDiff);
 
 extern "C" int NutBlast_ServerPing() {
     return NutBlast_IsReady() ? ::ws_pinger.millis() : 0;

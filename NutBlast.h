@@ -64,6 +64,10 @@ typedef struct {
 } NutBlast_Message;
 
 typedef struct {
+    const char *name, *old_value, *new_value;
+} NutBlast_FieldDiff;
+
+typedef struct {
     const char *key, *value;
 } NutBlast_LobbyField;
 
@@ -112,14 +116,21 @@ void NutBlast_OnPlayerLeft(void (*)(NutBlast_ID));
 /// Registers a callback to fire whenever `NutBlast_FindLobbies` receives a list of lobbies.
 void NutBlast_OnLobbiesFound(void (*)(const NutBlast_Lobby*, size_t));
 
-/// Registers a callback to fire whenever the lobby's master changed. The old master may be dead.
-void NutBlast_OnMasterChanged(void (*)(NutBlast_ID, NutBlast_ID));
+/// Registers a callback to fire whenever the lobby's master changed.
+///
+/// The new master's ID is available through `NutBlast_GetMasterID`. The old master's ID is passed to the callback, and
+/// that ID may point to a dead peer.
+void NutBlast_OnMasterChanged(void (*)(NutBlast_ID));
 
-/// Registers a callback to fire whenever a peer's metadata field changes. The old or new value may be null.
-void NutBlast_OnPeerMetadataChanged(void (*)(NutBlast_ID, const char*, const char*, const char*));
+/// Registers a callback to fire whenever a peer's metadata field changes.
+///
+/// The old or new value may be null.
+void NutBlast_OnPeerMetadataChanged(void (*)(NutBlast_ID, NutBlast_FieldDiff));
 
-/// Registers a callback to fire whenever the lobby's metadata changes. The old or new value may be null.
-void NutBlast_OnLobbyMetadataChanged(void (*)(const char*, const char*, const char*));
+/// Registers a callback to fire whenever the lobby's metadata changes.
+///
+/// The old or new value may be null.
+void NutBlast_OnLobbyMetadataChanged(void (*)(NutBlast_FieldDiff));
 
 /// Returns true and copies the incoming message if there is a message waiting in the queue for the specified channel.
 bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
