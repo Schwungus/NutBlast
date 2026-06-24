@@ -34,7 +34,7 @@ This library implements peer-to-peer networking, where **players directly commun
 
 The current server implementation uses a lobby-based approach, where each lobby supports up to 16 peers and is identified by a unique 8-character string. [The complete example][example] might be overwhelming at first, but make sure to skim through it before you do any heavy networking. Here's the general usage guide for NutBlast:
 
-1. At the start of the program, set your game ID using `NutBlast_SetGameID()`. It is optional, but highly recommended, as it allows distinguishing your game's lobbies from others. A common example of a game ID would be `"GameName v1.0.0"`. Game IDs cannot be longer than 16 characters.
+1. At the start of the program, set your game ID using `NutBlast_SetGameID()`. It is optional, but highly recommended, as it allows distinguishing your game's lobbies from others. A common example of a game ID would be `"GameName v1.0.0"`. Game IDs cannot be longer than 31 characters.
 2. Host a lobby with `NutBlast_Host()`, or join an existing one with `NutBlast_Join()`. You cannot have two different lobbies with identical IDs; the lobby's ID identifies it uniquely per game ID.
 3. You can optionally set callback functions using `NutBlast_OnConnected()`, `NutBlast_OnDisconnected()`, `NutBlast_OnPlayerJoined()`, `NutBlast_OnPlayerLeft()` and `NutBlast_OnLobbiesFound()` to implement custom behavior.
 4. Call `NutBlast_Update()` each frame. This will also automatically connect to other players using trickle ICE.

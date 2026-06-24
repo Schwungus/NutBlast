@@ -18,11 +18,11 @@ use tokio_tungstenite::{
     tungstenite::{Error as TungError, Message},
 };
 
-const GAME_ID_LEN: usize = 16;
-const LOBBY_NAME_LEN: usize = 32;
+const GAME_ID_LEN: usize = 31;
+const LOBBY_NAME_LEN: usize = 63;
 
 const MAX_PLAYERS: usize = 16;
-const MAX_FIELDS: usize = 8;
+const MAX_FIELDS: usize = 16;
 const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
 type BasicId = u64;
