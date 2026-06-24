@@ -50,8 +50,8 @@ struct Player {
 }
 
 impl Player {
-    fn send(&mut self, response: Response) {
-        self.queue.push(response);
+    fn send(&mut self, response: &Response) {
+        self.queue.push(response.clone());
     }
 }
 
@@ -197,11 +197,16 @@ impl State {
         counter
     }
 
-    fn send_to_all(&mut self, lid: &LobbyId, response: impl Fn(BasicId, &mut Player) -> Response) {
-        for (&id, player) in &mut self.players {
+    fn send_to(&mut self, pid: &BasicId, resp: &Response) {
+        if let Some(player) = self.players.get_mut(pid) {
+            player.send(resp);
+        }
+    }
+
+    fn send_to_lobby(&mut self, lid: &LobbyId, response: &Response) {
+        for (_, player) in &mut self.players {
             if player.lid == *lid {
-                let r = response(id, player);
-                player.send(r);
+                player.send(&response);
             }
         }
     }
@@ -317,10 +322,8 @@ impl Connection {
         let mut state = self.state.fucking_lock();
 
         match request {
-            Request::Ping if let Some(pid) = self.pid => {
-                if let Some(p) = state.players.get_mut(&pid) {
-                    p.send(Response::Pong);
-                }
+            Request::Ping if let Some(ref pid) = self.pid => {
+                state.send_to(pid, &Response::Pong);
             }
             Request::List { gid, limit } => {
                 let mut list: HashMap<LobbyId, LobbyListing> = state
@@ -433,55 +436,53 @@ impl Connection {
                     .collect();
 
                 if let Some(player) = state.players.get_mut(&pid) {
-                    player.send(Response::ListedSet { listed });
+                    player.send(&Response::ListedSet { listed });
 
-                    player.send(Response::CapacitySet { capacity });
+                    player.send(&Response::CapacitySet { capacity });
 
                     for (key, value) in meta {
-                        player.send(Response::LobbyMetaSet { key, value });
+                        player.send(&Response::LobbyMetaSet { key, value });
                     }
 
                     for (&other, meta) in &pmeta {
-                        player.send(Response::Joined {
+                        player.send(&Response::Joined {
                             id: other,
                             meta: meta.clone(),
                         });
                     }
 
                     if let Some(mastah) = mastah {
-                        player.send(Response::NewMaster { id: mastah });
+                        player.send(&Response::NewMaster { id: mastah });
                     }
                 }
 
-                for &other in pmeta.keys() {
-                    if let Some(other) = state.players.get_mut(&other) {
-                        other.send(Response::Joined {
-                            id: pid,
-                            meta: peer_meta.clone(),
-                        })
+                for other in pmeta.keys() {
+                    let resp = Response::Joined {
+                        id: pid,
+                        meta: peer_meta.clone(),
                     };
+
+                    state.send_to(other, &resp);
                 }
             }
-            Request::PassCandidate { to, candidate, mid } if let Some(pid) = self.pid => {
-                let Some(to) = state.players.get_mut(&to) else {
-                    return Outcome::Good;
-                };
-
-                to.send(Response::Candidate {
-                    from: pid,
+            Request::PassCandidate {
+                ref to,
+                candidate,
+                mid,
+            } if let Some(from) = self.pid => {
+                let resp = Response::Candidate {
+                    from,
                     candidate,
                     mid,
-                });
-            }
-            Request::PassOffer { to, sdp } if let Some(from) = self.pid => {
-                if let Some(to) = state.players.get_mut(&to) {
-                    to.send(Response::Offer { from, sdp });
                 };
+
+                state.send_to(to, &resp);
             }
-            Request::PassAnswer { to, sdp } if let Some(from) = self.pid => {
-                if let Some(to) = state.players.get_mut(&to) {
-                    to.send(Response::Answer { from, sdp });
-                };
+            Request::PassOffer { ref to, sdp } if let Some(from) = self.pid => {
+                state.send_to(to, &Response::Offer { from, sdp });
+            }
+            Request::PassAnswer { ref to, sdp } if let Some(from) = self.pid => {
+                state.send_to(to, &Response::Answer { from, sdp });
             }
             Request::SetListed { listed }
                 if let Some(pid) = self.pid
@@ -491,7 +492,7 @@ impl Connection {
                     && let Some(lober) = state.lobbies.get_mut(lid)
                 {
                     lober.listed = listed;
-                    state.send_to_all(lid, |_, _| Response::ListedSet { listed });
+                    state.send_to_lobby(lid, &Response::ListedSet { listed });
                 }
             }
             Request::SetCapacity { capacity }
@@ -502,7 +503,7 @@ impl Connection {
                     && let Some(lober) = state.lobbies.get_mut(lid)
                 {
                     lober.capacity = capacity;
-                    state.send_to_all(lid, |_, _| Response::CapacitySet { capacity });
+                    state.send_to_lobby(lid, &Response::CapacitySet { capacity });
                 }
             }
             // ok to boot since the size limits are enforced client-side
@@ -516,11 +517,13 @@ impl Connection {
                 if player.meta.contains_key(&key) || player.meta.len() < MAX_FIELDS {
                     player.meta.insert(key.to_string(), value.to_string());
 
-                    state.send_to_all(lid, |_, _| Response::PeerMetaSet {
+                    let resp = Response::PeerMetaSet {
                         peer: pid,
                         key: key.to_string(),
                         value: value.to_string(),
-                    });
+                    };
+
+                    state.send_to_lobby(lid, &resp);
                 }
             }
             // ok to boot since the size limits are enforced client-side
@@ -536,10 +539,12 @@ impl Connection {
                 {
                     lober.meta.insert(key.to_string(), value.to_string());
 
-                    state.send_to_all(lid, |_, _| Response::LobbyMetaSet {
+                    let resp = Response::LobbyMetaSet {
                         key: key.to_string(),
                         value: value.to_string(),
-                    });
+                    };
+
+                    state.send_to_lobby(lid, &resp);
                 }
             }
             Request::Kick { id }
@@ -547,16 +552,13 @@ impl Connection {
                     && let Some(pid) = self.pid
                     && let Some(mastah) = state.master_of(&lid) =>
             {
-                if pid != mastah || id == pid {
-                    return Outcome::Good;
-                }
-
-                if let Some(guy) = state.players.get_mut(&id)
+                if pid == mastah
+                    && id != pid
+                    && let Some(guy) = state.players.get_mut(&id)
                     && guy.lid == lid
                 {
-                    guy.send(Response::Bye {
-                        reason: Some(String::from("Kicked by lobby's master")),
-                    });
+                    let reason = Some(String::from("Kicked by lobby's master"));
+                    guy.send(&Response::Bye { reason });
                 }
             }
             other => {
@@ -670,10 +672,10 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
 
         for (&other, player) in &mut state.players {
             if player.lid == *lid && other != pid {
-                player.send(Response::Left { id: pid });
+                player.send(&Response::Left { id: pid });
 
                 if let Some(mastah) = mastah {
-                    player.send(Response::NewMaster { id: mastah })
+                    player.send(&Response::NewMaster { id: mastah })
                 };
             }
         }
