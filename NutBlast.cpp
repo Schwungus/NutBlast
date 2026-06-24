@@ -477,8 +477,23 @@ extern "C" const char* NutBlast_GetPeerField(NutBlast_ID pee, const char* name) 
     return peer.meta.contains(name) ? peer.meta.at(name).c_str() : nullptr;
 }
 
+static bool check_field(const char* type, const char* key, const char* value) {
+    if (!key || !key[0] || std::strlen(key) > NUTBLAST_FIELD_NAME_MAX) {
+        log(NB_LogError, "{} metadata: invalid key size", type);
+        return false;
+    }
+
+    // TODO: null value to unset a field.
+    if (!value || std::strlen(value) > NUTBLAST_FIELD_VALUE_MAX) {
+        log(NB_LogError, "{} metadata: invalid value size", type);
+        return false;
+    }
+
+    return true;
+}
+
 extern "C" void NutBlast_SetPeerField(const char* key, const char* value) {
-    if (!key || !value)
+    if (!check_field("Peer", key, value))
         return;
 
     if (::peer_meta.size() >= NUTBLAST_MAX_FIELDS && !::peer_meta.contains(key)) {
@@ -506,7 +521,7 @@ extern "C" const char* NutBlast_GetLobbyField(const char* name) {
 }
 
 extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
-    if (!key || !value)
+    if (!check_field("Lobby", key, value))
         return;
 
     if (NutBlast_IsReady()) {

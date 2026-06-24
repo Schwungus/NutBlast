@@ -23,6 +23,9 @@ const LOBBY_NAME_LEN: usize = 63;
 
 const MAX_PLAYERS: usize = 16;
 const MAX_FIELDS: usize = 16;
+const FIELD_NAME_MAX: usize = 255;
+const FIELD_VALUE_MAX: usize = 8192;
+
 const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
 type BasicId = u64;
@@ -501,7 +504,10 @@ impl Connection {
                 }
             }
             Request::SetPeerMeta { key, value }
-                if let Some(ref lid) = self.lid
+                // ok to boot since the size limits are enforced client-side
+                if (1..=FIELD_NAME_MAX).contains(&key.len())
+                    && (0..=FIELD_VALUE_MAX).contains(&value.len())
+                    && let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
                     && let Some(player) = state.players.get_mut(&pid) =>
             {
@@ -516,7 +522,10 @@ impl Connection {
                 }
             }
             Request::SetLobbyMeta { key, value }
-                if let Some(ref lid) = self.lid
+               // ok to boot since the size limits are enforced client-side
+                if (1..=FIELD_NAME_MAX).contains(&key.len())
+                    && (0..=FIELD_VALUE_MAX).contains(&value.len())
+                    && let Some(ref lid) = self.lid
                     && let master = state.master_of(&lid)
                     && let Some(lober) = state.lobbies.get_mut(&lid) =>
             {

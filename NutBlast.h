@@ -42,8 +42,9 @@ extern "C" {
 
 // NOTE: make sure to sync these limits with `src/main.rs`.
 #define NUTBLAST_MAX_PLAYERS (16)
-
 #define NUTBLAST_MAX_FIELDS (16)
+#define NUTBLAST_FIELD_NAME_MAX (255)
+#define NUTBLAST_FIELD_VALUE_MAX (8192)
 
 typedef uint64_t NutBlast_ID;
 typedef uint8_t NutBlast_ChannelID;
