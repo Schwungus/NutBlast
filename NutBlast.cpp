@@ -57,9 +57,14 @@ namespace interval {
     constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second;
 };
 
-template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
-    if (cb != nullptr)
-        cb(args...);
+template <typename... Args> static inline void info(std::format_string<Args...> fmt, Args&&... args) {
+    std::fprintf(stdout, "%s\n", std::vformat(fmt.get(), std::make_format_args(args...)).c_str());
+    std::fflush(stdout);
+}
+
+extern "C" uint64_t NutBlast_TimeNS() {
+    const auto elapsed = std::chrono::high_resolution_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
 }
 
 static const rtc::Configuration rtc_config = {
@@ -186,14 +191,9 @@ static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullp
             (*on_peer_meta_changed)(NutBlast_ID, const char*, const char*, const char*),
             (*on_lobby_meta_changed)(const char*, const char*, const char*);
 
-template <typename... Args> static inline void info(std::format_string<Args...> fmt, Args&&... args) {
-    std::fprintf(stdout, "%s\n", std::vformat(fmt.get(), std::make_format_args(args...)).c_str());
-    std::fflush(stdout);
-}
-
-extern "C" uint64_t NutBlast_TimeNS() {
-    const auto elapsed = std::chrono::high_resolution_clock::now().time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
+template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
+    if (cb != nullptr)
+        cb(args...);
 }
 
 static void ws_send(nlohmann::json&& obj) {
