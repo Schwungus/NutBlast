@@ -46,6 +46,17 @@ extern "C" {
 typedef uint64_t NutBlast_ID;
 typedef uint8_t NutBlast_ChannelID;
 
+typedef enum {
+    NB_LogInfo,
+    NB_LogError,
+} NutBlast_LogLevel;
+
+/// Converts a NutBlast-specific loglevel to string so you don't have to do it yourself.
+const char* NutBlast_LogLevelToString(NutBlast_LogLevel);
+
+/// Sets a logging callback to use by NutBlast. Set to null to reset it to the built-in default handler.
+void NutBlast_SetLogger(void (*)(NutBlast_LogLevel, const char*));
+
 typedef struct {
     const char* data;
     NutBlast_ID from;

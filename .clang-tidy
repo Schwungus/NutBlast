@@ -5,6 +5,7 @@ Checks: [
     -bugprone-integer-division,
     -bugprone-empty-catch, # nothing but false positives
     performance-*,
+    -performance-enum-size, # suggested fix is not portable across GCC/Clang/MSVC
     portability-*,
     misc-*,
     -misc-use-anonymous-namespace,

@@ -211,7 +211,22 @@ static void on_disconnected(const char* reason) {
     reset();
 }
 
+static int nb_to_rl(NutBlast_LogLevel level) {
+    switch (level) {
+    case NB_LogInfo:
+        return LOG_INFO;
+    case NB_LogError:
+        return LOG_ERROR;
+    }
+}
+
+static void rl_logger(NutBlast_LogLevel level, const char* line) {
+    TraceLog(nb_to_rl(level), "%s", line);
+}
+
 int main(int argc, char* argv[]) {
+    NutBlast_SetLogger(rl_logger);
+
     if (argc > 1)
         NutBlast_SetNutBlaster(argv[1]);
 

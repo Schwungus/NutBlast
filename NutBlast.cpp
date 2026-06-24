@@ -57,9 +57,28 @@ namespace interval {
     constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second;
 };
 
-template <typename... Args> static inline void info(std::format_string<Args...> fmt, Args&&... args) {
-    std::fprintf(stdout, "%s\n", std::vformat(fmt.get(), std::make_format_args(args...)).c_str());
+extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
+    switch (level) {
+    default:
+        return "FUCKYOU";
+    }
+}
+
+static void (*logger)(NutBlast_LogLevel, const char*) = nullptr;
+
+void NutBlast_SetLogger(void (*cb)(NutBlast_LogLevel, const char*)) {
+    ::logger = cb;
+}
+
+static void log_to_stdout(NutBlast_LogLevel level, const char* line) {
+    std::fprintf(stdout, "NB[%s] %s\n", NutBlast_LogLevelToString(level), line);
     std::fflush(stdout);
+}
+
+template <typename... Args>
+static inline void log(NutBlast_LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
+    const auto logger = ::logger == nullptr ? log_to_stdout : ::logger;
+    logger(level, std::vformat(fmt.get(), std::make_format_args(args...)).c_str());
 }
 
 extern "C" uint64_t NutBlast_TimeNS() {
@@ -378,7 +397,7 @@ static NutBlast_ID generate_id() {
 static NutBlast_ID get_pid() {
     if (!pid) {
         pid = generate_id();
-        info("You are {}", pid);
+        log(NB_LogInfo, "You are {}", pid);
     }
 
     return pid;
@@ -390,7 +409,8 @@ bool Peer::is_offerer() const {
 
 static std::string get_blaster() {
     if (blaster == std::nullopt) {
-        info("Using the default NutBlaster server as none was explicitly specified: {}", NUTBLAST_DEFAULT_SERVER);
+        log(NB_LogInfo, "Using the default NutBlaster server as none was explicitly specified: {}",
+            NUTBLAST_DEFAULT_SERVER);
         blaster = NUTBLAST_DEFAULT_SERVER;
     }
 
@@ -569,7 +589,7 @@ extern "C" void NutBlast_Disconnect() {
 
         recv_shit();
 
-        info("NutBlaster out!");
+        log(NB_LogInfo, "NutBlaster out!");
         fire(::on_disconnected, ::disconnection_reason ? ::disconnection_reason->c_str() : nullptr);
     }
 
@@ -585,40 +605,40 @@ extern "C" void NutBlast_Disconnect() {
 
 extern "C" void NutBlast_FindLobbies() {
     if (::blaster_ws) {
-        info("You're already connected!");
+        log(NB_LogInfo, "You're already connected!");
     } else {
         ::listing_lobbies = true;
         join_pro();
-        info("Connecting to {}", get_blaster());
+        log(NB_LogInfo, "Connecting to {}", get_blaster());
     }
 }
 
 extern "C" void NutBlast_Join(NutBlast_ID id) {
     if (::blaster_ws) {
-        info("You're already connected!");
+        log(NB_LogInfo, "You're already connected!");
     } else if (!id) {
-        info("No ID specified!");
+        log(NB_LogInfo, "No ID specified!");
     } else {
         ::hosting = false, ::listing_lobbies = false;
         ::lid = id, ::lname = std::nullopt;
 
         join_pro();
-        info("Trying to join '{}' at: {}", id, get_blaster());
+        log(NB_LogInfo, "Trying to join '{}' at: {}", id, get_blaster());
     }
 }
 
 extern "C" void NutBlast_Host(NutBlast_ID id, const char* name, int max, bool listed) {
     if (::blaster_ws) {
-        info("You're already connected!");
+        log(NB_LogInfo, "You're already connected!");
     } else if (!name || !name[0]) {
-        info("Lobby name cannot be null or empty");
+        log(NB_LogInfo, "Lobby name cannot be null or empty");
     } else {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing_lobbies = false, ::hosting_listed_lobby = listed;
         ::lid = id ? id : generate_id(), ::lname = name;
 
         join_pro();
-        info("Trying to host '{}' at: {}", lid, get_blaster());
+        log(NB_LogInfo, "Trying to host '{}' at: {}", lid, get_blaster());
     }
 }
 
