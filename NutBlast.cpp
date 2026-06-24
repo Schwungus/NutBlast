@@ -191,7 +191,7 @@ static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullp
             (*on_peer_meta_changed)(NutBlast_ID, const char*, const char*, const char*),
             (*on_lobby_meta_changed)(const char*, const char*, const char*);
 
-template <typename... Args> static void fire(void (*cb)(Args...), Args... args) {
+template <typename... Args> static void fire(void (*cb)(Args...), const std::decay_t<Args>&... args) {
     if (cb != nullptr)
         cb(args...);
 }
@@ -729,8 +729,7 @@ static void handle_list(const nlohmann::json& obj) {
         });
     }
 
-    const auto data = const_cast<const NutBlast_Lobby*>(lobbies.data());
-    fire(::on_lobbies_found, data, lobbies.size());
+    fire(::on_lobbies_found, lobbies.data(), lobbies.size());
 }
 
 static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> payload_types{
