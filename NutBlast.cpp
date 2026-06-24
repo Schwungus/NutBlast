@@ -426,7 +426,7 @@ extern "C" void NutBlast_SetNutBlaster(const char* blaster) {
 }
 
 extern "C" void NutBlast_SetGameID(const char* gid) {
-    ::gid = gid; // TODO: do a null check?
+    ::gid = (gid == nullptr ? "" : gid);
 }
 
 extern "C" void NutBlast_SetMaxChannels(NutBlast_ChannelID max) {
