@@ -174,7 +174,7 @@ void NutBlast_Join(NutBlast_ID id);
 void NutBlast_Host(NutBlast_ID id, const char* name, int players, bool listed);
 
 /// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
-void NutBlast_FindLobbies();
+void NutBlast_FindLobbies(size_t);
 
 /// Disconnects you from the lobby if you are in one, and resets the networking state.
 void NutBlast_Disconnect();

@@ -4,7 +4,7 @@
 
 #include <NutBlast.h>
 
-static void on_found(const NutBlast_Lobby* list, size_t count) {
+static void on_lobbies_found(const NutBlast_Lobby* list, size_t count) {
     printf("\n");
 
     if (!count)
@@ -27,8 +27,9 @@ int main(int argc, char* argv[]) {
         NutBlast_SetNutBlaster(argv[1]);
     NutBlast_SetGameID(argc > 2 ? argv[2] : "NutBlast Test");
 
-    NutBlast_OnLobbiesFound(on_found);
-    NutBlast_FindLobbies();
+    static const size_t LIMOZ = 10;
+    NutBlast_OnLobbiesFound(on_lobbies_found);
+    NutBlast_FindLobbies(LIMOZ);
 
     int count = 0;
 
@@ -37,7 +38,7 @@ int main(int argc, char* argv[]) {
         NutBlast_SleepMS(100);
 
         if (count++ >= 50) {
-            NutBlast_FindLobbies();
+            NutBlast_FindLobbies(LIMOZ);
             count = 0;
         }
     }

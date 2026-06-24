@@ -198,6 +198,7 @@ static NutBlast_ChannelID max_chan = 1;
 static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
 
 static bool hosting = false, listing_lobbies = false, hosting_listed_lobby = true;
+static size_t listing_limit = 0;
 static NutBlast_ID master = 0;
 
 static std::unordered_map<NutBlast_ID, Peer> peers;
@@ -579,6 +580,7 @@ static void join_pro() {
             ::ws_send({
                 {"type", "List"},
                 {"gid", ::gid},
+                {"limit", ::listing_limit},
             });
         } else {
             ::ws_send({
@@ -632,11 +634,11 @@ extern "C" void NutBlast_Disconnect() {
     ::peers.clear(), ::ws_in.clear(), ::ws_out.clear();
 }
 
-extern "C" void NutBlast_FindLobbies() {
+extern "C" void NutBlast_FindLobbies(size_t limit) {
     if (::blaster_ws) {
         log(NB_LogError, "You're already connected!");
     } else {
-        ::listing_lobbies = true;
+        ::listing_lobbies = true, ::listing_limit = limit;
         join_pro();
         log(NB_LogInfo, "Connecting to {}", get_blaster());
     }

@@ -25,7 +25,7 @@ const MAX_PLAYERS: usize = 16;
 const MAX_FIELDS: usize = 16;
 const FIELD_NAME_MAX: usize = 255;
 const FIELD_VALUE_MAX: usize = 8192;
-
+const MAX_LOBBIES_IN_LIST: usize = 100;
 const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
 type BasicId = u64;
@@ -72,6 +72,7 @@ enum Request {
     Ping,
     List {
         gid: String,
+        limit: usize,
     },
     Connect {
         mode: ConnectionMode,
@@ -321,7 +322,7 @@ impl Connection {
                     p.send(Response::Pong);
                 }
             }
-            Request::List { gid } => {
+            Request::List { gid, limit } => {
                 let mut list: HashMap<LobbyId, LobbyListing> = state
                     .lobbies
                     .iter()
@@ -340,6 +341,7 @@ impl Connection {
 
                         Some((lid.clone(), lobby))
                     })
+                    .take(Ord::clamp(limit, 1, MAX_LOBBIES_IN_LIST))
                     .collect();
 
                 for (_, player) in state.players.iter() {
