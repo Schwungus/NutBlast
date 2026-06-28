@@ -24,7 +24,7 @@ const LOBBY_NAME_LEN: usize = 63;
 const MAX_PLAYERS: usize = 16;
 const MAX_FIELDS: usize = 16;
 const FIELD_NAME_MAX: usize = 255;
-const FIELD_VALUE_MAX: usize = 8192;
+const FIELD_VALUE_MAX: usize = 8191;
 const MAX_LOBBIES_IN_LIST: usize = 100;
 const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
