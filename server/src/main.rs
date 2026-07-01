@@ -315,6 +315,36 @@ impl Connection {
         return true;
     }
 
+    fn list_lobbies(&self, state: MutexGuard<State>, gid: &str, limit: usize) -> Vec<LobbyListing> {
+        let mut lobbies: HashMap<LobbyId, LobbyListing> = state
+            .lobbies
+            .iter()
+            .filter_map(|(lid, lobby)| {
+                if lid.gid != gid || !lobby.listed {
+                    return None;
+                }
+
+                let lobby = LobbyListing {
+                    lid: lid.lid,
+                    max: lobby.capacity,
+                    players: 0,
+                    meta: lobby.meta.clone(),
+                };
+
+                Some((lid.clone(), lobby))
+            })
+            .take(limit.clamp(1, MAX_LOBBIES_IN_LIST))
+            .collect();
+
+        for (_, player) in state.players.iter() {
+            if let Some(lober) = lobbies.get_mut(&player.lid) {
+                lober.players += 1;
+            }
+        }
+
+        lobbies.into_values().collect()
+    }
+
     fn handle(&mut self, msg: Message) -> Outcome {
         let json = match msg {
             Message::Text(text) => text.to_string(),
@@ -340,34 +370,8 @@ impl Connection {
                 }
             }
             Request::List { gid, limit } => {
-                let mut list: HashMap<LobbyId, LobbyListing> = state
-                    .lobbies
-                    .iter()
-                    .filter_map(|(lid, lobby)| {
-                        if lid.gid != gid || !lobby.listed {
-                            return None;
-                        }
-
-                        let lobby = LobbyListing {
-                            lid: lid.lid,
-                            max: lobby.capacity,
-                            players: 0,
-                            meta: lobby.meta.clone(),
-                        };
-
-                        Some((lid.clone(), lobby))
-                    })
-                    .take(limit.clamp(1, MAX_LOBBIES_IN_LIST))
-                    .collect();
-
-                for (_, player) in state.players.iter() {
-                    if let Some(lober) = list.get_mut(&player.lid) {
-                        lober.players += 1;
-                    }
-                }
-
                 return Outcome::Bye(Some(Response::List {
-                    list: list.into_values().collect(),
+                    list: self.list_lobbies(state, &gid, limit),
                 }));
             }
             Request::Connect {
@@ -440,7 +444,6 @@ impl Connection {
 
                 if let Some(player) = state.players.get_mut(&pid) {
                     player.send(&Response::ListedSet { listed });
-
                     player.send(&Response::CapacitySet { capacity });
 
                     for (key, value) in meta {
