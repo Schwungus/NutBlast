@@ -130,7 +130,7 @@ struct Pinger {
     }
 };
 
-struct PeerSharedState {
+struct PlayerSharedState {
     const NutBlast_ID id;
     bool joined = false;
     Pinger pinger;
@@ -139,7 +139,7 @@ struct PeerSharedState {
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
     std::vector<rtc::Candidate> outgoing_candidates;
 
-    PeerSharedState(NutBlast_ID id) : id(id) {}
+    PlayerSharedState(NutBlast_ID id) : id(id) {}
 
     void drain_incoming_offers_and_candidates() {
         if (!::incoming_offers.contains(id))
@@ -169,14 +169,14 @@ struct PeerSharedState {
     }
 };
 
-struct Peer {
+struct Player {
     const NutBlast_ID id;
 
     Metadata meta;
-    std::shared_ptr<PeerSharedState> state;
+    std::shared_ptr<PlayerSharedState> state;
 
-    Peer(NutBlast_ID id) : Peer(id, {}) {}
-    Peer(NutBlast_ID, const Metadata&);
+    Player(NutBlast_ID id) : Player(id, {}) {}
+    Player(NutBlast_ID, const Metadata&);
 
     bool is_offerer() const;
 
@@ -201,17 +201,17 @@ static bool hosting = false, listing_lobbies = false, hosting_listed_lobby = tru
 static size_t listing_limit = 0;
 static NutBlast_ID master = 0;
 
-static std::unordered_map<NutBlast_ID, Peer> peers;
+static std::unordered_map<NutBlast_ID, Player> players;
 
 static Pinger ws_pinger;
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
 static std::vector<nlohmann::json> ws_in, ws_out;
 
-static Metadata peer_meta, lobby_meta;
+static Metadata player_meta, lobby_meta;
 
 static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(NutBlast_ID),
             (*on_player_left)(NutBlast_ID), (*on_lobbies_found)(const NutBlast_Lobby*, size_t),
-            (*on_master_changed)(NutBlast_ID), (*on_peer_meta_changed)(NutBlast_ID, NutBlast_FieldDiff),
+            (*on_master_changed)(NutBlast_ID), (*on_player_meta_changed)(NutBlast_ID, NutBlast_FieldDiff),
             (*on_lobby_meta_changed)(NutBlast_FieldDiff);
 
 template <typename... Args> static void fire(void (*cb)(Args...), const std::decay_t<Args>&... args) {
@@ -249,8 +249,8 @@ struct Ticker {
     }
 };
 
-Peer::Peer(NutBlast_ID id, const Metadata& meta) : state(new PeerSharedState(id)), id(id), meta(meta) {
-    const std::weak_ptr<PeerSharedState> st = state;
+Player::Player(NutBlast_ID id, const Metadata& meta) : state(new PlayerSharedState(id)), id(id), meta(meta) {
+    const std::weak_ptr<PlayerSharedState> st = state;
 
     state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
 
@@ -407,7 +407,7 @@ static NutBlast_ID get_pid() {
     return pid;
 }
 
-bool Peer::is_offerer() const {
+bool Player::is_offerer() const {
     return get_pid() > id;
 }
 
@@ -461,21 +461,21 @@ extern "C" bool NutBlast_IsListed() {
     return ::hosting_listed_lobby;
 }
 
-extern "C" const char* NutBlast_GetPeerField(NutBlast_ID pee, const char* name) {
-    if (!pee || !name)
+extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name) {
+    if (!pid || !name)
         return nullptr;
 
-    if (pee == get_pid())
-        return ::peer_meta.contains(name) ? ::peer_meta.at(name).c_str() : nullptr;
+    if (pid == get_pid())
+        return ::player_meta.contains(name) ? ::player_meta.at(name).c_str() : nullptr;
 
     if (!NutBlast_IsReady())
         return nullptr;
 
-    if (!::peers.contains(pee))
+    if (!::players.contains(pid))
         return nullptr;
 
-    const auto& peer = ::peers.at(pee);
-    return peer.meta.contains(name) ? peer.meta.at(name).c_str() : nullptr;
+    const auto& player = ::players.at(pid);
+    return player.meta.contains(name) ? player.meta.at(name).c_str() : nullptr;
 }
 
 static bool check_field(const char* type, const char* key, const char* value) {
@@ -493,19 +493,19 @@ static bool check_field(const char* type, const char* key, const char* value) {
     return true;
 }
 
-extern "C" void NutBlast_SetPeerField(const char* key, const char* value) {
-    if (!check_field("Peer", key, value))
+extern "C" void NutBlast_SetPlayerField(const char* key, const char* value) {
+    if (!check_field("Player", key, value))
         return;
 
-    if (::peer_meta.size() >= NUTBLAST_MAX_FIELDS && !::peer_meta.contains(key)) {
-        log(NB_LogError, "Reached {} peer fields limit", NUTBLAST_MAX_FIELDS);
+    if (::player_meta.size() >= NUTBLAST_MAX_FIELDS && !::player_meta.contains(key)) {
+        log(NB_LogError, "Reached {} player fields limit", NUTBLAST_MAX_FIELDS);
         return;
     }
 
-    ::peer_meta.insert_or_assign(key, value);
+    ::player_meta.insert_or_assign(key, value);
 
     ::ws_send({
-        {"type", "SetPeerMeta"},
+        {"type", "SetPlayerMeta"},
         {"key", key},
         {"value", value},
     });
@@ -546,7 +546,7 @@ extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
     });
 }
 
-static void recv_shit();
+static void recv_stuff();
 
 static void join_pro() {
     rtc::Preload();
@@ -591,7 +591,7 @@ static void join_pro() {
                 {"lid", ::lid},
                 {"capacity", ::max_players},
                 {"listed", ::hosting_listed_lobby},
-                {"peer_meta", ::peer_meta},
+                {"player_meta", ::player_meta},
                 {"lobby_meta", ::lobby_meta},
             });
 
@@ -617,20 +617,20 @@ extern "C" void NutBlast_Disconnect() {
     if (::blaster_ws) {
         ::blaster_ws->onClosed(nullptr);
 
-        recv_shit();
+        recv_stuff();
 
         log(NB_LogInfo, "NutBlaster out!");
         fire(::on_disconnected, ::disconnection_reason ? ::disconnection_reason->c_str() : nullptr);
     }
 
-    if (::blaster_ws) { // `recv_shit` could've nuked the socket so we check for null once again
+    if (::blaster_ws) { // `recv_stuff` could've nuked the socket so we check for null once again
         try {
             ::blaster_ws->close();
         } catch (const std::runtime_error&) {}
     }
 
     ::blaster_ws = nullptr, ::lid = 0;
-    ::peers.clear(), ::ws_in.clear(), ::ws_out.clear();
+    ::players.clear(), ::ws_in.clear(), ::ws_out.clear();
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
@@ -673,7 +673,7 @@ extern "C" void NutBlast_Host(NutBlast_ID id, int max, bool listed) {
 }
 
 extern "C" int NutBlast_GetPlayerCount() {
-    return NutBlast_IsReady() ? static_cast<int>(1 + peers.size()) : 0;
+    return NutBlast_IsReady() ? static_cast<int>(1 + players.size()) : 0;
 }
 
 extern "C" int NutBlast_GetMaxPlayers() {
@@ -685,7 +685,7 @@ extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
 
     size_t i = 0;
     buf[i++] = get_pid();
-    for (const auto& [id, player] : peers)
+    for (const auto& [id, player] : players)
         if (NutBlast_IsPlayerAlive(id))
             buf[i++] = id;
 
@@ -713,7 +713,7 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
     if (id == get_pid())
         return true;
 
-    return ::peers.contains(id);
+    return ::players.contains(id);
 }
 
 static void handle_offer_or_answer(const nlohmann::json& obj) {
@@ -793,13 +793,13 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
         [](const auto& obj) {
             ::max_players = obj["capacity"];
         }},
-    {"PeerMetaSet",
+    {"PlayerMetaSet",
         [](const auto& obj) {
-            const NutBlast_ID pee = obj["peer"];
-            if (!::peers.contains(pee))
+            const NutBlast_ID pid = obj["player"];
+            if (!::players.contains(pid))
                 return;
 
-            auto& meta = ::peers.at(pee).meta;
+            auto& meta = ::players.at(pid).meta;
 
             const std::string key = obj["key"], new_value = obj["value"];
             std::optional<std::string> old_value;
@@ -815,7 +815,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
                 diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
                 diff.new_value = new_value.c_str();
 
-                fire(::on_peer_meta_changed, pee, diff);
+                fire(::on_player_meta_changed, pid, diff);
             }
         }},
     {"LobbyMetaSet",
@@ -848,12 +848,12 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"Joined",
         [](const auto& obj) {
             const NutBlast_ID id = obj["id"];
-            ::peers.insert({id, Peer(id, obj["meta"])});
+            ::players.insert({id, Player(id, obj["meta"])});
         }},
     {"Left",
         [](const auto& obj) {
-            if (::peers.contains(obj["id"]))
-                ::peers.erase(obj["id"]);
+            if (::players.contains(obj["id"]))
+                ::players.erase(obj["id"]);
         }},
     {"Offer", handle_offer_or_answer},
     {"Answer", handle_offer_or_answer},
@@ -865,7 +865,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
         }},
 };
 
-static void recv_shit() {
+static void recv_stuff() {
     for (const auto& obj : copy_and_clear(::ws_in)) {
         if (!obj.contains("type"))
             continue;
@@ -878,8 +878,8 @@ static void recv_shit() {
         payload_types.at(type)(obj);
     }
 
-    for (auto& [id, peer] : ::peers)
-        peer.state->drain_incoming_offers_and_candidates();
+    for (auto& [id, player] : ::players)
+        player.state->drain_incoming_offers_and_candidates();
 }
 
 extern "C" void NutBlast_Flush() {
@@ -891,11 +891,11 @@ extern "C" void NutBlast_Flush() {
     if (pinger) {
         ::ws_pinger.ping();
 
-        for (auto& [id, peer] : ::peers) {
-            const auto dc = peer.state->ping_dc.get();
+        for (auto& [id, player] : ::players) {
+            const auto dc = player.state->ping_dc.get();
 
             if (dc && dc->isOpen()) {
-                peer.state->pinger.ping();
+                player.state->pinger.ping();
                 dc->send("PING");
             }
         }
@@ -906,8 +906,8 @@ extern "C" void NutBlast_Flush() {
     }
 
     if (beater) {
-        for (auto& [id, peer] : ::peers) {
-            for (const auto& candidate : copy_and_clear(peer.state->outgoing_candidates)) {
+        for (auto& [id, player] : ::players) {
+            for (const auto& candidate : copy_and_clear(player.state->outgoing_candidates)) {
                 ::ws_send({
                     {"type", "PassCandidate"},
                     {"to", id},
@@ -920,7 +920,7 @@ extern "C" void NutBlast_Flush() {
 }
 
 extern "C" void NutBlast_Update() {
-    recv_shit();
+    recv_stuff();
     NutBlast_Flush();
 }
 
@@ -939,9 +939,9 @@ static void greatest_technician_thats_ever_lived(
     if (!id || id == get_pid() || !NutBlast_IsPlayerAlive(id) || !msg)
         return;
 
-    const auto& peer = ::peers.at(id);
+    const auto& player = ::players.at(id);
 
-    if (!peer.is_available())
+    if (!player.is_available())
         return;
 
     if (size < 0)
@@ -954,7 +954,7 @@ static void greatest_technician_thats_ever_lived(
         buf[i + 1] = static_cast<std::byte>(msg[i]);
 
     try {
-        const auto& dc = reliable ? peer.state->reliable_dc : peer.state->unreliable_dc;
+        const auto& dc = reliable ? player.state->reliable_dc : player.state->unreliable_dc;
         dc && dc->send(buf);
     } catch (const std::runtime_error&) {}
 }
@@ -1005,7 +1005,7 @@ MakeCb(OnPlayerJoined, ::on_player_joined, NutBlast_ID);
 MakeCb(OnPlayerLeft, ::on_player_left, NutBlast_ID);
 MakeCb(OnLobbiesFound, ::on_lobbies_found, const NutBlast_Lobby*, size_t);
 MakeCb(OnMasterChanged, ::on_master_changed, NutBlast_ID);
-MakeCb(OnPeerMetadataChanged, ::on_peer_meta_changed, NutBlast_ID, NutBlast_FieldDiff);
+MakeCb(OnPlayerMetadataChanged, ::on_player_meta_changed, NutBlast_ID, NutBlast_FieldDiff);
 MakeCb(OnLobbyMetadataChanged, ::on_lobby_meta_changed, NutBlast_FieldDiff);
 
 extern "C" int NutBlast_ServerPing() {
@@ -1013,9 +1013,9 @@ extern "C" int NutBlast_ServerPing() {
 }
 
 extern "C" int NutBlast_PlayerPing(NutBlast_ID id) {
-    if (!NutBlast_IsReady() || !::peers.contains(id))
+    if (!NutBlast_IsReady() || !::players.contains(id))
         return 0;
-    return peers.at(id).state->pinger.millis();
+    return players.at(id).state->pinger.millis();
 }
 
 extern "C" void NutBlast_SleepMS(int _ms) {

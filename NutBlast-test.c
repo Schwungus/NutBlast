@@ -82,7 +82,7 @@ static void restart() {
 }
 
 static void on_player_joined(NutBlast_ID id) {
-    TraceLog(LOG_INFO, "Hi, %s!", NutBlast_GetPeerField(id, NUTBLAST_FIELD_PEER_NAME));
+    TraceLog(LOG_INFO, "Hi, %s!", NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME));
 
     Player p = {
         .x = (GetScreenWidth() - psize) / 2,
@@ -94,7 +94,7 @@ static void on_player_joined(NutBlast_ID id) {
 }
 
 static void on_player_left(NutBlast_ID id) {
-    TraceLog(LOG_INFO, "Bye, %s!", NutBlast_GetPeerField(id, NUTBLAST_FIELD_PEER_NAME));
+    TraceLog(LOG_INFO, "Bye, %s!", NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME));
     TinyMapErase(&players, id);
 }
 
@@ -111,7 +111,7 @@ static void draw_gui() {
 
     for (const NutBlast_ID* ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
         const NutBlast_ID id = *ptr;
-        const char* name = NutBlast_GetPeerField(id, NUTBLAST_FIELD_PEER_NAME);
+        const char* name = NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME);
 
         if (name) {
             const char* fmt = TextFormat("%s (%dms)", name, NutBlast_PlayerPing(id));
@@ -142,10 +142,10 @@ static void send_our_position() {
     if (!p)
         return;
 
-    const NutBlast_ID* peers = NutBlast_GetPlayerIDs();
+    const NutBlast_ID* pids = NutBlast_GetPlayerIDs();
 
     for (;;) {
-        const NutBlast_ID id = *peers++;
+        const NutBlast_ID id = *pids++;
 
         if (!id)
             break;
@@ -160,10 +160,10 @@ static void maybe_chat() {
     if (!IsKeyPressed(KEY_T))
         return;
 
-    const NutBlast_ID* peers = NutBlast_GetPlayerIDs();
+    const NutBlast_ID* pids = NutBlast_GetPlayerIDs();
 
     for (;;) {
-        const NutBlast_ID id = *peers++;
+        const NutBlast_ID id = *pids++;
 
         if (!id)
             break;
@@ -176,10 +176,10 @@ static void maybe_kick() {
     if (!IsKeyPressed(KEY_L))
         return;
 
-    const NutBlast_ID* peers = NutBlast_GetPlayerIDs();
+    const NutBlast_ID* pids = NutBlast_GetPlayerIDs();
 
     for (;;) {
-        const NutBlast_ID id = *peers++;
+        const NutBlast_ID id = *pids++;
 
         if (!id)
             break;
@@ -189,7 +189,7 @@ static void maybe_kick() {
     }
 }
 
-static void recv_shit() {
+static void recv_stuff() {
     NutBlast_Message msg = {0};
 
     while (NutBlast_NextMessage(CHAN_POS, &msg)) {
@@ -202,7 +202,7 @@ static void recv_shit() {
     }
 
     while (NutBlast_NextMessage(CHAN_CHAT, &msg))
-        TraceLog(LOG_INFO, "chat <%s> %s", NutBlast_GetPeerField(msg.from, NUTBLAST_FIELD_PEER_NAME), msg.data);
+        TraceLog(LOG_INFO, "chat <%s> %s", NutBlast_GetPlayerField(msg.from, NUTBLAST_FIELD_PLAYER_NAME), msg.data);
 }
 
 static void on_disconnected(const char* reason) {
@@ -243,7 +243,7 @@ int main(int argc, char* argv[]) {
 
     NutBlast_SetLobbyField(NUTBLAST_FIELD_LOBBY_NAME, "NutBlast Test");
     NutBlast_SetLobbyField("motd", motds[GetRandomValue(0, sizeof(motds) / sizeof(*motds) - 1)]);
-    NutBlast_SetPeerField(NUTBLAST_FIELD_PEER_NAME, names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
+    NutBlast_SetPlayerField(NUTBLAST_FIELD_PLAYER_NAME, names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
     reset();
 
     NutBlast_OnConnected(restart);
@@ -270,7 +270,7 @@ int main(int argc, char* argv[]) {
         maybe_chat();
         maybe_kick();
         NutBlast_Update();
-        recv_shit();
+        recv_stuff();
 
         BeginDrawing();
         {

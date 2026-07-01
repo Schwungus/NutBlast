@@ -48,7 +48,7 @@ extern "C" {
 
 // NOTE: same with these for any special behavior
 #define NUTBLAST_FIELD_LOBBY_NAME "NutBlast.lobby.name"
-#define NUTBLAST_FIELD_PEER_NAME "NutBlast.peer.name"
+#define NUTBLAST_FIELD_PLAYER_NAME "NutBlast.player.name"
 
 typedef uint64_t NutBlast_ID;
 typedef uint8_t NutBlast_ChannelID;
@@ -88,13 +88,13 @@ typedef struct {
 /// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.
 void NutBlast_Cleanup();
 
-/// Returns true if you are connected to a NutBlaster and ready to accept connections from peers.
+/// Returns true if you are connected to a NutBlaster and ready to accept connections from players.
 bool NutBlast_IsReady();
 
 /// Returns the average round-trip time (in milliseconds) to the NutBlaster.
 int NutBlast_ServerPing();
 
-/// Returns the average round-trip time (in milliseconds) to the specified peer.
+/// Returns the average round-trip time (in milliseconds) to the specified player.
 int NutBlast_PlayerPing(NutBlast_ID);
 
 /// Sets the NutBlaster address.
@@ -113,10 +113,10 @@ void NutBlast_OnConnected(void (*)());
 /// Receives a disconnection reason, or null upon a graceful disconnection.
 void NutBlast_OnDisconnected(void (*)(const char*));
 
-/// Registers a callback to fire whenever a new peer connects to your machine.
+/// Registers a callback to fire whenever a new player connects to your machine.
 void NutBlast_OnPlayerJoined(void (*)(NutBlast_ID));
 
-/// Registers a callback to fire whenever a peer disconnects from your machine.
+/// Registers a callback to fire whenever a player disconnects from your machine.
 void NutBlast_OnPlayerLeft(void (*)(NutBlast_ID));
 
 /// Registers a callback to fire whenever `NutBlast_FindLobbies` receives a list of lobbies.
@@ -125,13 +125,13 @@ void NutBlast_OnLobbiesFound(void (*)(const NutBlast_Lobby*, size_t));
 /// Registers a callback to fire whenever the lobby's master changed.
 ///
 /// The new master's ID is available through `NutBlast_GetMasterID`. The old master's ID is passed to the callback, and
-/// that ID may point to a dead peer.
+/// that ID may point to a dead player.
 void NutBlast_OnMasterChanged(void (*)(NutBlast_ID));
 
-/// Registers a callback to fire whenever a peer's metadata field changes.
+/// Registers a callback to fire whenever a player's metadata field changes.
 ///
 /// The old or new value may be null.
-void NutBlast_OnPeerMetadataChanged(void (*)(NutBlast_ID, NutBlast_FieldDiff));
+void NutBlast_OnPlayerMetadataChanged(void (*)(NutBlast_ID, NutBlast_FieldDiff));
 
 /// Registers a callback to fire whenever the lobby's metadata changes.
 ///
@@ -141,21 +141,21 @@ void NutBlast_OnLobbyMetadataChanged(void (*)(NutBlast_FieldDiff));
 /// Returns true and copies the incoming message if there is a message waiting in the queue for the specified channel.
 bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
 
-/// Sends a null-terminated string to the specified peer. Failures are silent. Delivery is not guaranteed.
+/// Sends a null-terminated string to the specified player. Failures are silent. Delivery is not guaranteed.
 ///
 /// Set `size` to -1 to assume `msg` is a zero-terminated string.
-void NutBlast_SendTo(NutBlast_ChannelID chan, NutBlast_ID peer, const char* msg, int size);
+void NutBlast_SendTo(NutBlast_ChannelID chan, NutBlast_ID player, const char* msg, int size);
 
 /// A reliable-delivery version of `NutBlast_SendTo`, which see.
-void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID peer, const char* msg, int size);
+void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID player, const char* msg, int size);
 
-/// Call this every frame to send, receive, and process data from the NutBlaster and the peers.
+/// Call this every frame to send, receive, and process data from the NutBlaster and the players.
 void NutBlast_Update();
 
 /// Call this to flush the output queue.
 ///
 /// This is useful in the case you process the result of `NutBlast_Update()` (i.e. the data you received from other
-/// peers) and send out a response immediately after. Without `NutBlast_Flush()`, you would have to wait a whole extra
+/// players) and send out a response immediately after. Without `NutBlast_Flush()`, you would have to wait a whole extra
 /// tick for the next `NutBlast_Update()` call to flush those packets.
 void NutBlast_Flush();
 
@@ -212,11 +212,11 @@ const NutBlast_ID* NutBlast_GetPlayerIDs();
 /// Returns true if the player identified by their ID is in the lobby, and false otherwise.
 bool NutBlast_IsPlayerAlive(NutBlast_ID);
 
-/// Returns peer's metadata as a null-terminated string.
-const char* NutBlast_GetPeerField(NutBlast_ID peer, const char* name);
+/// Returns player's metadata as a null-terminated string.
+const char* NutBlast_GetPlayerField(NutBlast_ID player, const char* name);
 
-/// Sets our peer's metadata to a null-terminated string.
-void NutBlast_SetPeerField(const char* name, const char* value);
+/// Sets our player's metadata to a null-terminated string.
+void NutBlast_SetPlayerField(const char* name, const char* value);
 
 /// Returns lobby metadata as a null-terminated string.
 const char* NutBlast_GetLobbyField(const char* name);

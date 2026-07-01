@@ -79,7 +79,7 @@ enum Request {
         lid: LobbyId,
         capacity: usize,
         listed: bool,
-        peer_meta: HashMap<String, String>,
+        player_meta: HashMap<String, String>,
         lobby_meta: HashMap<String, String>,
     },
     SetListed {
@@ -88,7 +88,7 @@ enum Request {
     SetCapacity {
         capacity: usize,
     },
-    SetPeerMeta {
+    SetPlayerMeta {
         key: String,
         value: String,
     },
@@ -135,8 +135,8 @@ enum Response {
     CapacitySet {
         capacity: usize,
     },
-    PeerMetaSet {
-        peer: BasicId,
+    PlayerMetaSet {
+        player: BasicId,
         key: String,
         value: String,
     },
@@ -229,8 +229,8 @@ async fn main() -> eyre::Result<()> {
         players: IndexMap::new(),
     }));
 
-    while let Ok((stream, peer_addr)) = listener.accept().await {
-        tokio::spawn(handle(state.clone(), stream, peer_addr));
+    while let Ok((stream, player_addr)) = listener.accept().await {
+        tokio::spawn(handle(state.clone(), stream, player_addr));
     }
 
     Ok(())
@@ -315,7 +315,7 @@ impl Connection {
             }
         };
 
-        let mut state = self.state.fucking_lock();
+        let mut state = self.state.freaking_lock();
 
         match request {
             Request::Ping if let Some(ref pid) = self.pid => {
@@ -358,7 +358,7 @@ impl Connection {
                 lid,
                 capacity,
                 listed,
-                peer_meta,
+                player_meta,
                 lobby_meta,
             } if (1..=MAX_PLAYERS).contains(&capacity)
                 && self.pid.is_none()
@@ -399,7 +399,7 @@ impl Connection {
 
                 let p = Player {
                     lid: lid.clone(),
-                    meta: peer_meta.clone(),
+                    meta: player_meta.clone(),
                     queue: Vec::new(),
                 };
 
@@ -444,7 +444,7 @@ impl Connection {
                 for other in pmeta.keys() {
                     let resp = Response::Joined {
                         id: pid,
-                        meta: peer_meta.clone(),
+                        meta: player_meta.clone(),
                     };
 
                     state.send_to(other, &resp);
@@ -492,7 +492,7 @@ impl Connection {
                 }
             }
             // ok to boot since the size limits are enforced client-side
-            Request::SetPeerMeta { key, value }
+            Request::SetPlayerMeta { key, value }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && (0..=FIELD_VALUE_MAX).contains(&value.len())
                     && let Some(ref lid) = self.lid
@@ -502,8 +502,8 @@ impl Connection {
                 if player.meta.contains_key(&key) || player.meta.len() < MAX_FIELDS {
                     player.meta.insert(key.to_string(), value.to_string());
 
-                    let resp = Response::PeerMetaSet {
-                        peer: pid,
+                    let resp = Response::PlayerMetaSet {
+                        player: pid,
                         key: key.to_string(),
                         value: value.to_string(),
                     };
@@ -582,7 +582,7 @@ impl Connection {
         };
 
         let queue = {
-            let mut state = self.state.fucking_lock();
+            let mut state = self.state.freaking_lock();
 
             state.players.get_mut(&pid).map(|p| {
                 let queue = p.queue.clone();
@@ -613,23 +613,23 @@ impl Connection {
     }
 }
 
-async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAddr) {
-    info!("conn: {}", peer_addr);
+async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: SocketAddr) {
+    info!("conn: {}", player_addr);
 
     let (mut ws_sender, mut ws_receiver) = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => {
-            info!("hi {}", peer_addr);
+            info!("hi {}", player_addr);
             ws.split()
         }
         Err(e) => {
-            error!("{}: {}", peer_addr, e);
+            error!("{}: {}", player_addr, e);
             return;
         }
     };
 
     let mut conn = Connection {
         state: state.clone(),
-        addr: peer_addr,
+        addr: player_addr,
         pid: None,
         lid: None,
     };
@@ -650,7 +650,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
     if let Some(pid) = conn.pid
         && let Some(ref lid) = conn.lid
     {
-        let mut state = state.fucking_lock();
+        let mut state = state.freaking_lock();
         state.players.shift_remove(&pid);
 
         let mastah = state.master_of(lid);
@@ -666,14 +666,14 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
         }
     }
 
-    info!("bye {}", peer_addr);
+    info!("bye {}", player_addr);
 
     if let Ok(mut ws) = ws_receiver.reunite(ws_sender) {
         let _ = ws.close(None).await;
     }
 
     {
-        let mut state = state.fucking_lock();
+        let mut state = state.freaking_lock();
         let mut nonempty = HashSet::new();
 
         for player in state.players.values() {
@@ -692,11 +692,11 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, peer_addr: SocketAd
 }
 
 trait ArcMutexStateExt {
-    fn fucking_lock<'a>(&'a self) -> MutexGuard<'a, State>;
+    fn freaking_lock<'a>(&'a self) -> MutexGuard<'a, State>;
 }
 
 impl ArcMutexStateExt for Arc<Mutex<State>> {
-    fn fucking_lock<'a>(&'a self) -> MutexGuard<'a, State> {
+    fn freaking_lock<'a>(&'a self) -> MutexGuard<'a, State> {
         self.lock().unwrap()
     }
 }

@@ -32,7 +32,7 @@ This advice isn't guaranteed to fix your connectivity, but it's a good starting 
 
 This library implements peer-to-peer networking, where **players directly communicate to each other** instead of completely relying on a server. It's a complex model, and it could be counterproductive to use if you don't know what you're doing.
 
-The current server implementation uses a lobby-based approach, where each lobby supports up to 16 peers and is identified by a unique 8-character string. [The complete example][example] might be overwhelming at first, but make sure to skim through it before you do any heavy networking. Here's the general usage guide for NutBlast:
+The current server implementation uses a lobby-based approach, where each lobby supports up to 16 players and is identified by a numeric ID. [The complete example][example] might be overwhelming at first, but make sure to skim through it before you do any heavy networking. Here's the general usage guide for NutBlast:
 
 1. At the start of the program, set your game ID using `NutBlast_SetGameID()`. It is optional, but highly recommended, as it allows distinguishing your game's lobbies from others. A common example of a game ID would be `"GameName v1.0.0"`. Game IDs cannot be longer than 63 characters.
 2. Host a lobby with `NutBlast_Host()`, or join an existing one with `NutBlast_Join()`. You cannot have two different lobbies with identical IDs; the lobby's ID identifies it uniquely per game ID.
@@ -49,11 +49,11 @@ The current server implementation uses a lobby-based approach, where each lobby 
 An important aspect of NutBlast's networking is the ability to set lobby/player metadata in a simplified key-value-store fashion. Player metadata can include e.g. the player's username, their character - anything in a null-terminated string, mapped to another null-terminated string key. The same applies to lobby metadata: this could be the name of the level to play on, the difficulty level, rules to alter the game's behavior, etc.
 
 > [!NOTE]
-> Lobby and player names are optional metadata fields, but if you're getting/setting them, **use `NUTBLAST_FIELD_LOBBY_NAME`/`NUTBLAST_FIELD_PEER_NAME` macros for the field key to universally identify lobbies and players between different programs**.
+> Lobby and player names are optional metadata fields, but if you're getting/setting them, **use `NUTBLAST_FIELD_LOBBY_NAME`/`NUTBLAST_FIELD_PLAYER_NAME` macros for the field key to universally identify lobbies and players between different programs**.
 
 For the lobby and each player, the current limit to how many fields they can hold is 16.
 
-Call `NutBlast_Set*Field(...)`/`NutBlast_Get*Field(...)` to set/get key-value pairs; replace the asterisk with either `Peer` or `Lobby`. Setting metadata only does anything if you're "in charge" of the metadata object: either you're the lobby's master and want to set the lobby's metadata, or you're trying to set your own metadata as a player.
+Call `NutBlast_Set*Field(...)`/`NutBlast_Get*Field(...)` to set/get key-value pairs; replace the asterisk with either `Player` or `Lobby`. Setting metadata only does anything if you're "in charge" of the metadata object: either you're the lobby's master and want to set the lobby's metadata, or you're trying to set your own metadata as a player.
 
 ## Installation
 
