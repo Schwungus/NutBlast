@@ -133,7 +133,7 @@ struct Pinger {
 struct Player {
     const NutBlast_ID id;
 
-    bool joined = false;
+    bool virgin = true;
     Pinger pinger;
 
     Metadata meta;
@@ -282,24 +282,15 @@ void Player::init(const std::weak_ptr<Player>& self) {
 
             const auto state = self.lock();
 
-            if (state->joined)
-                return;
-
-            fire(::on_player_joined, id);
-            state->joined = true;
+            if (state->virgin) {
+                fire(::on_player_joined, id);
+                state->virgin = false;
+            }
         });
 
         dc.onClosed([self, id]() {
-            if (self.expired())
-                return;
-
-            const auto state = self.lock();
-
-            if (!state->joined)
-                return;
-
-            fire(::on_player_left, id);
-            state->joined = false;
+            if (!self.expired() && !self.lock()->virgin)
+                fire(::on_player_left, id);
         });
 
         dc.onMessage([id](const auto& variant) {
@@ -368,9 +359,9 @@ void Player::init(const std::weak_ptr<Player>& self) {
                 (reliable ? state->reliable_dc : state->unreliable_dc) = dc;
                 setup_dc(*dc);
 
-                if (!state->joined) {
+                if (state->virgin) {
                     fire(::on_player_joined, id);
-                    state->joined = true;
+                    state->virgin = false;
                 }
             } else {
                 state->ping_dc = dc;
