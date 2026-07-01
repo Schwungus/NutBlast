@@ -485,8 +485,7 @@ static bool check_field(const char* type, const char* key, const char* value) {
         return false;
     }
 
-    // TODO: null value to unset a field.
-    if (!value || std::strlen(value) > NUTBLAST_FIELD_VALUE_MAX) {
+    if (value && std::strlen(value) > NUTBLAST_FIELD_VALUE_MAX) {
         log(NB_LogError, "{} metadata: invalid value size", type);
         return false;
     }
@@ -494,22 +493,29 @@ static bool check_field(const char* type, const char* key, const char* value) {
     return true;
 }
 
-extern "C" void NutBlast_SetPlayerField(const char* key, const char* value) {
-    if (!check_field("Player", key, value))
-        return;
-
-    if (::player_meta.size() >= NUTBLAST_MAX_FIELDS && !::player_meta.contains(key)) {
-        log(NB_LogError, "Reached {} player fields limit", NUTBLAST_MAX_FIELDS);
-        return;
+static void
+freak_metadata(const char* type, const char* type_lower, Metadata& meta, const char* key, const char* value) {
+    if (value == nullptr) {
+        meta.erase(key);
+        ::ws_send({
+            {"type", std::string("Erase") + type + "Meta"},
+            {"key", key},
+        });
+    } else if (meta.size() >= NUTBLAST_MAX_FIELDS && !meta.contains(key)) {
+        log(NB_LogError, "Reached {} {} fields limit", NUTBLAST_MAX_FIELDS, type_lower);
+    } else {
+        meta.insert_or_assign(key, value);
+        ::ws_send({
+            {"type", std::string("Set") + type + "Meta"},
+            {"key", key},
+            {"value", value},
+        });
     }
+}
 
-    ::player_meta.insert_or_assign(key, value);
-
-    ::ws_send({
-        {"type", "SetPlayerMeta"},
-        {"key", key},
-        {"value", value},
-    });
+extern "C" void NutBlast_SetPlayerField(const char* key, const char* value) {
+    if (check_field("Player", key, value))
+        freak_metadata("Player", "player", ::player_meta, key, value);
 }
 
 extern "C" const char* NutBlast_GetLobbyField(const char* name) {
@@ -533,18 +539,11 @@ extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
             return;
     }
 
-    if (::lobby_meta.size() >= NUTBLAST_MAX_FIELDS && !::lobby_meta.contains(key)) {
-        log(NB_LogError, "Reached {} lobby fields limit", NUTBLAST_MAX_FIELDS);
-        return;
-    }
+    freak_metadata("Lobby", "lobby", ::lobby_meta, key, value);
+}
 
-    ::lobby_meta.insert_or_assign(key, value);
-
-    ::ws_send({
-        {"type", "SetLobbyMeta"},
-        {"key", key},
-        {"value", value},
-    });
+extern "C" void NutBlast_PurgeMetadata() {
+    ::player_meta.clear(), ::lobby_meta.clear();
 }
 
 static void recv_stuff();
@@ -797,6 +796,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"PlayerMetaSet",
         [](const auto& obj) {
             const NutBlast_ID pid = obj["player"];
+
             if (!::players.contains(pid))
                 return;
 
@@ -819,6 +819,27 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
                 fire(::on_player_meta_changed, pid, diff);
             }
         }},
+    {"PlayerMetaErased",
+        [](const auto& obj) {
+            const NutBlast_ID pid = obj["player"];
+
+            if (!::players.contains(pid))
+                return;
+
+            auto& meta = ::players.at(pid).meta;
+            const std::string key = obj["key"];
+
+            if (!meta.contains(key))
+                return;
+
+            NutBlast_FieldDiff diff = {0};
+            diff.name = key.c_str();
+            diff.old_value = meta.at(key).c_str();
+            diff.new_value = nullptr;
+
+            fire(::on_player_meta_changed, pid, diff);
+            meta.erase(key);
+        }},
     {"LobbyMetaSet",
         [](const auto& obj) {
             const std::string key = obj["key"], new_value = obj["value"];
@@ -837,6 +858,21 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
 
                 fire(::on_lobby_meta_changed, diff);
             }
+        }},
+    {"LobbyMetaErased",
+        [](const auto& obj) {
+            const std::string key = obj["key"];
+
+            if (!::lobby_meta.contains(key))
+                return;
+
+            NutBlast_FieldDiff diff = {0};
+            diff.name = key.c_str();
+            diff.old_value = ::lobby_meta.at(key).c_str();
+            diff.new_value = nullptr;
+
+            fire(::on_lobby_meta_changed, diff);
+            ::lobby_meta.erase(key);
         }},
     {"MasterSet",
         [](const auto& obj) {

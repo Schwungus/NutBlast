@@ -92,9 +92,15 @@ enum Request {
         key: String,
         value: String,
     },
+    ErasePlayerMeta {
+        key: String,
+    },
     SetLobbyMeta {
         key: String,
         value: String,
+    },
+    EraseLobbyMeta {
+        key: String,
     },
     PassCandidate {
         to: BasicId,
@@ -143,9 +149,16 @@ enum Response {
         key: String,
         value: String,
     },
+    PlayerMetaErased {
+        player: BasicId,
+        key: String,
+    },
     LobbyMetaSet {
         key: String,
         value: String,
+    },
+    LobbyMetaErased {
+        key: String,
     },
     MasterSet {
         id: BasicId,
@@ -514,6 +527,17 @@ impl Connection {
                     state.send_to_lobby(lid, &resp);
                 }
             }
+            Request::ErasePlayerMeta { key }
+                if (1..=FIELD_NAME_MAX).contains(&key.len())
+                    && let Some(ref lid) = self.lid
+                    && let Some(pid) = self.pid
+                    && let Some(player) = state.players.get_mut(&pid) =>
+            {
+                if player.meta.contains_key(&key) {
+                    player.meta.remove(&key);
+                    state.send_to_lobby(lid, &Response::PlayerMetaErased { player: pid, key });
+                }
+            }
             // ok to boot since the size limits are enforced client-side
             Request::SetLobbyMeta { key, value }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
@@ -533,6 +557,17 @@ impl Connection {
                     };
 
                     state.send_to_lobby(lid, &resp);
+                }
+            }
+            Request::EraseLobbyMeta { key }
+                if (1..=FIELD_NAME_MAX).contains(&key.len())
+                    && let Some(ref lid) = self.lid
+                    && let master = state.master_of(&lid)
+                    && let Some(lober) = state.lobbies.get_mut(&lid) =>
+            {
+                if master == self.pid && lober.meta.contains_key(&key) {
+                    lober.meta.remove(&key);
+                    state.send_to_lobby(lid, &Response::LobbyMetaErased { key });
                 }
             }
             Request::Kick { id }

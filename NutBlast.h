@@ -215,14 +215,17 @@ bool NutBlast_IsPlayerAlive(NutBlast_ID);
 /// Returns player's metadata as a null-terminated string.
 const char* NutBlast_GetPlayerField(NutBlast_ID player, const char* name);
 
-/// Sets our player's metadata to a null-terminated string.
+/// Sets our player's metadata to a null-terminated string. Pass a NULL value to unset the field.
 void NutBlast_SetPlayerField(const char* name, const char* value);
 
 /// Returns lobby metadata as a null-terminated string.
 const char* NutBlast_GetLobbyField(const char* name);
 
-/// Sets lobby metadata to a null-terminated string.
+/// Sets lobby metadata to a null-terminated string. Pass a NULL value to unset the field.
 void NutBlast_SetLobbyField(const char* name, const char* value);
+
+/// Purges lobby & peer metadata if it concerns you that metadata is kept between sessions.
+void NutBlast_PurgeMetadata();
 
 /// Sets the specified player as the new master if you are the lobby's master. Silently ignored otherwise.
 void NutBlast_SetMaster(NutBlast_ID);
