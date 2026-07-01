@@ -925,9 +925,6 @@ extern "C" void NutBlast_Update() {
 }
 
 extern "C" void NutBlast_Kick(NutBlast_ID guy) {
-    if (NutBlast_GetMasterID() != NutBlast_GetOurID())
-        return;
-
     ::ws_send({
         {"type", "Kick"},
         {"id", guy},
@@ -935,9 +932,6 @@ extern "C" void NutBlast_Kick(NutBlast_ID guy) {
 }
 
 extern "C" void NutBlast_SetMaster(NutBlast_ID guy) {
-    if (NutBlast_GetMasterID() != NutBlast_GetOurID())
-        return;
-
     ::ws_send({
         {"type", "SetMaster"},
         {"id", guy},
