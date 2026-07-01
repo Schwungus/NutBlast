@@ -598,7 +598,7 @@ impl Connection {
                 }
             }
             other => {
-                debug!("bad: {:?}", other);
+                warn!("bad: {:?}", other);
                 return Outcome::boot("Bad payload");
             }
         };
