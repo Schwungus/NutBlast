@@ -142,7 +142,6 @@ struct Player {
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
     std::vector<rtc::Candidate> outgoing_candidates;
 
-    Player(NutBlast_ID id) : Player(id, {}) {}
     Player(NutBlast_ID id, const Metadata& meta) : id(id), meta(meta) {}
 
     void init(const std::weak_ptr<Player>&);
