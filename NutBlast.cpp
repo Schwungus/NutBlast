@@ -321,14 +321,15 @@ void Player::init(const std::weak_ptr<Player>& self) {
     };
 
     const auto on_ping = [self](const auto& msg) {
-        if (self.expired())
+        if (self.expired() || !std::holds_alternative<rtc::string>(msg))
             return;
 
-        if (!std::holds_alternative<rtc::string>(msg))
+        const auto state = self.lock();
+
+        if (state->ping_dc == nullptr)
             return;
 
         const auto type = std::get<rtc::string>(msg);
-        const auto state = self.lock();
 
         if (type == "PING")
             state->ping_dc->send("PONG");
