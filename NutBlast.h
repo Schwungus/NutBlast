@@ -224,6 +224,9 @@ const char* NutBlast_GetLobbyField(const char* name);
 /// Sets lobby metadata to a null-terminated string.
 void NutBlast_SetLobbyField(const char* name, const char* value);
 
+/// Sets the specified player as the new master if you are the lobby's master. Silently ignored otherwise.
+void NutBlast_SetMaster(NutBlast_ID);
+
 uint64_t NutBlast_TimeNS();
 
 void NutBlast_SleepMS(int);

@@ -112,6 +112,9 @@ enum Request {
     Kick {
         id: BasicId,
     },
+    SetMaster {
+        id: BasicId,
+    },
 }
 
 #[derive(Clone, Serialize)]
@@ -144,7 +147,7 @@ enum Response {
         key: String,
         value: String,
     },
-    NewMaster {
+    MasterSet {
         id: BasicId,
     },
     Joined {
@@ -437,7 +440,7 @@ impl Connection {
                     }
 
                     if let Some(mastah) = mastah {
-                        player.send(&Response::NewMaster { id: mastah });
+                        player.send(&Response::MasterSet { id: mastah });
                     }
                 }
 
@@ -544,6 +547,19 @@ impl Connection {
                 {
                     let reason = Some(String::from("Kicked by lobby's master"));
                     guy.send(&Response::Bye { reason });
+                }
+            }
+            Request::SetMaster { id }
+                if let Some(lid) = self.lid.clone()
+                    && let Some(pid) = self.pid
+                    && let Some(mastah) = state.master_of(&lid) =>
+            {
+                if pid == mastah
+                    && id != pid
+                    && let Some(guy) = state.players.get_mut(&id)
+                    && guy.lid == lid
+                {
+                    state.send_to_lobby(&lid, &Response::MasterSet { id });
                 }
             }
             other => {
@@ -660,7 +676,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
                 player.send(&Response::Left { id: pid });
 
                 if let Some(mastah) = mastah {
-                    player.send(&Response::NewMaster { id: mastah })
+                    player.send(&Response::MasterSet { id: mastah })
                 };
             }
         }

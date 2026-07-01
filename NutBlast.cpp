@@ -837,7 +837,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
                 fire(::on_lobby_meta_changed, diff);
             }
         }},
-    {"NewMaster",
+    {"MasterSet",
         [](const auto& obj) {
             const auto old_master = ::master;
             ::master = obj["id"];
@@ -930,6 +930,16 @@ extern "C" void NutBlast_Kick(NutBlast_ID guy) {
 
     ::ws_send({
         {"type", "Kick"},
+        {"id", guy},
+    });
+}
+
+extern "C" void NutBlast_SetMaster(NutBlast_ID guy) {
+    if (NutBlast_GetMasterID() != NutBlast_GetOurID())
+        return;
+
+    ::ws_send({
+        {"type", "SetMaster"},
         {"id", guy},
     });
 }
