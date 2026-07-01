@@ -192,7 +192,7 @@ struct Message {
 
 static std::string gid = "";
 static NutBlast_ID pid = 0, lid = 0;
-static std::optional<std::string> blaster, disconnection_reason, lname;
+static std::optional<std::string> blaster, disconnection_reason;
 
 static NutBlast_ChannelID max_chan = 1;
 static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
@@ -589,7 +589,6 @@ static void join_pro() {
                 {"gid", ::gid},
                 {"pid", ::get_pid()},
                 {"lid", ::lid},
-                {"name", ::lname},
                 {"capacity", ::max_players},
                 {"listed", ::hosting_listed_lobby},
                 {"peer_meta", ::peer_meta},
@@ -630,7 +629,7 @@ extern "C" void NutBlast_Disconnect() {
         } catch (const std::runtime_error&) {}
     }
 
-    ::blaster_ws = nullptr, ::lid = 0, ::lname = std::nullopt;
+    ::blaster_ws = nullptr, ::lid = 0;
     ::peers.clear(), ::ws_in.clear(), ::ws_out.clear();
 }
 
@@ -653,22 +652,20 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
         log(NB_LogError, "No ID specified!");
     } else {
         ::hosting = false, ::listing_lobbies = false;
-        ::lid = id, ::lname = std::nullopt;
+        ::lid = id;
 
         log(NB_LogInfo, "Trying to join '{}' at: {}", id, get_blaster());
         join_pro();
     }
 }
 
-extern "C" void NutBlast_Host(NutBlast_ID id, const char* name, int max, bool listed) {
+extern "C" void NutBlast_Host(NutBlast_ID id, int max, bool listed) {
     if (::blaster_ws) {
         log(NB_LogError, "You're already connected!");
-    } else if (!name || !name[0]) {
-        log(NB_LogError, "Lobby name cannot be null or empty");
     } else {
         NutBlast_SetMaxPlayers(max);
         ::hosting = true, ::listing_lobbies = false, ::hosting_listed_lobby = listed;
-        ::lid = id ? id : generate_id(), ::lname = name;
+        ::lid = id ? id : generate_id();
 
         log(NB_LogInfo, "Trying to host '{}' at: {}", lid, get_blaster());
         join_pro();
@@ -742,7 +739,6 @@ static void handle_candidate(const nlohmann::json& obj) {
 }
 
 struct LobbyInfo {
-    std::string name;
     std::vector<std::pair<std::string, std::string>> fields;
     std::vector<NutBlast_LobbyField> meta;
 };
@@ -758,7 +754,6 @@ static void handle_list(const nlohmann::json& obj) {
         tmp.push_back({});
 
         LobbyInfo& tlob = tmp.back();
-        tlob.name = lober["name"];
 
         const auto& read_meta = lober["meta"];
         tlob.fields.reserve(read_meta.size());
@@ -774,7 +769,6 @@ static void handle_list(const nlohmann::json& obj) {
 
         lobbies.push_back({
             .id = lober["lid"],
-            .name = tlob.name.c_str(),
             .players = lober["players"],
             .capacity = lober["max"],
             .metadata = tlob.meta.data(),

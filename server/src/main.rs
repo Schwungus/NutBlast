@@ -18,8 +18,7 @@ use tokio_tungstenite::{
     tungstenite::{Error as TungError, Message},
 };
 
-const GAME_ID_LEN: usize = 31;
-const LOBBY_NAME_LEN: usize = 63;
+const GAME_ID_LEN: usize = 63;
 
 const MAX_PLAYERS: usize = 16;
 const MAX_FIELDS: usize = 16;
@@ -37,7 +36,6 @@ struct LobbyId {
 }
 
 struct Lobby {
-    name: String,
     meta: HashMap<String, String>,
     capacity: usize,
     listed: bool,
@@ -79,7 +77,6 @@ enum Request {
         pid: BasicId,
         #[serde(flatten)]
         lid: LobbyId,
-        name: Option<String>,
         capacity: usize,
         listed: bool,
         peer_meta: HashMap<String, String>,
@@ -120,7 +117,6 @@ enum Request {
 #[derive(Clone, Serialize)]
 struct LobbyListing {
     lid: BasicId,
-    name: String,
     players: usize,
     max: usize,
     meta: HashMap<String, String>,
@@ -335,7 +331,6 @@ impl Connection {
                         }
 
                         let lobby = LobbyListing {
-                            name: lobby.name.to_string(),
                             lid: lid.lid,
                             max: lobby.capacity,
                             players: 0,
@@ -361,7 +356,6 @@ impl Connection {
                 mode,
                 pid,
                 lid,
-                name,
                 capacity,
                 listed,
                 peer_meta,
@@ -386,16 +380,7 @@ impl Connection {
                 } else {
                     info!("new lobby max={1} {:?}", lid, capacity);
 
-                    let lname = if let Some(lname) = name
-                        && (1..=LOBBY_NAME_LEN).contains(&lname.len())
-                    {
-                        lname
-                    } else {
-                        return Outcome::boot("Invalid lobby name");
-                    };
-
                     let lober = Lobby {
-                        name: lname.to_string(),
                         meta: lobby_meta,
                         capacity,
                         listed,

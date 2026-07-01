@@ -82,7 +82,7 @@ static void restart() {
 }
 
 static void on_player_joined(NutBlast_ID id) {
-    TraceLog(LOG_INFO, "Hi, %s!", NutBlast_GetPeerField(id, "NAME"));
+    TraceLog(LOG_INFO, "Hi, %s!", NutBlast_GetPeerField(id, NUTBLAST_FIELD_PEER_NAME));
 
     Player p = {
         .x = (GetScreenWidth() - psize) / 2,
@@ -94,7 +94,7 @@ static void on_player_joined(NutBlast_ID id) {
 }
 
 static void on_player_left(NutBlast_ID id) {
-    TraceLog(LOG_INFO, "Bye, %s!", NutBlast_GetPeerField(id, "NAME"));
+    TraceLog(LOG_INFO, "Bye, %s!", NutBlast_GetPeerField(id, NUTBLAST_FIELD_PEER_NAME));
     TinyMapErase(&players, id);
 }
 
@@ -111,7 +111,7 @@ static void draw_gui() {
 
     for (const NutBlast_ID* ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
         const NutBlast_ID id = *ptr;
-        const char* name = NutBlast_GetPeerField(id, "NAME");
+        const char* name = NutBlast_GetPeerField(id, NUTBLAST_FIELD_PEER_NAME);
 
         if (name) {
             const char* fmt = TextFormat("%s (%dms)", name, NutBlast_PlayerPing(id));
@@ -202,7 +202,7 @@ static void recv_shit() {
     }
 
     while (NutBlast_NextMessage(CHAN_CHAT, &msg))
-        TraceLog(LOG_INFO, "chat <%s> %s", NutBlast_GetPeerField(msg.from, "NAME"), msg.data);
+        TraceLog(LOG_INFO, "chat <%s> %s", NutBlast_GetPeerField(msg.from, NUTBLAST_FIELD_PEER_NAME), msg.data);
 }
 
 static void on_disconnected(const char* reason) {
@@ -241,9 +241,9 @@ int main(int argc, char* argv[]) {
     SetExitKey(EMS ? KEY_NULL : KEY_ESCAPE);
     SetRandomSeed(NutBlast_TimeNS());
 
-    NutBlast_SetLobbyField("NUTBLAST", "TEST");
-    NutBlast_SetLobbyField("MOTD", motds[GetRandomValue(0, sizeof(motds) / sizeof(*motds) - 1)]);
-    NutBlast_SetPeerField("NAME", names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
+    NutBlast_SetLobbyField(NUTBLAST_FIELD_LOBBY_NAME, "NutBlast Test");
+    NutBlast_SetLobbyField("motd", motds[GetRandomValue(0, sizeof(motds) / sizeof(*motds) - 1)]);
+    NutBlast_SetPeerField(NUTBLAST_FIELD_PEER_NAME, names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
     reset();
 
     NutBlast_OnConnected(restart);
@@ -259,7 +259,7 @@ int main(int argc, char* argv[]) {
 
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H))
-            NutBlast_Host(lid, "NutBlast Test", 2, true);
+            NutBlast_Host(lid, 2, true);
         else if (IsKeyPressed(KEY_J))
             NutBlast_Join(lid);
         else if (IsKeyPressed(KEY_K))

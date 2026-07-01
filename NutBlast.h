@@ -46,6 +46,10 @@ extern "C" {
 #define NUTBLAST_FIELD_NAME_MAX (255)
 #define NUTBLAST_FIELD_VALUE_MAX (8191)
 
+// NOTE: same with these for any special behavior
+#define NUTBLAST_FIELD_LOBBY_NAME "NutBlast.lobby.name"
+#define NUTBLAST_FIELD_PEER_NAME "NutBlast.peer.name"
+
 typedef uint64_t NutBlast_ID;
 typedef uint8_t NutBlast_ChannelID;
 
@@ -76,7 +80,6 @@ typedef struct {
 
 typedef struct {
     NutBlast_ID id;
-    const char* name;
     uint8_t players, capacity;
     const NutBlast_LobbyField* metadata;
     size_t field_count;
@@ -171,7 +174,7 @@ void NutBlast_Join(NutBlast_ID id);
 /// `name` must not be NULL or empty.
 /// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
 /// Call `NutBlast_SetListed()` if you need to change the visibility later.
-void NutBlast_Host(NutBlast_ID id, const char* name, int players, bool listed);
+void NutBlast_Host(NutBlast_ID id, int players, bool listed);
 
 /// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
 void NutBlast_FindLobbies(size_t);
