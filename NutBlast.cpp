@@ -130,17 +130,28 @@ struct Pinger {
     }
 };
 
-struct PlayerConnectionState {
+struct Player {
     const NutBlast_ID id;
 
     bool joined = false;
     Pinger pinger;
 
+    Metadata meta;
+
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
     std::vector<rtc::Candidate> outgoing_candidates;
 
-    PlayerConnectionState(NutBlast_ID id) : id(id) {}
+    Player(NutBlast_ID id) : Player(id, {}) {}
+    Player(NutBlast_ID id, const Metadata& meta) : id(id), meta(meta) {}
+
+    void init(const std::weak_ptr<Player>&);
+
+    bool is_offerer() const;
+
+    bool is_available() const {
+        return unreliable_dc && reliable_dc;
+    }
 
     void drain_incoming_offers_and_candidates() {
         if (!::incoming_offers.contains(id))
@@ -170,22 +181,6 @@ struct PlayerConnectionState {
     }
 };
 
-struct Player {
-    const NutBlast_ID id;
-    Metadata meta;
-
-    std::shared_ptr<PlayerConnectionState> connection;
-
-    Player(NutBlast_ID id) : Player(id, {}) {}
-    Player(NutBlast_ID, const Metadata&);
-
-    bool is_offerer() const;
-
-    bool is_available() const {
-        return connection && connection->unreliable_dc && connection->reliable_dc;
-    }
-};
-
 struct Message {
     NutBlast_ID from;
     std::vector<std::byte> bytes;
@@ -202,7 +197,7 @@ static bool hosting = false, listing_lobbies = false, hosting_listed_lobby = tru
 static size_t listing_limit = 0;
 static NutBlast_ID master = 0;
 
-static std::unordered_map<NutBlast_ID, Player> players;
+static std::unordered_map<NutBlast_ID, std::shared_ptr<Player>> players;
 
 static Pinger ws_pinger;
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
@@ -250,13 +245,15 @@ struct Ticker {
     }
 };
 
-Player::Player(NutBlast_ID id, const Metadata& meta) : connection(new PlayerConnectionState(id)), id(id), meta(meta) {
-    const std::weak_ptr<PlayerConnectionState> st = connection;
+// gotta use a weak `this` pointer in lambda captures instead of plain `this` since we'll be sharing this `Player`
+// instance with other threads with possibly different lifetimes, procured by libdatachannel in the background.
+void Player::init(const std::weak_ptr<Player>& self) {
+    const auto id = this->id;
 
-    connection->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
+    pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
 
-    connection->pc->onLocalDescription([id, st](const auto& local_desc) {
-        if (st.expired())
+    pc->onLocalDescription([id, self](const auto& local_desc) {
+        if (self.expired())
             return;
 
         std::string type;
@@ -275,19 +272,19 @@ Player::Player(NutBlast_ID id, const Metadata& meta) : connection(new PlayerConn
         });
     });
 
-    connection->pc->onLocalCandidate([st](const auto& candidate) {
-        if (st.expired())
+    pc->onLocalCandidate([self](const auto& candidate) {
+        if (self.expired())
             return;
 
-        st.lock()->outgoing_candidates.push_back(candidate);
+        self.lock()->outgoing_candidates.push_back(candidate);
     });
 
-    const auto setup_dc = [st, id](rtc::DataChannel& dc) {
-        dc.onOpen([st, id]() {
-            if (st.expired())
+    const auto setup_dc = [self, id](rtc::DataChannel& dc) {
+        dc.onOpen([self, id]() {
+            if (self.expired())
                 return;
 
-            const auto state = st.lock();
+            const auto state = self.lock();
 
             if (state->joined)
                 return;
@@ -296,11 +293,11 @@ Player::Player(NutBlast_ID id, const Metadata& meta) : connection(new PlayerConn
             state->joined = true;
         });
 
-        dc.onClosed([st, id]() {
-            if (st.expired())
+        dc.onClosed([self, id]() {
+            if (self.expired())
                 return;
 
-            const auto state = st.lock();
+            const auto state = self.lock();
 
             if (!state->joined)
                 return;
@@ -327,15 +324,15 @@ Player::Player(NutBlast_ID id, const Metadata& meta) : connection(new PlayerConn
         });
     };
 
-    const auto on_ping = [st](const auto& msg) {
-        if (st.expired())
+    const auto on_ping = [self](const auto& msg) {
+        if (self.expired())
             return;
 
         if (!std::holds_alternative<rtc::string>(msg))
             return;
 
         const auto type = std::get<rtc::string>(msg);
-        const auto state = st.lock();
+        const auto state = self.lock();
 
         if (type == "PING")
             state->ping_dc->send("PONG");
@@ -344,29 +341,29 @@ Player::Player(NutBlast_ID id, const Metadata& meta) : connection(new PlayerConn
     };
 
     if (is_offerer()) {
-        connection->unreliable_dc = connection->pc->createDataChannel("unreliable", {
+        unreliable_dc = pc->createDataChannel("unreliable", {
             .reliability = {.unordered = true, .maxRetransmits = 0, },
         });
 
-        setup_dc(*connection->unreliable_dc);
+        setup_dc(*unreliable_dc);
 
-        connection->reliable_dc = connection->pc->createDataChannel("reliable", {
+        reliable_dc = pc->createDataChannel("reliable", {
             .reliability = {.unordered = false, },
         });
 
-        setup_dc(*connection->reliable_dc);
+        setup_dc(*reliable_dc);
 
-        connection->ping_dc = connection->pc->createDataChannel("ping", {
+        ping_dc = pc->createDataChannel("ping", {
             .reliability = {.unordered = true, .maxRetransmits = 0, },
         });
 
-        connection->ping_dc->onMessage(on_ping);
+        ping_dc->onMessage(on_ping);
     } else {
-        connection->pc->onDataChannel([id, st, setup_dc, on_ping](const auto& dc) {
-            if (st.expired())
+        pc->onDataChannel([id, self, setup_dc, on_ping](const auto& dc) {
+            if (self.expired())
                 return;
 
-            const auto state = st.lock();
+            const auto state = self.lock();
 
             if (dc->label() == "reliable" || dc->label() == "unreliable") {
                 const bool reliable = (dc->label() == "reliable");
@@ -476,7 +473,7 @@ extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name
         return nullptr;
 
     const auto& player = ::players.at(pid);
-    return player.meta.contains(name) ? player.meta.at(name).c_str() : nullptr;
+    return player->meta.contains(name) ? player->meta.at(name).c_str() : nullptr;
 }
 
 static bool check_field(const char* type, const char* key, const char* value) {
@@ -800,7 +797,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
             if (!::players.contains(pid))
                 return;
 
-            auto& meta = ::players.at(pid).meta;
+            auto& meta = ::players.at(pid)->meta;
 
             const std::string key = obj["key"], new_value = obj["value"];
             std::optional<std::string> old_value;
@@ -826,7 +823,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
             if (!::players.contains(pid))
                 return;
 
-            auto& meta = ::players.at(pid).meta;
+            auto& meta = ::players.at(pid)->meta;
             const std::string key = obj["key"];
 
             if (!meta.contains(key))
@@ -885,7 +882,10 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"Joined",
         [](const auto& obj) {
             const NutBlast_ID id = obj["id"];
-            ::players.insert({id, Player(id, obj["meta"])});
+
+            const auto ptr = std::make_shared<Player>(id, obj["meta"]);
+            ::players.insert({id, ptr});
+            ptr->init(ptr);
         }},
     {"Left",
         [](const auto& obj) {
@@ -916,7 +916,7 @@ static void recv_stuff() {
     }
 
     for (auto& [id, player] : ::players)
-        player.connection->drain_incoming_offers_and_candidates();
+        player->drain_incoming_offers_and_candidates();
 }
 
 extern "C" void NutBlast_Flush() {
@@ -929,10 +929,10 @@ extern "C" void NutBlast_Flush() {
         ::ws_pinger.ping();
 
         for (auto& [id, player] : ::players) {
-            const auto dc = player.connection->ping_dc.get();
+            const auto dc = player->ping_dc.get();
 
             if (dc && dc->isOpen()) {
-                player.connection->pinger.ping();
+                player->pinger.ping();
                 dc->send("PING");
             }
         }
@@ -944,7 +944,7 @@ extern "C" void NutBlast_Flush() {
 
     if (beater) {
         for (auto& [id, player] : ::players) {
-            for (const auto& candidate : copy_and_clear(player.connection->outgoing_candidates)) {
+            for (const auto& candidate : copy_and_clear(player->outgoing_candidates)) {
                 ::ws_send({
                     {"type", "PassCandidate"},
                     {"to", id},
@@ -982,7 +982,7 @@ static void greatest_technician_thats_ever_lived(
 
     const auto& player = ::players.at(id);
 
-    if (!player.is_available())
+    if (!player->is_available())
         return;
 
     if (size < 0)
@@ -995,7 +995,7 @@ static void greatest_technician_thats_ever_lived(
         buf[i + 1] = static_cast<std::byte>(msg[i]);
 
     try {
-        const auto& dc = reliable ? player.connection->reliable_dc : player.connection->unreliable_dc;
+        const auto& dc = reliable ? player->reliable_dc : player->unreliable_dc;
         dc && dc->send(buf);
     } catch (const std::runtime_error&) {}
 }
@@ -1056,7 +1056,7 @@ extern "C" int NutBlast_ServerPing() {
 extern "C" int NutBlast_PlayerPing(NutBlast_ID id) {
     if (!NutBlast_IsReady() || !::players.contains(id))
         return 0;
-    return players.at(id).connection->pinger.millis();
+    return players.at(id)->pinger.millis();
 }
 
 extern "C" void NutBlast_SleepMS(int _ms) {
