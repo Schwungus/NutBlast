@@ -334,8 +334,10 @@ impl Connection {
         let mut state = self.state.freaking_lock();
 
         match request {
-            Request::Ping if let Some(ref pid) = self.pid => {
-                state.send_to(pid, &Response::Pong);
+            Request::Ping => {
+                if let Some(ref pid) = self.pid {
+                    state.send_to(pid, &Response::Pong);
+                }
             }
             Request::List { gid, limit } => {
                 let mut list: HashMap<LobbyId, LobbyListing> = state
