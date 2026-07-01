@@ -130,8 +130,9 @@ struct Pinger {
     }
 };
 
-struct PlayerSharedState {
+struct PlayerConnectionState {
     const NutBlast_ID id;
+
     bool joined = false;
     Pinger pinger;
 
@@ -139,7 +140,7 @@ struct PlayerSharedState {
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
     std::vector<rtc::Candidate> outgoing_candidates;
 
-    PlayerSharedState(NutBlast_ID id) : id(id) {}
+    PlayerConnectionState(NutBlast_ID id) : id(id) {}
 
     void drain_incoming_offers_and_candidates() {
         if (!::incoming_offers.contains(id))
@@ -171,9 +172,9 @@ struct PlayerSharedState {
 
 struct Player {
     const NutBlast_ID id;
-
     Metadata meta;
-    std::shared_ptr<PlayerSharedState> state;
+
+    std::shared_ptr<PlayerConnectionState> connection;
 
     Player(NutBlast_ID id) : Player(id, {}) {}
     Player(NutBlast_ID, const Metadata&);
@@ -181,7 +182,7 @@ struct Player {
     bool is_offerer() const;
 
     bool is_available() const {
-        return state && state->unreliable_dc && state->reliable_dc;
+        return connection && connection->unreliable_dc && connection->reliable_dc;
     }
 };
 
@@ -249,12 +250,12 @@ struct Ticker {
     }
 };
 
-Player::Player(NutBlast_ID id, const Metadata& meta) : state(new PlayerSharedState(id)), id(id), meta(meta) {
-    const std::weak_ptr<PlayerSharedState> st = state;
+Player::Player(NutBlast_ID id, const Metadata& meta) : connection(new PlayerConnectionState(id)), id(id), meta(meta) {
+    const std::weak_ptr<PlayerConnectionState> st = connection;
 
-    state->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
+    connection->pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
 
-    state->pc->onLocalDescription([id, st](const auto& local_desc) {
+    connection->pc->onLocalDescription([id, st](const auto& local_desc) {
         if (st.expired())
             return;
 
@@ -274,7 +275,7 @@ Player::Player(NutBlast_ID id, const Metadata& meta) : state(new PlayerSharedSta
         });
     });
 
-    state->pc->onLocalCandidate([st](const auto& candidate) {
+    connection->pc->onLocalCandidate([st](const auto& candidate) {
         if (st.expired())
             return;
 
@@ -343,25 +344,25 @@ Player::Player(NutBlast_ID id, const Metadata& meta) : state(new PlayerSharedSta
     };
 
     if (is_offerer()) {
-        state->unreliable_dc = state->pc->createDataChannel("unreliable", {
+        connection->unreliable_dc = connection->pc->createDataChannel("unreliable", {
             .reliability = {.unordered = true, .maxRetransmits = 0, },
         });
 
-        setup_dc(*state->unreliable_dc);
+        setup_dc(*connection->unreliable_dc);
 
-        state->reliable_dc = state->pc->createDataChannel("reliable", {
+        connection->reliable_dc = connection->pc->createDataChannel("reliable", {
             .reliability = {.unordered = false, },
         });
 
-        setup_dc(*state->reliable_dc);
+        setup_dc(*connection->reliable_dc);
 
-        state->ping_dc = state->pc->createDataChannel("ping", {
+        connection->ping_dc = connection->pc->createDataChannel("ping", {
             .reliability = {.unordered = true, .maxRetransmits = 0, },
         });
 
-        state->ping_dc->onMessage(on_ping);
+        connection->ping_dc->onMessage(on_ping);
     } else {
-        state->pc->onDataChannel([id, st, setup_dc, on_ping](const auto& dc) {
+        connection->pc->onDataChannel([id, st, setup_dc, on_ping](const auto& dc) {
             if (st.expired())
                 return;
 
@@ -879,7 +880,7 @@ static void recv_stuff() {
     }
 
     for (auto& [id, player] : ::players)
-        player.state->drain_incoming_offers_and_candidates();
+        player.connection->drain_incoming_offers_and_candidates();
 }
 
 extern "C" void NutBlast_Flush() {
@@ -892,10 +893,10 @@ extern "C" void NutBlast_Flush() {
         ::ws_pinger.ping();
 
         for (auto& [id, player] : ::players) {
-            const auto dc = player.state->ping_dc.get();
+            const auto dc = player.connection->ping_dc.get();
 
             if (dc && dc->isOpen()) {
-                player.state->pinger.ping();
+                player.connection->pinger.ping();
                 dc->send("PING");
             }
         }
@@ -907,7 +908,7 @@ extern "C" void NutBlast_Flush() {
 
     if (beater) {
         for (auto& [id, player] : ::players) {
-            for (const auto& candidate : copy_and_clear(player.state->outgoing_candidates)) {
+            for (const auto& candidate : copy_and_clear(player.connection->outgoing_candidates)) {
                 ::ws_send({
                     {"type", "PassCandidate"},
                     {"to", id},
@@ -958,7 +959,7 @@ static void greatest_technician_thats_ever_lived(
         buf[i + 1] = static_cast<std::byte>(msg[i]);
 
     try {
-        const auto& dc = reliable ? player.state->reliable_dc : player.state->unreliable_dc;
+        const auto& dc = reliable ? player.connection->reliable_dc : player.connection->unreliable_dc;
         dc && dc->send(buf);
     } catch (const std::runtime_error&) {}
 }
@@ -1019,7 +1020,7 @@ extern "C" int NutBlast_ServerPing() {
 extern "C" int NutBlast_PlayerPing(NutBlast_ID id) {
     if (!NutBlast_IsReady() || !::players.contains(id))
         return 0;
-    return players.at(id).state->pinger.millis();
+    return players.at(id).connection->pinger.millis();
 }
 
 extern "C" void NutBlast_SleepMS(int _ms) {

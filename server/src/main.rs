@@ -688,23 +688,21 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
         let _ = ws.close(None).await;
     }
 
-    {
-        let mut state = state.freaking_lock();
-        let mut nonempty = HashSet::new();
+    let mut state = state.freaking_lock();
+    let mut nonempty = HashSet::new();
 
-        for player in state.players.values() {
-            nonempty.insert(player.lid.clone());
-        }
-
-        state.lobbies.retain(move |k, _| {
-            if nonempty.contains(k) {
-                return true;
-            } else {
-                info!("bye lober: {:?}", k);
-                return false;
-            }
-        });
+    for player in state.players.values() {
+        nonempty.insert(player.lid.clone());
     }
+
+    state.lobbies.retain(move |k, _| {
+        if nonempty.contains(k) {
+            return true;
+        } else {
+            info!("bye lober: {:?}", k);
+            return false;
+        }
+    });
 }
 
 trait ArcMutexStateExt {
