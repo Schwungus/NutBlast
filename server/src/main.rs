@@ -36,6 +36,7 @@ struct LobbyId {
 }
 
 struct Lobby {
+    master: BasicId,
     meta: HashMap<String, String>,
     capacity: usize,
     listed: bool,
@@ -189,12 +190,19 @@ enum Response {
 }
 
 impl State {
-    fn master_of(&self, lobby: &LobbyId) -> Option<BasicId> {
-        self.players
-            .iter()
-            .filter(|(_, v)| v.lid == *lobby)
-            .next()
-            .map(|(k, _)| *k)
+    fn master_of(&mut self, lid: &LobbyId) -> Option<BasicId> {
+        let empty = self.players_in(lid) == 0;
+        let lobby = self.lobbies.get_mut(lid)?;
+
+        if self.players.contains_key(&lobby.master) {
+            Some(lobby.master)
+        } else if empty {
+            None
+        } else {
+            let new = *self.players.iter().find(|(_, p)| p.lid == *lid)?.0;
+            lobby.master = new;
+            Some(new)
+        }
     }
 
     fn players_in(&self, lobby: &LobbyId) -> usize {
@@ -403,6 +411,7 @@ impl Connection {
                     info!("new lobby max={1} {:?}", lid, capacity);
 
                     let lober = Lobby {
+                        master: pid,
                         meta: lobby_meta,
                         capacity,
                         listed,
@@ -590,16 +599,17 @@ impl Connection {
                 }
             }
             Request::SetMaster { id }
-                if let Some(lid) = self.lid.clone()
+                if let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
                     && let Some(mastah) = state.master_of(&lid) =>
             {
                 if pid == mastah
                     && id != pid
-                    && let Some(guy) = state.players.get_mut(&id)
-                    && guy.lid == lid
+                    && state.players.get(&id).map(|x| &x.lid) == Some(lid)
+                    && let Some(lobby) = state.lobbies.get_mut(lid)
                 {
-                    state.send_to_lobby(&lid, &Response::MasterSet { id });
+                    lobby.master = id;
+                    state.send_to_lobby(lid, &Response::MasterSet { id });
                 }
             }
             other => {
