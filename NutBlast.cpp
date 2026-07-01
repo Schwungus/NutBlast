@@ -252,15 +252,12 @@ void Player::init(const std::weak_ptr<Player>& self) {
 
     pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
 
-    pc->onLocalDescription([id, self](const auto& local_desc) {
-        if (self.expired())
-            return;
-
+    pc->onLocalDescription([id](const auto& desc) {
         std::string type;
 
-        if (local_desc.typeString() == "offer")
+        if (desc.typeString() == "offer")
             type = "PassOffer";
-        else if (local_desc.typeString() == "answer")
+        else if (desc.typeString() == "answer")
             type = "PassAnswer";
         else
             return;
@@ -268,7 +265,7 @@ void Player::init(const std::weak_ptr<Player>& self) {
         ::ws_send({
             {"type", type},
             {"to", id},
-            {"sdp", (rtc::string)local_desc},
+            {"sdp", (rtc::string)desc},
         });
     });
 
