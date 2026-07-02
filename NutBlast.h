@@ -41,18 +41,27 @@ extern "C" {
 #endif
 
 // NOTE: make sure to sync these limits with `src/main.rs`.
+
 #define NUTBLAST_MAX_PLAYERS (16)
 #define NUTBLAST_MAX_FIELDS (16)
 #define NUTBLAST_FIELD_NAME_MAX (255)
 #define NUTBLAST_FIELD_VALUE_MAX (8191)
 
-// NOTE: same with these for any special behavior
+// NOTE: same with these for any special behavior:
+
+/// A universally agreed upon "lobby name" field.
 #define NUTBLAST_FIELD_LOBBY_NAME "NutBlast.lobby.name"
+
+/// A universally agreed upon "player name" field.
 #define NUTBLAST_FIELD_PLAYER_NAME "NutBlast.player.name"
 
+/// A unique identifier for players & lobbies.
 typedef uint64_t NutBlast_ID;
+
+/// A channel ID for discerning P2P messages. You would usually define them with an enum.
 typedef uint8_t NutBlast_ChannelID;
 
+/// A log-level passed to custom loggers (see `NutBlast_SetLogger`).
 typedef enum {
     NB_LogInfo,
     NB_LogError,
@@ -64,6 +73,7 @@ const char* NutBlast_LogLevelToString(NutBlast_LogLevel);
 /// Sets a logging callback to use by NutBlast. Set to null to reset it to the built-in default handler.
 void NutBlast_SetLogger(void (*)(NutBlast_LogLevel, const char*));
 
+/// A message from another peer.
 typedef struct {
     const char* data;
     NutBlast_ID from;
@@ -75,10 +85,12 @@ typedef struct {
     const char *name, *old_value, *new_value;
 } NutBlast_FieldDiff;
 
+/// A metadata field.
 typedef struct {
     const char *key, *value;
 } NutBlast_LobbyField;
 
+/// Lobby info from the lobby finder (see `NutBlast_FindLobbies`).
 typedef struct {
     NutBlast_ID id;
     uint8_t players, capacity;
@@ -235,8 +247,10 @@ void NutBlast_PurgeMetadata();
 /// Sets the specified player as the new master if you are the lobby's master. Silently ignored otherwise.
 void NutBlast_SetMaster(NutBlast_ID);
 
+/// Internal timing utility.
 uint64_t NutBlast_TimeNS();
 
+/// Internal cross-platform `Sleep` implementation.
 void NutBlast_SleepMS(int);
 
 #ifdef __cplusplus
