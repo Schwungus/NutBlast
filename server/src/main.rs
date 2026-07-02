@@ -686,7 +686,7 @@ impl Connection {
 async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: SocketAddr) {
     info!("conn: {}", player_addr);
 
-    let (mut ws_sender, mut ws_receiver) = match tokio_tungstenite::accept_async(stream).await {
+    let (mut sender, mut receiver) = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => {
             info!("hi {}", player_addr);
             ws.split()
@@ -706,15 +706,17 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
 
     loop {
         tokio::select! {
-            msg = ws_receiver.next() => {
-                if !conn.recv(msg, &mut ws_sender).await {
+            msg = receiver.next() => {
+                if !conn.recv(msg, &mut sender).await {
                     break;
                 }
             }
             _ = tokio::time::sleep(TICK_DELAY) => {
-                conn.flush(&mut ws_sender).await;
+                conn.flush(&mut sender).await;
             }
         }
+
+        let mut die = None;
 
         // #27. single-player lobby timeouts
         if let Some(lid) = conn.lid.clone() {
@@ -726,7 +728,9 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
             if let Some(lober) = lober {
                 if chud && let Some(start) = lober.death_timer {
                     if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
-                        break; // TODO: send an error message to the player
+                        die = Some(Response::Bye {
+                            reason: Some(String::from("Bandwidth patrol")),
+                        });
                     }
                 } else if chud {
                     lober.death_timer = Some(Instant::now());
@@ -734,6 +738,11 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
                     lober.death_timer = None;
                 }
             }
+        }
+
+        if let Some(ref resp) = die {
+            conn.send_json(&mut sender, resp).await;
+            break;
         }
     }
 
@@ -758,7 +767,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
 
     info!("bye {}", player_addr);
 
-    if let Ok(mut ws) = ws_receiver.reunite(ws_sender) {
+    if let Ok(mut ws) = receiver.reunite(sender) {
         let _ = ws.close(None).await;
     }
 
