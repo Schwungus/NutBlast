@@ -289,8 +289,15 @@ void Player::init(const std::weak_ptr<Player>& self) {
         });
 
         dc.onClosed([self, id]() {
-            if (!self.expired() && !self.lock()->virgin)
+            if (self.expired())
+                return;
+
+            const auto state = self.lock();
+
+            if (!state->virgin) {
                 fire(::on_player_left, id);
+                state->virgin = true;
+            }
         });
 
         dc.onMessage([id](const auto& variant) {
