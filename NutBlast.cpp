@@ -130,12 +130,22 @@ struct Pinger {
     }
 };
 
+struct ByeReason {
+    bool err = false;
+    std::string code = "ok", msg = "Graceful Disconnection";
+
+    ByeReason() {}
+    ByeReason(const nlohmann::json& obj) : err(obj["err"]), code(obj["code"]), msg(obj["msg"]) {}
+
+    operator NutBlast_Reason() const {
+        return {.err = err, .code = code.c_str(), .msg = msg.c_str()};
+    }
+};
+
 struct Player {
     const NutBlast_ID id;
 
-    bool virgin = true;
     Pinger pinger;
-
     Metadata meta;
 
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
@@ -187,7 +197,8 @@ struct Message {
 
 static std::string gid = "";
 static NutBlast_ID pid = 0, lid = 0;
-static std::optional<std::string> blaster, disconnection_reason;
+static std::optional<std::string> blaster;
+static ByeReason disconnection_reason;
 
 static NutBlast_ChannelID max_chan = 1;
 static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
@@ -204,10 +215,12 @@ static std::vector<nlohmann::json> ws_in, ws_out;
 
 static Metadata player_meta, lobby_meta;
 
-static void (*on_connected)() = nullptr, (*on_disconnected)(const char*) = nullptr, (*on_player_joined)(NutBlast_ID),
-            (*on_player_left)(NutBlast_ID), (*on_lobbies_found)(const NutBlast_Lobby*, size_t),
-            (*on_master_changed)(NutBlast_ID), (*on_player_meta_changed)(NutBlast_ID, NutBlast_FieldDiff),
-            (*on_lobby_meta_changed)(NutBlast_FieldDiff);
+// TODO: refactor each of these into a struct.
+static void (*on_connected)() = nullptr, (*on_disconnected)(NutBlast_Reason) = nullptr,
+            (*on_player_joined)(NutBlast_ID) = nullptr, (*on_player_left)(NutBlast_ID, NutBlast_Reason) = nullptr,
+            (*on_lobbies_found)(const NutBlast_Lobby*, size_t) = nullptr, (*on_master_changed)(NutBlast_ID) = nullptr,
+            (*on_player_meta_changed)(NutBlast_ID, NutBlast_FieldDiff) = nullptr,
+            (*on_lobby_meta_changed)(NutBlast_FieldDiff) = nullptr;
 
 template <typename... Args> static void fire(void (*cb)(Args...), const std::decay_t<Args>&... args) {
     if (cb != nullptr)
@@ -275,47 +288,21 @@ void Player::init(const std::weak_ptr<Player>& self) {
         self.lock()->outgoing_candidates.push_back(candidate);
     });
 
-    const auto setup_dc = [self, id](rtc::DataChannel& dc) {
-        dc.onOpen([self, id]() {
-            if (self.expired())
-                return;
+    const auto on_msg = [id](const auto& variant) {
+        if (!std::holds_alternative<rtc::binary>(variant))
+            return;
 
-            const auto state = self.lock();
+        auto bytes = std::get<rtc::binary>(variant);
 
-            if (state->virgin) {
-                fire(::on_player_joined, id);
-                state->virgin = false;
-            }
-        });
+        if (bytes.empty())
+            return;
 
-        dc.onClosed([self, id]() {
-            if (self.expired())
-                return;
+        const auto chan = static_cast<NutBlast_ChannelID>(bytes[0]);
 
-            const auto state = self.lock();
-
-            if (!state->virgin) {
-                fire(::on_player_left, id);
-                state->virgin = true;
-            }
-        });
-
-        dc.onMessage([id](const auto& variant) {
-            if (!std::holds_alternative<rtc::binary>(variant))
-                return;
-
-            auto bytes = std::get<rtc::binary>(variant);
-
-            if (bytes.empty())
-                return;
-
-            const auto chan = static_cast<NutBlast_ChannelID>(bytes[0]);
-
-            if (chan < ::max_chan) {
-                bytes.erase(bytes.begin());
-                recv_queues[chan].push_back({.from = id, .bytes = bytes});
-            }
-        });
+        if (chan < ::max_chan) {
+            bytes.erase(bytes.begin());
+            recv_queues[chan].push_back({.from = id, .bytes = bytes});
+        }
     };
 
     const auto on_ping = [self](const auto& msg) {
@@ -340,13 +327,17 @@ void Player::init(const std::weak_ptr<Player>& self) {
             .reliability = {.unordered = true, .maxRetransmits = 0, },
         });
 
-        setup_dc(*unreliable_dc);
+        unreliable_dc->onMessage(on_msg);
 
         reliable_dc = pc->createDataChannel("reliable", {
             .reliability = {.unordered = false, },
         });
 
-        setup_dc(*reliable_dc);
+        reliable_dc->onOpen([id]() {
+            fire(::on_player_joined, id);
+        });
+
+        reliable_dc->onMessage(on_msg);
 
         ping_dc = pc->createDataChannel("ping", {
             .reliability = {.unordered = true, .maxRetransmits = 0, },
@@ -354,7 +345,7 @@ void Player::init(const std::weak_ptr<Player>& self) {
 
         ping_dc->onMessage(on_ping);
     } else {
-        pc->onDataChannel([id, self, setup_dc, on_ping](const auto& dc) {
+        pc->onDataChannel([id, self, on_msg, on_ping](const auto& dc) {
             if (self.expired())
                 return;
 
@@ -364,12 +355,10 @@ void Player::init(const std::weak_ptr<Player>& self) {
                 const bool reliable = (dc->label() == "reliable");
 
                 (reliable ? state->reliable_dc : state->unreliable_dc) = dc;
-                setup_dc(*dc);
+                dc->onMessage(on_msg);
 
-                if (state->virgin) {
+                if (reliable)
                     fire(::on_player_joined, id);
-                    state->virgin = false;
-                }
             } else {
                 state->ping_dc = dc;
                 dc->onMessage(on_ping);
@@ -544,7 +533,7 @@ static void join_pro() {
     rtc::Preload();
 
     get_blaster();
-    ::master = 0, ::disconnection_reason = std::nullopt;
+    ::master = 0, ::disconnection_reason = ByeReason();
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
     ::ws_pinger.reset();
@@ -612,7 +601,7 @@ extern "C" void NutBlast_Disconnect() {
         recv_stuff();
 
         log(NB_LogInfo, "NutBlaster out!");
-        fire(::on_disconnected, ::disconnection_reason ? ::disconnection_reason->c_str() : nullptr);
+        fire(::on_disconnected, ::disconnection_reason);
     }
 
     if (::blaster_ws) { // `recv_stuff` could've nuked the socket so we check for null once again
@@ -869,14 +858,14 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"MasterSet",
         [](const auto& obj) {
             const auto old_master = ::master;
-            ::master = obj["id"];
+            ::master = obj["pid"];
 
             if (old_master != ::master)
                 fire(::on_master_changed, old_master);
         }},
     {"Joined",
         [](const auto& obj) {
-            const NutBlast_ID id = obj["id"];
+            const NutBlast_ID id = obj["pid"];
 
             const auto ptr = std::make_shared<Player>(id, obj["meta"]);
             ::players.insert({id, ptr});
@@ -884,8 +873,13 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
         }},
     {"Left",
         [](const auto& obj) {
-            if (::players.contains(obj["id"]))
-                ::players.erase(obj["id"]);
+            const NutBlast_ID pid = obj["pid"];
+
+            if (::players.contains(pid)) {
+                fire(::on_player_left, pid,
+                    obj.contains("reason") && !obj["reason"].is_null() ? obj["reason"] : ByeReason());
+                ::players.erase(pid);
+            }
         }},
     {"Offer", handle_offer_or_answer},
     {"Answer", handle_offer_or_answer},
@@ -959,14 +953,14 @@ extern "C" void NutBlast_Update() {
 extern "C" void NutBlast_Kick(NutBlast_ID guy) {
     ::ws_send({
         {"type", "Kick"},
-        {"id", guy},
+        {"pid", guy},
     });
 }
 
 extern "C" void NutBlast_SetMaster(NutBlast_ID guy) {
     ::ws_send({
         {"type", "SetMaster"},
-        {"id", guy},
+        {"pid", guy},
     });
 }
 
@@ -1036,9 +1030,9 @@ extern "C" bool NutBlast_IsReady() {
     }
 
 MakeCb(OnConnected, ::on_connected);
-MakeCb(OnDisconnected, ::on_disconnected, const char*);
+MakeCb(OnDisconnected, ::on_disconnected, NutBlast_Reason);
 MakeCb(OnPlayerJoined, ::on_player_joined, NutBlast_ID);
-MakeCb(OnPlayerLeft, ::on_player_left, NutBlast_ID);
+MakeCb(OnPlayerLeft, ::on_player_left, NutBlast_ID, NutBlast_Reason);
 MakeCb(OnLobbiesFound, ::on_lobbies_found, const NutBlast_Lobby*, size_t);
 MakeCb(OnMasterChanged, ::on_master_changed, NutBlast_ID);
 MakeCb(OnPlayerMetadataChanged, ::on_player_meta_changed, NutBlast_ID, NutBlast_FieldDiff);

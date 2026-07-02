@@ -122,10 +122,10 @@ enum Request {
         sdp: String,
     },
     Kick {
-        id: BasicId,
+        pid: BasicId,
     },
     SetMaster {
-        id: BasicId,
+        pid: BasicId,
     },
 }
 
@@ -137,12 +137,37 @@ struct LobbyListing {
     meta: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct Reason {
+    err: bool,
+    code: String,
+    msg: String,
+}
+
+impl Reason {
+    fn ok(code: impl Into<String>, msg: impl Into<String>) -> Self {
+        Self {
+            err: false,
+            code: code.into(),
+            msg: msg.into(),
+        }
+    }
+
+    fn err(code: impl Into<String>, msg: impl Into<String>) -> Self {
+        Self {
+            err: true,
+            code: code.into(),
+            msg: msg.into(),
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(tag = "type")]
 enum Response {
     Pong,
     Bye {
-        reason: Option<String>,
+        reason: Reason,
     },
     ListedSet {
         listed: bool,
@@ -167,14 +192,15 @@ enum Response {
         key: String,
     },
     MasterSet {
-        id: BasicId,
+        pid: BasicId,
     },
     Joined {
-        id: BasicId,
+        pid: BasicId,
         meta: HashMap<String, String>,
     },
     Left {
-        id: BasicId,
+        pid: BasicId,
+        reason: Option<Reason>,
     },
     Candidate {
         from: BasicId,
@@ -268,13 +294,7 @@ async fn main() -> eyre::Result<()> {
 enum Outcome {
     Good,
     Bye(Option<Response>),
-    Boot(String),
-}
-
-impl Outcome {
-    fn boot(s: impl Into<String>) -> Self {
-        Self::Boot(s.into())
-    }
+    Boot(Reason),
 }
 
 struct Connection {
@@ -283,6 +303,7 @@ struct Connection {
     addr: SocketAddr,
     pid: Option<BasicId>,
     lid: Option<LobbyId>,
+    bye_reason: Option<Reason>,
 }
 
 impl Connection {
@@ -296,14 +317,8 @@ impl Connection {
                 match self.handle(msg) {
                     Outcome::Good => {}
                     Outcome::Boot(reason) => {
-                        warn!("boot to the face for {}: {}", self.addr, reason);
-
-                        let fatality = Some(Response::Bye {
-                            reason: Some(reason),
-                        });
-
-                        self.finalize(sender, fatality).await;
-
+                        warn!("boot to the face for {}: {}", self.addr, reason.code);
+                        self.finalize(sender, Some(Response::Bye { reason })).await;
                         return false;
                     }
                     Outcome::Bye(fatality) => {
@@ -363,7 +378,9 @@ impl Connection {
         let json = match msg {
             Message::Text(text) => text.to_string(),
             Message::Close(_) => return Outcome::Bye(None),
-            Message::Binary(_) => return Outcome::boot("Binary messages not supported"),
+            Message::Binary(_) => {
+                return Outcome::Boot(Reason::err("clanker", "Binary messages not supported"));
+            }
             _ => return Outcome::Good,
         };
 
@@ -371,7 +388,7 @@ impl Connection {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", self.addr, err);
-                return Outcome::boot("Bad JSON");
+                return Outcome::Boot(Reason::err("json", "Bad JSON"));
             }
         };
 
@@ -406,8 +423,15 @@ impl Connection {
                 self.lid = Some(lid.clone());
 
                 match (mode, state.lobbies.contains_key(&lid)) {
-                    (ConnectionMode::Host, true) => return Outcome::boot("Lobby already exists"),
-                    (ConnectionMode::Join, false) => return Outcome::boot("Lobby not found"),
+                    (ConnectionMode::Host, true) => {
+                        return Outcome::Boot(Reason::err(
+                            "host.lobby_exists",
+                            "Lobby already exists",
+                        ));
+                    }
+                    (ConnectionMode::Join, false) => {
+                        return Outcome::Boot(Reason::err("join.no_such_lobby", "Lobby not found"));
+                    }
                     _ => {}
                 }
 
@@ -432,7 +456,7 @@ impl Connection {
                 if let Some(Lobby { capacity, .. }) = state.lobbies.get(&lid)
                     && state.players_in(&lid) >= *capacity
                 {
-                    return Outcome::boot("Lobby is full");
+                    return Outcome::Boot(Reason::err("join.full", "Lobby is full"));
                 }
 
                 let p = Player {
@@ -468,19 +492,19 @@ impl Connection {
 
                     for (&other, meta) in &pmeta {
                         player.send(&Response::Joined {
-                            id: other,
+                            pid: other,
                             meta: meta.clone(),
                         });
                     }
 
                     if let Some(mastah) = mastah {
-                        player.send(&Response::MasterSet { id: mastah });
+                        player.send(&Response::MasterSet { pid: mastah });
                     }
                 }
 
                 for other in pmeta.keys() {
                     let resp = Response::Joined {
-                        id: pid,
+                        pid,
                         meta: player_meta.clone(),
                     };
 
@@ -591,7 +615,7 @@ impl Connection {
                     state.send_to_lobby(lid, &Response::LobbyMetaErased { key });
                 }
             }
-            Request::Kick { id }
+            Request::Kick { pid: id }
                 if let Some(lid) = self.lid.clone()
                     && let Some(pid) = self.pid
                     && let Some(mastah) = state.master_of(&lid) =>
@@ -601,11 +625,12 @@ impl Connection {
                     && let Some(guy) = state.players.get_mut(&id)
                     && guy.lid == lid
                 {
-                    let reason = Some(String::from("Kicked by lobby's master"));
-                    guy.send(&Response::Bye { reason });
+                    guy.send(&Response::Bye {
+                        reason: Reason::ok("kick", "Kicked by lobby's master"),
+                    });
                 }
             }
-            Request::SetMaster { id }
+            Request::SetMaster { pid: id }
                 if let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
                     && let Some(mastah) = state.master_of(&lid) =>
@@ -616,12 +641,12 @@ impl Connection {
                     && let Some(lobby) = state.lobbies.get_mut(lid)
                 {
                     lobby.master = id;
-                    state.send_to_lobby(lid, &Response::MasterSet { id });
+                    state.send_to_lobby(lid, &Response::MasterSet { pid: id });
                 }
             }
             other => {
                 warn!("bad: {:?}", other);
-                return Outcome::boot("Bad payload");
+                return Outcome::Boot(Reason::err("bad_payload", "Bad payload"));
             }
         };
 
@@ -633,6 +658,10 @@ impl Connection {
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
         value: &Response,
     ) -> bool {
+        if let Response::Bye { reason } = value {
+            self.bye_reason = Some(reason.clone());
+        }
+
         let s = match serde_json::to_string(value) {
             Ok(ok) => ok,
             Err(err) => {
@@ -706,6 +735,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
         addr: player_addr,
         pid: None,
         lid: None,
+        bye_reason: None,
     };
 
     loop {
@@ -719,7 +749,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
 
                 if conn.load >= 1.0 {
                     warn!("CALM DOWN, {}", player_addr);
-                    die = Some(String::from("Too many payloads"));
+                    die = Some(Reason::err("rate_limit", "Too many payloads"));
                 } else if !conn.recv(msg, &mut sender).await {
                     break;
                 }
@@ -742,7 +772,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
             if let Some(lober) = lober {
                 if chud && let Some(start) = lober.death_timer {
                     if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
-                        die = Some(String::from("Inactive lobby"));
+                        die = Some(Reason::ok("inactive_lobby", "Inactive lobby"));
                     }
                 } else if chud {
                     lober.death_timer = Some(Instant::now());
@@ -752,8 +782,8 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
             }
         }
 
-        if die.is_some() {
-            let resp = Response::Bye { reason: die };
+        if let Some(reason) = die {
+            let resp = Response::Bye { reason };
             conn.send_json(&mut sender, &resp).await;
             break;
         }
@@ -765,10 +795,15 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
         let mut state = state.freaking_lock();
         state.players.shift_remove(&pid);
 
-        state.send_to_lobby(lid, &Response::Left { id: pid });
+        let left = Response::Left {
+            pid,
+            reason: conn.bye_reason,
+        };
+
+        state.send_to_lobby(lid, &left);
 
         if let Some(mastah) = state.master_of(lid) {
-            state.send_to_lobby(lid, &Response::MasterSet { id: mastah });
+            state.send_to_lobby(lid, &Response::MasterSet { pid: mastah });
         }
     }
 

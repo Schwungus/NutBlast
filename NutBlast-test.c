@@ -93,8 +93,8 @@ static void on_player_joined(NutBlast_ID id) {
     TinyMapPut(&players, id, &p, sizeof(p));
 }
 
-static void on_player_left(NutBlast_ID id) {
-    TraceLog(LOG_INFO, "Bye, %s!", NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME));
+static void on_player_left(NutBlast_ID id, NutBlast_Reason reason) {
+    TraceLog(LOG_INFO, "Bye, %s! (%s)", NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME), reason.code);
     TinyMapErase(&players, id);
 }
 
@@ -211,9 +211,8 @@ static void recv_stuff() {
         TraceLog(LOG_INFO, "chat <%s> %s", NutBlast_GetPlayerField(msg.from, NUTBLAST_FIELD_PLAYER_NAME), msg.data);
 }
 
-static void on_disconnected(const char* reason) {
-    if (reason)
-        TraceLog(LOG_ERROR, "%s", reason);
+static void on_disconnected(NutBlast_Reason reason) {
+    TraceLog(reason.err ? LOG_ERROR : LOG_INFO, "%s (%s)", reason.msg, reason.code);
     reset();
 }
 

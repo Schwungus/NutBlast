@@ -70,6 +70,7 @@ typedef struct {
     size_t size;
 } NutBlast_Message;
 
+/// A diff of a metadata field.
 typedef struct {
     const char *name, *old_value, *new_value;
 } NutBlast_FieldDiff;
@@ -84,6 +85,12 @@ typedef struct {
     const NutBlast_LobbyField* metadata;
     size_t field_count;
 } NutBlast_Lobby;
+
+/// A kick/leave reason for a player.
+typedef struct {
+    bool err;
+    const char *code, *msg;
+} NutBlast_Reason;
 
 /// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.
 void NutBlast_Cleanup();
@@ -109,15 +116,13 @@ void NutBlast_SetMaxChannels(NutBlast_ChannelID);
 void NutBlast_OnConnected(void (*)());
 
 /// Registers a callback to fire when you are disconnected from the NutBlaster.
-///
-/// Receives a disconnection reason, or null upon a graceful disconnection.
-void NutBlast_OnDisconnected(void (*)(const char*));
+void NutBlast_OnDisconnected(void (*)(NutBlast_Reason));
 
 /// Registers a callback to fire whenever a new player connects to your machine.
 void NutBlast_OnPlayerJoined(void (*)(NutBlast_ID));
 
 /// Registers a callback to fire whenever a player disconnects from your machine.
-void NutBlast_OnPlayerLeft(void (*)(NutBlast_ID));
+void NutBlast_OnPlayerLeft(void (*)(NutBlast_ID, NutBlast_Reason));
 
 /// Registers a callback to fire whenever `NutBlast_FindLobbies` receives a list of lobbies.
 void NutBlast_OnLobbiesFound(void (*)(const NutBlast_Lobby*, size_t));
