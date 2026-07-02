@@ -5,7 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::{Arc, Mutex, MutexGuard},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use color_eyre::eyre;
@@ -25,7 +25,9 @@ const MAX_FIELDS: usize = 16;
 const FIELD_NAME_MAX: usize = 255;
 const FIELD_VALUE_MAX: usize = 8191;
 const MAX_LOBBIES_IN_LIST: usize = 100;
+
 const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
+const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(10);
 
 type BasicId = u64;
 
@@ -40,6 +42,7 @@ struct Lobby {
     meta: HashMap<String, String>,
     capacity: usize,
     listed: bool,
+    death_timer: Option<Instant>,
 }
 
 struct Player {
@@ -415,6 +418,7 @@ impl Connection {
                         meta: lobby_meta,
                         capacity,
                         listed,
+                        death_timer: None,
                     };
 
                     state.lobbies.insert(lid.clone(), lober);
@@ -708,7 +712,27 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
                 }
             }
             _ = tokio::time::sleep(TICK_DELAY) => {
-                conn.flush( &mut ws_sender).await;
+                conn.flush(&mut ws_sender).await;
+            }
+        }
+
+        // #27. single-player lobby timeouts
+        if let Some(lid) = conn.lid.clone() {
+            let mut state = state.freaking_lock();
+
+            let chud = state.players_in(&lid) == 1;
+            let lober = state.lobbies.get_mut(&lid);
+
+            if let Some(lober) = lober {
+                if chud && let Some(start) = lober.death_timer {
+                    if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
+                        break; // TODO: send an error message to the player
+                    }
+                } else if chud {
+                    lober.death_timer = Some(Instant::now());
+                } else {
+                    lober.death_timer = None;
+                }
             }
         }
     }
