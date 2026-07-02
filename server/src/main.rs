@@ -379,7 +379,10 @@ impl Connection {
             Message::Text(text) => text.to_string(),
             Message::Close(_) => return Outcome::Bye(None),
             Message::Binary(_) => {
-                return Outcome::Boot(Reason::err("clanker", "Binary messages not supported"));
+                return Outcome::Boot(Reason::err(
+                    "binary_unsupported",
+                    "Binary messages not supported",
+                ));
             }
             _ => return Outcome::Good,
         };
@@ -388,7 +391,7 @@ impl Connection {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", self.addr, err);
-                return Outcome::Boot(Reason::err("json", "Bad JSON"));
+                return Outcome::Boot(Reason::err("bad_json", "JSON parse error"));
             }
         };
 
@@ -424,13 +427,10 @@ impl Connection {
 
                 match (mode, state.lobbies.contains_key(&lid)) {
                     (ConnectionMode::Host, true) => {
-                        return Outcome::Boot(Reason::err(
-                            "host.lobby_exists",
-                            "Lobby already exists",
-                        ));
+                        return Outcome::Boot(Reason::err("lobby_exists", "Lobby already exists"));
                     }
                     (ConnectionMode::Join, false) => {
-                        return Outcome::Boot(Reason::err("join.no_such_lobby", "Lobby not found"));
+                        return Outcome::Boot(Reason::err("lobby_not_found", "Lobby not found"));
                     }
                     _ => {}
                 }
@@ -456,7 +456,7 @@ impl Connection {
                 if let Some(Lobby { capacity, .. }) = state.lobbies.get(&lid)
                     && state.players_in(&lid) >= *capacity
                 {
-                    return Outcome::Boot(Reason::err("join.full", "Lobby is full"));
+                    return Outcome::Boot(Reason::err("lobby_full", "Lobby is full"));
                 }
 
                 let p = Player {
@@ -646,7 +646,7 @@ impl Connection {
             }
             other => {
                 warn!("bad: {:?}", other);
-                return Outcome::Boot(Reason::err("bad_payload", "Bad payload"));
+                return Outcome::Boot(Reason::err("bad_payload", "Invalid payload"));
             }
         };
 
@@ -749,7 +749,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
 
                 if conn.load >= 1.0 {
                     warn!("CALM DOWN, {}", player_addr);
-                    die = Some(Reason::err("rate_limit", "Too many payloads"));
+                    die = Some(Reason::err("rate_limited", "Too many payloads"));
                 } else if !conn.recv(msg, &mut sender).await {
                     break;
                 }
