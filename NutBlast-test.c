@@ -189,6 +189,12 @@ static void maybe_kick() {
     }
 }
 
+static void maybe_spam() {
+    if (IsKeyPressed(KEY_P))
+        for (int i = 0; i < 100; i++)
+            NutBlast_SetPlayerField("ninja", "tone5");
+}
+
 static void recv_stuff() {
     NutBlast_Message msg = {0};
 
@@ -269,6 +275,7 @@ int main(int argc, char* argv[]) {
         send_our_position();
         maybe_chat();
         maybe_kick();
+        maybe_spam();
         NutBlast_Update();
         recv_stuff();
 

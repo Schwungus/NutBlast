@@ -26,6 +26,8 @@ const FIELD_NAME_MAX: usize = 255;
 const FIELD_VALUE_MAX: usize = 8191;
 const MAX_LOBBIES_IN_LIST: usize = 100;
 
+const PAYLOADS_PER_SEC: f32 = 30.0;
+
 const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(10);
 
@@ -276,6 +278,7 @@ impl Outcome {
 }
 
 struct Connection {
+    load: f32,
     state: Arc<Mutex<State>>,
     addr: SocketAddr,
     pid: Option<BasicId>,
@@ -698,6 +701,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
     };
 
     let mut conn = Connection {
+        load: 0.0,
         state: state.clone(),
         addr: player_addr,
         pid: None,
@@ -705,9 +709,18 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
     };
 
     loop {
+        let start = Instant::now();
+        let mut die = None;
+
         tokio::select! {
             msg = receiver.next() => {
-                if !conn.recv(msg, &mut sender).await {
+                // #28. rate-limiting
+                conn.load += 1.0 / PAYLOADS_PER_SEC;
+
+                if conn.load >= 1.0 {
+                    warn!("CALM DOWN, {}", player_addr);
+                    die = Some(String::from("Bandwidth patrol"));
+                } else if !conn.recv(msg, &mut sender).await {
                     break;
                 }
             }
@@ -716,7 +729,8 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
             }
         }
 
-        let mut die = None;
+        let reimburse = Instant::now().duration_since(start).as_secs_f32();
+        conn.load = (conn.load - reimburse).max(0.0);
 
         // #27. single-player lobby timeouts
         if let Some(lid) = conn.lid.clone() {
@@ -728,9 +742,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
             if let Some(lober) = lober {
                 if chud && let Some(start) = lober.death_timer {
                     if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
-                        die = Some(Response::Bye {
-                            reason: Some(String::from("Bandwidth patrol")),
-                        });
+                        die = Some(String::from("Bandwidth patrol"));
                     }
                 } else if chud {
                     lober.death_timer = Some(Instant::now());
@@ -740,8 +752,9 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
             }
         }
 
-        if let Some(ref resp) = die {
-            conn.send_json(&mut sender, resp).await;
+        if die.is_some() {
+            let resp = Response::Bye { reason: die };
+            conn.send_json(&mut sender, &resp).await;
             break;
         }
     }
