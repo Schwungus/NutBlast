@@ -765,16 +765,10 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
         let mut state = state.freaking_lock();
         state.players.shift_remove(&pid);
 
-        let mastah = state.master_of(lid);
+        state.send_to_lobby(lid, &Response::Left { id: pid });
 
-        for (&other, player) in &mut state.players {
-            if player.lid == *lid && other != pid {
-                player.send(&Response::Left { id: pid });
-
-                if let Some(mastah) = mastah {
-                    player.send(&Response::MasterSet { id: mastah })
-                };
-            }
+        if let Some(mastah) = state.master_of(lid) {
+            state.send_to_lobby(lid, &Response::MasterSet { id: mastah });
         }
     }
 
