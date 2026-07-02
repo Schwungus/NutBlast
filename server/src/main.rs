@@ -719,7 +719,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
 
                 if conn.load >= 1.0 {
                     warn!("CALM DOWN, {}", player_addr);
-                    die = Some(String::from("Bandwidth patrol"));
+                    die = Some(String::from("Too many payloads"));
                 } else if !conn.recv(msg, &mut sender).await {
                     break;
                 }
@@ -742,7 +742,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
             if let Some(lober) = lober {
                 if chud && let Some(start) = lober.death_timer {
                     if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
-                        die = Some(String::from("Bandwidth patrol"));
+                        die = Some(String::from("Inactive lobby"));
                     }
                 } else if chud {
                     lober.death_timer = Some(Instant::now());
