@@ -47,13 +47,43 @@ extern "C" {
 #define NUTBLAST_FIELD_NAME_MAX (255)
 #define NUTBLAST_FIELD_VALUE_MAX (8191)
 
-// NOTE: same with these for any special behavior:
+// NOTE: same with these field and error macros for any special behavior:
 
 /// A universally agreed upon "lobby name" field.
 #define NUTBLAST_FIELD_LOBBY_NAME "NutBlast.lobby.name"
 
 /// A universally agreed upon "player name" field.
 #define NUTBLAST_FIELD_PLAYER_NAME "NutBlast.player.name"
+
+/// No error (i.e. graceful disconnect).
+#define NUTBLAST_ERROR_OK "ok"
+
+/// Sent a binary message to NutBlaster.
+#define NUTBLAST_ERROR_BINARY_UNSUPPORTED "binary_unsupported"
+
+/// Sent an invalid JSON to NutBlaster.
+#define NUTBLAST_ERROR_BAD_JSON "bad_json"
+
+/// Sent an unknown, invalid or inappropriate payload to NutBlaster.
+#define NUTBLAST_ERROR_BAD_PAYLOAD "bad_payload"
+
+/// Sent too many payloads to NutBlaster.
+#define NUTBLAST_ERROR_RATE_LIMITED "rate_limited"
+
+/// Attempted to host a lobby with an occupied ID.
+#define NUTBLAST_ERROR_LOBBY_EXISTS "lobby_exists"
+
+/// Attempted to join a lobby with a non-existant ID.
+#define NUTBLAST_ERROR_LOBBY_NOT_FOUND "lobby_not_found"
+
+/// Attempted to join a full lobby.
+#define NUTBLAST_ERROR_LOBBY_FULL "lobby_full"
+
+/// Kicked by the lobby's master.
+#define NUTBLAST_ERROR_KICK "kick"
+
+/// Stayed in an empty lobby too long.
+#define NUTBLAST_ERROR_INACTIVE_LOBBY "inactive_lobby"
 
 /// A unique identifier for players & lobbies.
 typedef uint64_t NutBlast_ID;
