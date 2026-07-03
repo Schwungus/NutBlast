@@ -1,25 +1,11 @@
 cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
 
-set(CMAKE_EXPERIMENTAL_CXX_MODULE_DYNDEP 0)
-set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
-
 project(NutBlast
     VERSION 0.1.0
     LANGUAGES C CXX)
 
 option(NUTBLAST_BUILD_TEST "Build a NutBlast test binary?" OFF)
 option(NUTBLAST_DEV_LOCALHOST "Connect to ws://localhost:36900 by default?" OFF)
-
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS ON)
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS ON)
-
-set(BUILD_SHARED_LIBS OFF)
-set(BUILD_STATIC_LIBS ON)
 
 set(CMAKE_COMPILE_WARNING_AS_ERROR OFF) # libjuice won't build otherwise, damn it
 
@@ -36,7 +22,7 @@ add_library(NutBlast
     ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast.h)
 target_include_directories(NutBlast
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-set_target_properties(NutBlast PROPERTIES LINKER_LANGUAGE CXX)
+target_compile_features(NutBlast PUBLIC c_std_11 cxx_std_23)
 
 if(NUTBLAST_DEV_LOCALHOST)
     target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST)
