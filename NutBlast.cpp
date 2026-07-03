@@ -766,17 +766,17 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
             ::disconnection_reason = obj["reason"];
             NutBlast_Disconnect();
         }},
-    {"ListedSet",
+    {"SetListed",
         [](const auto& obj) {
             ::hosting_listed_lobby = obj["listed"];
         }},
-    {"CapacitySet",
+    {"SetCapacity",
         [](const auto& obj) {
             ::max_players = obj["capacity"];
         }},
-    {"PlayerMetaSet",
+    {"SetPlayerMeta",
         [](const auto& obj) {
-            const NutBlast_ID pid = obj["player"];
+            const NutBlast_ID pid = obj["pid"];
 
             if (!::players.contains(pid))
                 return;
@@ -800,9 +800,9 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
                 fire(::on_player_meta_changed, pid, diff);
             }
         }},
-    {"PlayerMetaErased",
+    {"ErasePlayerMeta",
         [](const auto& obj) {
-            const NutBlast_ID pid = obj["player"];
+            const NutBlast_ID pid = obj["pid"];
 
             if (!::players.contains(pid))
                 return;
@@ -821,7 +821,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
             fire(::on_player_meta_changed, pid, diff);
             meta.erase(key);
         }},
-    {"LobbyMetaSet",
+    {"SetLobbyMeta",
         [](const auto& obj) {
             const std::string key = obj["key"], new_value = obj["value"];
             std::optional<std::string> old_value;
@@ -840,7 +840,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
                 fire(::on_lobby_meta_changed, diff);
             }
         }},
-    {"LobbyMetaErased",
+    {"EraseLobbyMeta",
         [](const auto& obj) {
             const std::string key = obj["key"];
 
@@ -855,7 +855,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
             fire(::on_lobby_meta_changed, diff);
             ::lobby_meta.erase(key);
         }},
-    {"MasterSet",
+    {"SetMaster",
         [](const auto& obj) {
             const auto old_master = ::master;
             ::master = obj["pid"];

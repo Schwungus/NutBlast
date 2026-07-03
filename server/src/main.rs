@@ -50,18 +50,51 @@ struct Lobby {
 struct Player {
     lid: LobbyId,
     meta: HashMap<String, String>,
-    queue: Vec<Response>,
+    queue: Vec<ServerMessage>,
 }
 
 impl Player {
-    fn send(&mut self, response: &Response) {
-        self.queue.push(response.clone());
+    fn send(&mut self, msg: &ServerMessage) {
+        self.queue.push(msg.clone());
     }
 }
 
 struct State {
     lobbies: HashMap<LobbyId, Lobby>,
     players: IndexMap<BasicId, Player>,
+}
+
+#[derive(Clone, Serialize)]
+struct LobbyListing {
+    lid: BasicId,
+    players: usize,
+    max: usize,
+    meta: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Reason {
+    err: bool,
+    code: String,
+    msg: String,
+}
+
+impl Reason {
+    fn ok(code: impl Into<String>, msg: impl Into<String>) -> Self {
+        Self {
+            err: false,
+            code: code.into(),
+            msg: msg.into(),
+        }
+    }
+
+    fn err(code: impl Into<String>, msg: impl Into<String>) -> Self {
+        Self {
+            err: true,
+            code: code.into(),
+            msg: msg.into(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,7 +105,7 @@ enum ConnectionMode {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
-enum Request {
+enum ClientMessage {
     Ping,
     List {
         gid: String,
@@ -130,68 +163,35 @@ enum Request {
 }
 
 #[derive(Clone, Serialize)]
-struct LobbyListing {
-    lid: BasicId,
-    players: usize,
-    max: usize,
-    meta: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct Reason {
-    err: bool,
-    code: String,
-    msg: String,
-}
-
-impl Reason {
-    fn ok(code: impl Into<String>, msg: impl Into<String>) -> Self {
-        Self {
-            err: false,
-            code: code.into(),
-            msg: msg.into(),
-        }
-    }
-
-    fn err(code: impl Into<String>, msg: impl Into<String>) -> Self {
-        Self {
-            err: true,
-            code: code.into(),
-            msg: msg.into(),
-        }
-    }
-}
-
-#[derive(Clone, Serialize)]
 #[serde(tag = "type")]
-enum Response {
+enum ServerMessage {
     Pong,
     Bye {
         reason: Reason,
     },
-    ListedSet {
+    SetListed {
         listed: bool,
     },
-    CapacitySet {
+    SetCapacity {
         capacity: usize,
     },
-    PlayerMetaSet {
-        player: BasicId,
+    SetPlayerMeta {
+        pid: BasicId,
         key: String,
         value: String,
     },
-    PlayerMetaErased {
-        player: BasicId,
+    ErasePlayerMeta {
+        pid: BasicId,
         key: String,
     },
-    LobbyMetaSet {
+    SetLobbyMeta {
         key: String,
         value: String,
     },
-    LobbyMetaErased {
+    EraseLobbyMeta {
         key: String,
     },
-    MasterSet {
+    SetMaster {
         pid: BasicId,
     },
     Joined {
@@ -248,16 +248,16 @@ impl State {
         counter
     }
 
-    fn send_to(&mut self, pid: &BasicId, resp: &Response) {
+    fn send_to(&mut self, pid: &BasicId, msg: &ServerMessage) {
         if let Some(player) = self.players.get_mut(pid) {
-            player.send(resp);
+            player.send(msg);
         }
     }
 
-    fn send_to_lobby(&mut self, lid: &LobbyId, response: &Response) {
+    fn send_to_lobby(&mut self, lid: &LobbyId, msg: &ServerMessage) {
         for (_, player) in &mut self.players {
             if player.lid == *lid {
-                player.send(&response);
+                player.send(&msg);
             }
         }
     }
@@ -293,7 +293,7 @@ async fn main() -> eyre::Result<()> {
 
 enum Outcome {
     Good,
-    Bye(Option<Response>),
+    Bye(Option<ServerMessage>),
     Boot(Reason),
 }
 
@@ -318,7 +318,8 @@ impl Connection {
                     Outcome::Good => {}
                     Outcome::Boot(reason) => {
                         warn!("boot to the face for {}: {}", self.addr, reason.code);
-                        self.finalize(sender, Some(Response::Bye { reason })).await;
+                        let bye = Some(ServerMessage::Bye { reason });
+                        self.finalize(sender, bye).await;
                         return false;
                     }
                     Outcome::Bye(fatality) => {
@@ -398,17 +399,17 @@ impl Connection {
         let mut state = self.state.freaking_lock();
 
         match request {
-            Request::Ping => {
+            ClientMessage::Ping => {
                 if let Some(ref pid) = self.pid {
-                    state.send_to(pid, &Response::Pong);
+                    state.send_to(pid, &ServerMessage::Pong);
                 }
             }
-            Request::List { gid, limit } => {
-                return Outcome::Bye(Some(Response::List {
+            ClientMessage::List { gid, limit } => {
+                return Outcome::Bye(Some(ServerMessage::List {
                     list: self.list_lobbies(state, &gid, limit),
                 }));
             }
-            Request::Connect {
+            ClientMessage::Connect {
                 mode,
                 pid,
                 lid,
@@ -483,54 +484,54 @@ impl Connection {
                     .collect();
 
                 if let Some(player) = state.players.get_mut(&pid) {
-                    player.send(&Response::ListedSet { listed });
-                    player.send(&Response::CapacitySet { capacity });
+                    player.send(&ServerMessage::SetListed { listed });
+                    player.send(&ServerMessage::SetCapacity { capacity });
 
                     for (key, value) in meta {
-                        player.send(&Response::LobbyMetaSet { key, value });
+                        player.send(&ServerMessage::SetLobbyMeta { key, value });
                     }
 
                     for (&other, meta) in &pmeta {
-                        player.send(&Response::Joined {
+                        player.send(&ServerMessage::Joined {
                             pid: other,
                             meta: meta.clone(),
                         });
                     }
 
                     if let Some(mastah) = mastah {
-                        player.send(&Response::MasterSet { pid: mastah });
+                        player.send(&ServerMessage::SetMaster { pid: mastah });
                     }
                 }
 
                 for other in pmeta.keys() {
-                    let resp = Response::Joined {
+                    let msg = ServerMessage::Joined {
                         pid,
                         meta: player_meta.clone(),
                     };
 
-                    state.send_to(other, &resp);
+                    state.send_to(other, &msg);
                 }
             }
-            Request::PassCandidate {
+            ClientMessage::PassCandidate {
                 ref to,
                 candidate,
                 mid,
             } if let Some(from) = self.pid => {
-                let resp = Response::Candidate {
+                let msg = ServerMessage::Candidate {
                     from,
                     candidate,
                     mid,
                 };
 
-                state.send_to(to, &resp);
+                state.send_to(to, &msg);
             }
-            Request::PassOffer { ref to, sdp } if let Some(from) = self.pid => {
-                state.send_to(to, &Response::Offer { from, sdp });
+            ClientMessage::PassOffer { ref to, sdp } if let Some(from) = self.pid => {
+                state.send_to(to, &ServerMessage::Offer { from, sdp });
             }
-            Request::PassAnswer { ref to, sdp } if let Some(from) = self.pid => {
-                state.send_to(to, &Response::Answer { from, sdp });
+            ClientMessage::PassAnswer { ref to, sdp } if let Some(from) = self.pid => {
+                state.send_to(to, &ServerMessage::Answer { from, sdp });
             }
-            Request::SetListed { listed }
+            ClientMessage::SetListed { listed }
                 if let Some(pid) = self.pid
                     && let Some(ref lid) = self.lid =>
             {
@@ -538,10 +539,10 @@ impl Connection {
                     && let Some(lober) = state.lobbies.get_mut(lid)
                 {
                     lober.listed = listed;
-                    state.send_to_lobby(lid, &Response::ListedSet { listed });
+                    state.send_to_lobby(lid, &ServerMessage::SetListed { listed });
                 }
             }
-            Request::SetCapacity { capacity }
+            ClientMessage::SetCapacity { capacity }
                 if let Some(pid) = self.pid
                     && let Some(ref lid) = self.lid =>
             {
@@ -549,11 +550,11 @@ impl Connection {
                     && let Some(lober) = state.lobbies.get_mut(lid)
                 {
                     lober.capacity = capacity;
-                    state.send_to_lobby(lid, &Response::CapacitySet { capacity });
+                    state.send_to_lobby(lid, &ServerMessage::SetCapacity { capacity });
                 }
             }
             // ok to boot since the size limits are enforced client-side
-            Request::SetPlayerMeta { key, value }
+            ClientMessage::SetPlayerMeta { key, value }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && (0..=FIELD_VALUE_MAX).contains(&value.len())
                     && let Some(ref lid) = self.lid
@@ -563,16 +564,16 @@ impl Connection {
                 if player.meta.contains_key(&key) || player.meta.len() < MAX_FIELDS {
                     player.meta.insert(key.to_string(), value.to_string());
 
-                    let resp = Response::PlayerMetaSet {
-                        player: pid,
+                    let msg = ServerMessage::SetPlayerMeta {
+                        pid,
                         key: key.to_string(),
                         value: value.to_string(),
                     };
 
-                    state.send_to_lobby(lid, &resp);
+                    state.send_to_lobby(lid, &msg);
                 }
             }
-            Request::ErasePlayerMeta { key }
+            ClientMessage::ErasePlayerMeta { key }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
@@ -580,11 +581,11 @@ impl Connection {
             {
                 if player.meta.contains_key(&key) {
                     player.meta.remove(&key);
-                    state.send_to_lobby(lid, &Response::PlayerMetaErased { player: pid, key });
+                    state.send_to_lobby(lid, &ServerMessage::ErasePlayerMeta { pid, key });
                 }
             }
             // ok to boot since the size limits are enforced client-side
-            Request::SetLobbyMeta { key, value }
+            ClientMessage::SetLobbyMeta { key, value }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && (0..=FIELD_VALUE_MAX).contains(&value.len())
                     && let Some(ref lid) = self.lid
@@ -596,15 +597,15 @@ impl Connection {
                 {
                     lober.meta.insert(key.to_string(), value.to_string());
 
-                    let resp = Response::LobbyMetaSet {
+                    let msg = ServerMessage::SetLobbyMeta {
                         key: key.to_string(),
                         value: value.to_string(),
                     };
 
-                    state.send_to_lobby(lid, &resp);
+                    state.send_to_lobby(lid, &msg);
                 }
             }
-            Request::EraseLobbyMeta { key }
+            ClientMessage::EraseLobbyMeta { key }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && let Some(ref lid) = self.lid
                     && let master = state.master_of(&lid)
@@ -612,10 +613,10 @@ impl Connection {
             {
                 if master == self.pid && lober.meta.contains_key(&key) {
                     lober.meta.remove(&key);
-                    state.send_to_lobby(lid, &Response::LobbyMetaErased { key });
+                    state.send_to_lobby(lid, &ServerMessage::EraseLobbyMeta { key });
                 }
             }
-            Request::Kick { pid: id }
+            ClientMessage::Kick { pid: id }
                 if let Some(lid) = self.lid.clone()
                     && let Some(pid) = self.pid
                     && let Some(mastah) = state.master_of(&lid) =>
@@ -625,12 +626,12 @@ impl Connection {
                     && let Some(guy) = state.players.get_mut(&id)
                     && guy.lid == lid
                 {
-                    guy.send(&Response::Bye {
+                    guy.send(&ServerMessage::Bye {
                         reason: Reason::ok("kick", "Kicked by lobby's master"),
                     });
                 }
             }
-            Request::SetMaster { pid: id }
+            ClientMessage::SetMaster { pid: id }
                 if let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
                     && let Some(mastah) = state.master_of(&lid) =>
@@ -641,7 +642,7 @@ impl Connection {
                     && let Some(lobby) = state.lobbies.get_mut(lid)
                 {
                     lobby.master = id;
-                    state.send_to_lobby(lid, &Response::MasterSet { pid: id });
+                    state.send_to_lobby(lid, &ServerMessage::SetMaster { pid: id });
                 }
             }
             other => {
@@ -656,9 +657,9 @@ impl Connection {
     async fn send_json(
         &mut self,
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-        value: &Response,
+        value: &ServerMessage,
     ) -> bool {
-        if let Response::Bye { reason } = value {
+        if let ServerMessage::Bye { reason } = value {
             self.bye_reason = Some(reason.clone());
         }
 
@@ -693,10 +694,10 @@ impl Connection {
             })
         };
 
-        for resp in queue.unwrap_or_default() {
-            self.send_json(sender, &resp).await;
+        for msg in queue.unwrap_or_default() {
+            self.send_json(sender, &msg).await;
 
-            if let Response::Bye { .. } = resp {
+            if let ServerMessage::Bye { .. } = msg {
                 break;
             }
         }
@@ -705,7 +706,7 @@ impl Connection {
     async fn finalize(
         &mut self,
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-        fatality: Option<Response>,
+        fatality: Option<ServerMessage>,
     ) {
         let _ = self.flush(sender).await;
 
@@ -783,8 +784,8 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
         }
 
         if let Some(reason) = die {
-            let resp = Response::Bye { reason };
-            conn.send_json(&mut sender, &resp).await;
+            let msg = ServerMessage::Bye { reason };
+            conn.send_json(&mut sender, &msg).await;
             break;
         }
     }
@@ -795,7 +796,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
         let mut state = state.freaking_lock();
         state.players.shift_remove(&pid);
 
-        let left = Response::Left {
+        let left = ServerMessage::Left {
             pid,
             reason: conn.bye_reason,
         };
@@ -803,7 +804,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
         state.send_to_lobby(lid, &left);
 
         if let Some(mastah) = state.master_of(lid) {
-            state.send_to_lobby(lid, &Response::MasterSet { pid: mastah });
+            state.send_to_lobby(lid, &ServerMessage::SetMaster { pid: mastah });
         }
     }
 
