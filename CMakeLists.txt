@@ -22,7 +22,7 @@ add_library(NutBlast
     ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast.h)
 target_include_directories(NutBlast
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(NutBlast PUBLIC c_std_11 cxx_std_23)
+target_compile_features(NutBlast PRIVATE c_std_11 cxx_std_23)
 
 if(NUTBLAST_DEV_LOCALHOST)
     target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST)
@@ -52,8 +52,8 @@ set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/mbedtls.h CACHE INTERNA
 
 if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     FetchContent_Declare(datachannel-wasm
-        GIT_REPOSITORY https://github.com/paullouisageneau/datachannel-wasm.git
-        GIT_TAG v0.4.0
+        GIT_REPOSITORY https://github.com/Schwungus/datachannel-wasm.git
+        GIT_TAG f4bbcbca2145b86127c93506479bc6884d343b6f
         EXCLUDE_FROM_ALL)
 
     list(APPEND LIBS datachannel-wasm)
