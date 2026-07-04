@@ -78,7 +78,7 @@ else()
 endif()
 
 FetchContent_MakeAvailable(${DEPS})
-target_link_libraries(NutBlast PUBLIC ${LIBS})
+target_link_libraries(NutBlast PRIVATE ${LIBS})
 
 if(NUTBLAST_BUILD_TEST)
     FetchContent_Declare(raylib
