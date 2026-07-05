@@ -448,7 +448,7 @@ extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name
     if (pid == get_pid())
         return ::player_meta.contains(name) ? ::player_meta.at(name).c_str() : nullptr;
 
-    if (!NutBlast_IsReady())
+    if (!NutBlast_IsOnline())
         return nullptr;
 
     if (!::players.contains(pid))
@@ -500,7 +500,7 @@ extern "C" void NutBlast_SetPlayerField(const char* key, const char* value) {
 }
 
 extern "C" const char* NutBlast_GetLobbyField(const char* name) {
-    if (!name || !NutBlast_IsReady())
+    if (!name || !NutBlast_IsOnline())
         return nullptr;
 
     if (::lobby_meta.contains(name))
@@ -513,7 +513,7 @@ extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
     if (!check_field("Lobby", key, value))
         return;
 
-    if (NutBlast_IsReady()) {
+    if (NutBlast_IsOnline()) {
         const auto master = NutBlast_GetMasterID();
 
         if (!master || master != NutBlast_GetOurID())
@@ -654,11 +654,11 @@ extern "C" void NutBlast_Host(NutBlast_ID id, int max, bool listed) {
 }
 
 extern "C" int NutBlast_GetPlayerCount() {
-    return NutBlast_IsReady() ? static_cast<int>(1 + players.size()) : 0;
+    return NutBlast_IsOnline() ? static_cast<int>(1 + players.size()) : 0;
 }
 
 extern "C" int NutBlast_GetMaxPlayers() {
-    return NutBlast_IsReady() ? ::max_players : 0;
+    return NutBlast_IsOnline() ? ::max_players : 0;
 }
 
 extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
@@ -668,8 +668,7 @@ extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
     buf[i++] = get_pid();
 
     for (const auto& [id, player] : players)
-        if (NutBlast_IsPlayerAlive(id))
-            buf[i++] = id;
+        buf[i++] = id;
 
     buf[i] = 0;
 
@@ -681,24 +680,21 @@ extern "C" NutBlast_ID NutBlast_GetOurID() {
 }
 
 extern "C" NutBlast_ID NutBlast_GetLobbyID() {
-    return (NutBlast_IsReady() && ::lid) ? ::lid : 0;
+    return (NutBlast_IsOnline() && ::lid) ? ::lid : 0;
 }
 
 extern "C" NutBlast_ID NutBlast_GetMasterID() {
-    return NutBlast_IsReady() ? ::master : 0;
+    return NutBlast_IsOnline() ? ::master : 0;
 }
 
 extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
-    if (!id || !NutBlast_IsReady())
+    if (!id || !NutBlast_IsOnline())
         return false;
 
     if (id == get_pid())
         return true;
 
-    if (!::players.contains(id))
-        return false;
-
-    return players.at(id)->is_alive();
+    return ::players.contains(id);
 }
 
 static void handle_offer_or_answer(const nlohmann::json& obj) {
@@ -994,18 +990,16 @@ extern "C" void NutBlast_SetMaster(NutBlast_ID guy) {
 
 static void greatest_technician_thats_ever_lived(
     NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size, bool reliable) {
-    if (!NutBlast_IsPlayerAlive(id))
-        return; // TODO: not fail quietly?
+    if (!::players.contains(id))
+        return;
 
     if (!msg) {
         log(NB_LogError, "Cannot send a null message");
         return;
     }
 
-    if (id == get_pid()) {
-        log(NB_LogError, "Cannot send a message to yourself");
+    if (id == get_pid())
         return;
-    }
 
     const auto& player = ::players.at(id);
 
@@ -1055,8 +1049,12 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
     return true;
 }
 
+extern "C" bool NutBlast_IsOnline() {
+    return ws_ready();
+}
+
 extern "C" bool NutBlast_IsReady() {
-    if (!ws_ready())
+    if (!NutBlast_IsOnline())
         return false;
 
     for (const auto& [id, player] : ::players)
@@ -1081,13 +1079,15 @@ MakeCb(OnPlayerMetadataChanged, ::on_player_meta_changed, NutBlast_ID, NutBlast_
 MakeCb(OnLobbyMetadataChanged, ::on_lobby_meta_changed, NutBlast_FieldDiff);
 
 extern "C" int NutBlast_ServerPing() {
-    return NutBlast_IsReady() ? ::ws_pinger.millis() : 0;
+    return NutBlast_IsOnline() ? ::ws_pinger.millis() : 0;
 }
 
 extern "C" int NutBlast_PlayerPing(NutBlast_ID id) {
-    if (!NutBlast_IsReady() || !::players.contains(id))
+    if (!::players.contains(id))
         return 0;
-    return players.at(id)->pinger.millis();
+
+    const auto& player = ::players.at(id);
+    return player->is_alive() ? player->pinger.millis() : 0;
 }
 
 extern "C" void NutBlast_SleepMS(int _ms) {

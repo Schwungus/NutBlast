@@ -137,7 +137,12 @@ typedef struct {
 /// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.
 void NutBlast_Cleanup();
 
-/// Returns true if you are connected to a NutBlaster and ready to communicate with all current players in the lobby.
+/// Returns true if you are connected to a NutBlaster.
+bool NutBlast_IsOnline();
+
+/// Returns true if you are connected to a NutBlaster AND ready to communicate with all current players in the lobby.
+/// Note that when a new player is entering the lobby, this will go back to returning false until a connection is
+/// established with them.
 bool NutBlast_IsReady();
 
 /// Returns the average round-trip time (in milliseconds) to the NutBlaster.
