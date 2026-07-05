@@ -115,7 +115,7 @@ static void draw_gui() {
 
         if (name) {
             const char* fmt = TextFormat("%s (%dms)", name, NutBlast_PlayerPing(id));
-            DrawText(fmt, GetScreenWidth() - MeasureText(fmt, fs), fs * i, fs, BLACK);
+            DrawText(fmt, GetScreenWidth() - MeasureText(fmt, fs) - 5, fs * i, fs, BLACK);
         }
 
         i++;
