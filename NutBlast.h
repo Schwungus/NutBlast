@@ -137,7 +137,7 @@ typedef struct {
 /// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.
 void NutBlast_Cleanup();
 
-/// Returns true if you are connected to a NutBlaster and ready to accept connections from players.
+/// Returns true if you are connected to a NutBlaster and ready to communicate with all current players in the lobby.
 bool NutBlast_IsReady();
 
 /// Returns the average round-trip time (in milliseconds) to the NutBlaster.
@@ -253,7 +253,7 @@ NutBlast_ID NutBlast_GetLobbyID();
 /// Returns the lobby's master's ID.
 NutBlast_ID NutBlast_GetMasterID();
 
-/// Returns a 0-terminated array of IDs of every player in the lobby, including yourself.
+/// Returns a 0-terminated array of IDs of every reachable player in the lobby, including yourself.
 const NutBlast_ID* NutBlast_GetPlayerIDs();
 
 /// Returns true if the specified player is in the lobby AND can be reached over the network, and false otherwise.

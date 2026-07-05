@@ -144,6 +144,7 @@ struct ByeReason {
 
 struct Player {
     const NutBlast_ID id;
+    bool joined = false;
 
     Pinger pinger;
     Metadata meta;
@@ -227,10 +228,14 @@ template <typename... Args> static void fire(void (*cb)(Args...), const std::dec
         cb(args...);
 }
 
+static bool ws_ready() {
+    return ::blaster_ws && ::blaster_ws->isOpen();
+}
+
 static void ws_send(nlohmann::json&& obj) {
     ws_out.push_back(obj);
 
-    if (!NutBlast_IsReady())
+    if (!ws_ready())
         return;
 
     try {
@@ -333,10 +338,6 @@ void Player::init(const std::weak_ptr<Player>& self) {
             .reliability = {.unordered = false, },
         });
 
-        reliable_dc->onOpen([id]() {
-            fire(::on_player_joined, id);
-        });
-
         reliable_dc->onMessage(on_msg);
 
         ping_dc = pc->createDataChannel("ping", {
@@ -356,9 +357,6 @@ void Player::init(const std::weak_ptr<Player>& self) {
 
                 (reliable ? state->reliable_dc : state->unreliable_dc) = dc;
                 dc->onMessage(on_msg);
-
-                if (reliable)
-                    fire(::on_player_joined, id);
             } else {
                 state->ping_dc = dc;
                 dc->onMessage(on_ping);
@@ -787,7 +785,8 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
             if (!::players.contains(pid))
                 return;
 
-            auto& meta = ::players.at(pid)->meta;
+            const auto& player = ::players.at(pid);
+            auto& meta = player->meta;
 
             const std::string key = obj["key"], new_value = obj["value"];
             std::optional<std::string> old_value;
@@ -803,7 +802,8 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
                 diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
                 diff.new_value = new_value.c_str();
 
-                fire(::on_player_meta_changed, pid, diff);
+                if (player->joined)
+                    fire(::on_player_meta_changed, pid, diff);
             }
         }},
     {"ErasePlayerMeta",
@@ -917,7 +917,7 @@ static void recv_stuff() {
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat), pinger(interval::ping);
 
-    if (!NutBlast_IsReady() || listing_lobbies)
+    if (!ws_ready() || listing_lobbies)
         return;
 
     if (pinger) {
@@ -951,8 +951,30 @@ extern "C" void NutBlast_Flush() {
     }
 }
 
+static void maybe_init_players_after_ready() {
+    if (!NutBlast_IsReady())
+        return;
+
+    for (const auto& [id, player] : ::players) {
+        if (player->joined)
+            continue;
+
+        player->joined = true;
+        fire(::on_player_joined, id);
+
+        for (const auto& [key, value] : player->meta) {
+            NutBlast_FieldDiff diff = {0};
+            diff.name = key.c_str();
+            diff.old_value = nullptr;
+            diff.new_value = value.c_str();
+            fire(::on_player_meta_changed, pid, diff);
+        }
+    }
+}
+
 extern "C" void NutBlast_Update() {
     recv_stuff();
+    maybe_init_players_after_ready();
     NutBlast_Flush();
 }
 
@@ -1034,7 +1056,14 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
 }
 
 extern "C" bool NutBlast_IsReady() {
-    return ::blaster_ws && ::blaster_ws->isOpen();
+    if (!ws_ready())
+        return false;
+
+    for (const auto& [id, player] : ::players)
+        if (!player->is_alive())
+            return false;
+
+    return true;
 }
 
 #define MakeCb(name, var, ...)                                                                                         \
