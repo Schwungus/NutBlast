@@ -256,7 +256,7 @@ NutBlast_ID NutBlast_GetMasterID();
 /// Returns a 0-terminated array of IDs of every player in the lobby, including yourself.
 const NutBlast_ID* NutBlast_GetPlayerIDs();
 
-/// Returns true if the player identified by their ID is in the lobby, and false otherwise.
+/// Returns true if the specified player is in the lobby AND can be reached over the network, and false otherwise.
 bool NutBlast_IsPlayerAlive(NutBlast_ID);
 
 /// Returns player's metadata as a null-terminated string.

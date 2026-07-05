@@ -150,6 +150,9 @@ static void send_our_position() {
         if (!id)
             break;
 
+        if (id == NutBlast_GetOurID())
+            continue;
+
         static char buf[32] = "";
         snprintf(buf, sizeof(buf), "%d:%d", p->x, p->y);
         NutBlast_SendTo(CHAN_POS, id, buf, -1);
@@ -167,6 +170,9 @@ static void maybe_chat() {
 
         if (!id)
             break;
+
+        if (id == NutBlast_GetOurID())
+            continue;
 
         NutBlast_SendReliablyTo(CHAN_CHAT, id, "Hello!", -1);
     }

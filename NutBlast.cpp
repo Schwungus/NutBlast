@@ -158,8 +158,8 @@ struct Player {
 
     bool is_offerer() const;
 
-    bool is_available() const {
-        return unreliable_dc && reliable_dc;
+    bool is_alive() const {
+        return unreliable_dc && reliable_dc && ping_dc;
     }
 
     void drain_incoming_offers_and_candidates() {
@@ -478,6 +478,7 @@ static void
 freak_metadata(const char* type, const char* type_lower, Metadata& meta, const char* key, const char* value) {
     if (value == nullptr) {
         meta.erase(key);
+
         ::ws_send({
             {"type", std::string("Erase") + type + "Meta"},
             {"key", key},
@@ -486,6 +487,7 @@ freak_metadata(const char* type, const char* type_lower, Metadata& meta, const c
         log(NB_LogError, "Reached {} {} fields limit", NUTBLAST_MAX_FIELDS, type_lower);
     } else {
         meta.insert_or_assign(key, value);
+
         ::ws_send({
             {"type", std::string("Set") + type + "Meta"},
             {"key", key},
@@ -663,9 +665,10 @@ extern "C" int NutBlast_GetMaxPlayers() {
 
 extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
     static NutBlast_ID buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
-
     size_t i = 0;
+
     buf[i++] = get_pid();
+
     for (const auto& [id, player] : players)
         if (NutBlast_IsPlayerAlive(id))
             buf[i++] = id;
@@ -694,7 +697,10 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
     if (id == get_pid())
         return true;
 
-    return ::players.contains(id);
+    if (!::players.contains(id))
+        return false;
+
+    return players.at(id)->is_alive();
 }
 
 static void handle_offer_or_answer(const nlohmann::json& obj) {
@@ -966,13 +972,20 @@ extern "C" void NutBlast_SetMaster(NutBlast_ID guy) {
 
 static void greatest_technician_thats_ever_lived(
     NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size, bool reliable) {
-    if (!id || id == get_pid() || !NutBlast_IsPlayerAlive(id) || !msg)
+    if (!NutBlast_IsPlayerAlive(id))
+        return; // TODO: not fail quietly?
+
+    if (!msg) {
+        log(NB_LogError, "Cannot send a null message");
         return;
+    }
+
+    if (id == get_pid()) {
+        log(NB_LogError, "Cannot send a message to yourself");
+        return;
+    }
 
     const auto& player = ::players.at(id);
-
-    if (!player->is_available())
-        return;
 
     if (size < 0)
         size = (int)std::strlen(msg) + 1;
