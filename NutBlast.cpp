@@ -362,14 +362,14 @@ void Player::init(const std::weak_ptr<Player>& self) {
 }
 
 static NutBlast_ID generate_id() {
-    std::mt19937 mt;
-    mt.seed(NutBlast_TimeNS());
+    static const char characters[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-    std::uniform_int_distribution<> dtype(0, 1), dalpha('A', 'Z'), ddigit('0', '9');
-    static char id[sizeof(NutBlast_ID)] = "";
+    std::mt19937 mt(NutBlast_TimeNS());
+    std::uniform_int_distribution<size_t> dist(0, sizeof(characters) - 2);
 
-    for (size_t i = 0; i < sizeof(NutBlast_ID); i++)
-        id[i] = static_cast<char>(dtype(mt) ? ddigit(mt) : dalpha(mt));
+    char id[sizeof(NutBlast_ID)];
+    for (char& c : id)
+        c = characters[dist(mt)];
 
     return *reinterpret_cast<NutBlast_ID*>(id);
 }
