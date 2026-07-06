@@ -228,14 +228,10 @@ template <typename... Args> static void fire(void (*cb)(Args...), const std::dec
         cb(args...);
 }
 
-static bool ws_ready() {
-    return ::blaster_ws && ::blaster_ws->isOpen();
-}
-
 static void ws_send(nlohmann::json&& obj) {
     ws_out.push_back(obj);
 
-    if (!ws_ready())
+    if (!NutBlast_IsOnline())
         return;
 
     try {
@@ -913,7 +909,7 @@ static void recv_stuff() {
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat), pinger(interval::ping);
 
-    if (!ws_ready() || listing_lobbies)
+    if (!NutBlast_IsOnline() || listing_lobbies)
         return;
 
     if (pinger) {
@@ -1050,7 +1046,7 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
 }
 
 extern "C" bool NutBlast_IsOnline() {
-    return ws_ready();
+    return ::blaster_ws && ::blaster_ws->isOpen();
 }
 
 extern "C" bool NutBlast_IsReady() {
