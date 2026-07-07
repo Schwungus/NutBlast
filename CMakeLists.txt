@@ -57,7 +57,9 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     list(APPEND LIBS datachannel-wasm)
     list(APPEND DEPS datachannel-wasm)
 
-    target_link_options(NutBlast PUBLIC -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPU32,HEAPU8)
+    # HACK: not adding these link-options here since subsequent `-sEXPORTED_RUNTIME_METHODS=...` args don't get squished into a single list?????
+    #target_link_options(NutBlast PUBLIC -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
+    message(NOTICE "You might have to add these link-options manually: -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8")
     target_compile_options(NutBlast PUBLIC -O3) # the emscripten manual recommends this
 else()
     FetchContent_Declare(MbedTLS
@@ -96,4 +98,9 @@ if(NUTBLAST_BUILD_TEST)
 
     add_executable(NutBlast-lobbyist ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast-lobbyist.c)
     target_link_libraries(NutBlast-lobbyist PRIVATE NutBlast)
+
+    if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+        target_link_options(NutBlast-test PRIVATE -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
+        target_link_options(NutBlast-lobbyist PRIVATE -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
+    endif()
 endif()
