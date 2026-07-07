@@ -34,11 +34,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef NUTBLAST_DEV_LOCALHOST
-#define NUTBLAST_DEFAULT_SERVER "ws://localhost:36900/"
-#else
-#define NUTBLAST_DEFAULT_SERVER "wss://nutblast.schwung.us/v1"
-#endif
+#define NUTBLAST_DEFAULT_SERVER (NUTBLAST_DEV_LOCALHOST ? "ws://localhost:36900/" : "wss://nutblast.schwung.us/v1")
 
 // NOTE: make sure to sync these limits with `src/main.rs`.
 

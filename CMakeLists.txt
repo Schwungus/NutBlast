@@ -4,10 +4,8 @@ project(NutBlast
     VERSION 0.1.0
     LANGUAGES C CXX)
 
-option(NUTBLAST_BUILD_TEST "Build a NutBlast test binary?" OFF)
+option(NUTBLAST_BUILD_TEST "Build a NutBlast test binary?" ${PROJECT_IS_TOP_LEVEL})
 option(NUTBLAST_DEV_LOCALHOST "Connect to ws://localhost:36900 by default?" OFF)
-
-set(CMAKE_COMPILE_WARNING_AS_ERROR OFF) # libjuice won't build otherwise, damn it
 
 if(NUTBLAST_BUILD_TEST AND CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     set(CMAKE_EXECUTABLE_SUFFIX ".html")
@@ -15,7 +13,10 @@ if(NUTBLAST_BUILD_TEST AND CMAKE_SYSTEM_NAME MATCHES "Emscripten")
 endif()
 
 include(FetchContent)
-set(FETCHCONTENT_QUIET OFF)
+
+if(PROJECT_IS_TOP_LEVEL)
+    set(FETCHCONTENT_QUIET OFF)
+endif()
 
 add_library(NutBlast
     ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast.cpp
@@ -23,10 +24,7 @@ add_library(NutBlast
 target_include_directories(NutBlast
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(NutBlast PRIVATE c_std_11 cxx_std_23)
-
-if(NUTBLAST_DEV_LOCALHOST)
-    target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST)
-endif()
+target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST=$<BOOL:${NUTBLAST_DEV_LOCALHOST}>)
 
 FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
