@@ -132,7 +132,7 @@ struct Pinger {
 
 struct ByeReason {
     bool err = false;
-    std::string code = "ok", msg = "Graceful Disconnection";
+    std::string code = NUTBLAST_ERROR_OK, msg = "Graceful disconnection";
 
     ByeReason() {}
     ByeReason(const nlohmann::json& obj) : err(obj["err"]), code(obj["code"]), msg(obj["msg"]) {}
@@ -609,7 +609,7 @@ extern "C" void NutBlast_Disconnect() {
     ::players.clear(), ::ws_in.clear(), ::ws_out.clear();
 
     if (fire_disconnect) {
-        log(NB_LogInfo, "NutBlaster out!");
+        log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
         fire(::on_disconnected, ::disconnection_reason);
     }
 }
