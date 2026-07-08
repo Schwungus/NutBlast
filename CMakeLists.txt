@@ -7,7 +7,7 @@ project(NutBlast
 option(NUTBLAST_BUILD_TEST "Build a NutBlast test binary?" ${PROJECT_IS_TOP_LEVEL})
 option(NUTBLAST_DEV_LOCALHOST "Connect to ws://localhost:36900 by default?" OFF)
 
-if(NUTBLAST_BUILD_TEST AND CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+if(NUTBLAST_BUILD_TEST AND EMSCRIPTEN)
     set(CMAKE_EXECUTABLE_SUFFIX ".html")
     set(PLATFORM Web CACHE INTERNAL "")
 endif()
@@ -48,7 +48,7 @@ set(ENABLE_TESTING OFF CACHE INTERNAL "")
 set(INSTALL_DEPS_LIBS OFF CACHE INTERNAL "")
 set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/mbedtls.h CACHE INTERNAL "")
 
-if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+if(EMSCRIPTEN)
     FetchContent_Declare(datachannel-wasm
         GIT_REPOSITORY https://github.com/Schwungus/datachannel-wasm.git
         GIT_TAG f4bbcbca2145b86127c93506479bc6884d343b6f
@@ -102,9 +102,4 @@ if(NUTBLAST_BUILD_TEST)
 
     add_executable(NutBlast-lobbyist ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast-lobbyist.c)
     target_link_libraries(NutBlast-lobbyist PRIVATE NutBlast)
-
-    if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
-        target_link_options(NutBlast-test PRIVATE -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
-        target_link_options(NutBlast-lobbyist PRIVATE -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
-    endif()
 endif()
