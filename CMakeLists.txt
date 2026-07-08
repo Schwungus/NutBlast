@@ -57,10 +57,11 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     list(APPEND LIBS datachannel-wasm)
     list(APPEND DEPS datachannel-wasm)
 
-    # HACK: not adding these link-options here since subsequent `-sEXPORTED_RUNTIME_METHODS=...` args don't get squished into a single list?????
-    #target_link_options(NutBlast PUBLIC -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
-    message(NOTICE "You might have to add these link-options manually: -sASYNCIFY -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8")
     target_compile_options(NutBlast PUBLIC -O3) # the emscripten manual recommends this
+    add_link_options(
+        -sASYNCIFY
+        -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8
+        -sINCOMING_MODULE_JS_API=HEAPF32,HEAPU32,HEAPU8)
 else()
     FetchContent_Declare(MbedTLS
         GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
