@@ -12,11 +12,6 @@ if(PROJECT_IS_TOP_LEVEL AND EMSCRIPTEN)
         set(CMAKE_EXECUTABLE_SUFFIX ".html")
         set(PLATFORM Web CACHE INTERNAL "")
     endif()
-
-    add_link_options(
-        -sASYNCIFY
-        -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8
-        -sINCOMING_MODULE_JS_API+=HEAPF32,HEAPU32,HEAPU8)
 endif()
 
 include(FetchContent)
@@ -25,11 +20,8 @@ if(PROJECT_IS_TOP_LEVEL)
     set(FETCHCONTENT_QUIET OFF)
 endif()
 
-add_library(NutBlast
-    ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast.h)
-target_include_directories(NutBlast
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_library(NutBlast ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast.cpp ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast.h)
+target_include_directories(NutBlast PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(NutBlast PRIVATE c_std_11 cxx_std_23)
 target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST=$<BOOL:${NUTBLAST_DEV_LOCALHOST}>)
 
@@ -58,13 +50,14 @@ set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/mbedtls.h CACHE INTERNA
 if(EMSCRIPTEN)
     FetchContent_Declare(datachannel-wasm
         GIT_REPOSITORY https://github.com/Schwungus/datachannel-wasm.git
-        GIT_TAG f4bbcbca2145b86127c93506479bc6884d343b6f
+        GIT_TAG 7235003f78aa5f7140d04bb1547d420f1fc7bc53
         EXCLUDE_FROM_ALL)
 
     list(APPEND LIBS datachannel-wasm)
     list(APPEND DEPS datachannel-wasm)
 
     target_compile_options(NutBlast PUBLIC -O3) # the emscripten manual recommends this
+    target_link_options(NutBlast PUBLIC -sASYNCIFY)
 else()
     FetchContent_Declare(MbedTLS
         GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
@@ -102,4 +95,9 @@ if(NUTBLAST_BUILD_TEST)
 
     add_executable(NutBlast-lobbyist ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast-lobbyist.c)
     target_link_libraries(NutBlast-lobbyist PRIVATE NutBlast)
+
+    if(EMSCRIPTEN)
+        target_link_options(NutBlast-test PRIVATE -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
+        target_link_options(NutBlast-lobbyist PRIVATE -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
+    endif()
 endif()
