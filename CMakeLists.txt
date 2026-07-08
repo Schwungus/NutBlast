@@ -7,9 +7,16 @@ project(NutBlast
 option(NUTBLAST_BUILD_TEST "Build a NutBlast test binary?" ${PROJECT_IS_TOP_LEVEL})
 option(NUTBLAST_DEV_LOCALHOST "Connect to ws://localhost:36900 by default?" OFF)
 
-if(NUTBLAST_BUILD_TEST AND EMSCRIPTEN)
-    set(CMAKE_EXECUTABLE_SUFFIX ".html")
-    set(PLATFORM Web CACHE INTERNAL "")
+if(PROJECT_IS_TOP_LEVEL AND EMSCRIPTEN)
+    if(NUTBLAST_BUILD_TEST)
+        set(CMAKE_EXECUTABLE_SUFFIX ".html")
+        set(PLATFORM Web CACHE INTERNAL "")
+    endif()
+
+    add_link_options(
+        -sASYNCIFY
+        -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8
+        -sINCOMING_MODULE_JS_API+=HEAPF32,HEAPU32,HEAPU8)
 endif()
 
 include(FetchContent)
@@ -58,13 +65,6 @@ if(EMSCRIPTEN)
     list(APPEND DEPS datachannel-wasm)
 
     target_compile_options(NutBlast PUBLIC -O3) # the emscripten manual recommends this
-
-    if(PROJECT_IS_TOP_LEVEL)
-        add_link_options(
-            -sASYNCIFY
-            -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8
-            -sINCOMING_MODULE_JS_API+=HEAPF32,HEAPU32,HEAPU8)
-    endif()
 else()
     FetchContent_Declare(MbedTLS
         GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
