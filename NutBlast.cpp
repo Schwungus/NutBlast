@@ -591,13 +591,12 @@ static void join_pro() {
 }
 
 extern "C" void NutBlast_Disconnect() {
+    bool fire_disconnect = false;
+
     if (::blaster_ws) {
         ::blaster_ws->onClosed(nullptr);
-
         recv_stuff();
-
-        log(NB_LogInfo, "NutBlaster out!");
-        fire(::on_disconnected, ::disconnection_reason);
+        fire_disconnect = true;
     }
 
     if (::blaster_ws) { // `recv_stuff` could've nuked the socket so we check for null once again
@@ -608,6 +607,11 @@ extern "C" void NutBlast_Disconnect() {
 
     ::blaster_ws = nullptr, ::lid = 0;
     ::players.clear(), ::ws_in.clear(), ::ws_out.clear();
+
+    if (fire_disconnect) {
+        log(NB_LogInfo, "NutBlaster out!");
+        fire(::on_disconnected, ::disconnection_reason);
+    }
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
