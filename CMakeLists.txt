@@ -31,8 +31,8 @@ FetchContent_Declare(json
     OVERRIDE_FIND_PACKAGE
     EXCLUDE_FROM_ALL)
 
-list(APPEND LIBS nlohmann_json::nlohmann_json)
-list(APPEND DEPS json)
+list(APPEND NB_LIBS nlohmann_json::nlohmann_json)
+list(APPEND NB_DEPS json)
 
 set(USE_SYSTEM_JSON ON CACHE INTERNAL "")
 set(USE_SYSTEM_SRTP OFF CACHE INTERNAL "")
@@ -53,8 +53,8 @@ if(EMSCRIPTEN)
         GIT_TAG 7235003f78aa5f7140d04bb1547d420f1fc7bc53
         EXCLUDE_FROM_ALL)
 
-    list(APPEND LIBS datachannel-wasm)
-    list(APPEND DEPS datachannel-wasm)
+    list(APPEND NB_LIBS datachannel-wasm)
+    list(APPEND NB_DEPS datachannel-wasm)
 
     target_compile_options(NutBlast PUBLIC -O3) # the emscripten manual recommends this
     target_link_options(NutBlast PUBLIC -sASYNCIFY)
@@ -70,12 +70,12 @@ else()
         GIT_TAG adb99ca36f28ee58c13acf4dfbcc68e4bd944c01
         EXCLUDE_FROM_ALL)
 
-    list(APPEND LIBS datachannel-static)
-    list(APPEND DEPS MbedTLS datachannel)
+    list(APPEND NB_LIBS datachannel-static)
+    list(APPEND NB_DEPS MbedTLS datachannel)
 endif()
 
-FetchContent_MakeAvailable(${DEPS})
-target_link_libraries(NutBlast PRIVATE ${LIBS})
+FetchContent_MakeAvailable(${NB_DEPS})
+target_link_libraries(NutBlast PRIVATE ${NB_LIBS})
 
 if(NUTBLAST_BUILD_TEST)
     FetchContent_Declare(raylib
