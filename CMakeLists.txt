@@ -80,7 +80,7 @@ target_link_libraries(NutBlast PRIVATE ${NB_LIBS})
 if(NUTBLAST_BUILD_TEST)
     FetchContent_Declare(raylib
         GIT_REPOSITORY https://github.com/raysan5/raylib.git
-        GIT_TAG 5.5
+        GIT_TAG 6.0
         EXCLUDE_FROM_ALL)
 
     FetchContent_Declare(S_tructures
