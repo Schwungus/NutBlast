@@ -84,12 +84,7 @@ static void restart() {
 static void on_player_joined(NutBlast_ID id) {
     TraceLog(LOG_INFO, "Hi, %s!", NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME));
 
-    Player p = {
-        .x = (GetScreenWidth() - psize) / 2,
-        .y = (GetScreenHeight() - psize) / 2,
-        .color = GREEN,
-    };
-
+    Player p = {.x = -psize, .y = -psize, .color = GREEN};
     TinyMapPut(&players, id, &p, sizeof(p));
 }
 
@@ -257,7 +252,7 @@ int main(int argc, char* argv[]) {
     NutBlast_SetPlayerField(NUTBLAST_FIELD_PLAYER_NAME, names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
     reset();
 
-    NutBlast_OnConnected(restart);
+    NutBlast_OnReady(restart);
     NutBlast_OnDisconnected(on_disconnected);
     NutBlast_OnPlayerJoined(on_player_joined);
     NutBlast_OnPlayerLeft(on_player_left);

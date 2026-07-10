@@ -155,8 +155,8 @@ void NutBlast_SetNutBlaster(const char*);
 /// Sets the maximum amount of channels to receive messages on. Defaults to 1 channel if unspecified.
 void NutBlast_SetMaxChannels(NutBlast_ChannelID);
 
-/// Registers a callback to fire when you are successfully connected to the NutBlaster.
-void NutBlast_OnConnected(void (*)());
+/// Registers a callback to fire as soon as `NutBlast_Ready()` signals you are ready for the first time.
+void NutBlast_OnReady(void (*)());
 
 /// Registers a callback to fire when you are disconnected from the NutBlaster.
 void NutBlast_OnDisconnected(void (*)(NutBlast_Reason));

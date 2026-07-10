@@ -7,11 +7,9 @@ project(NutBlast
 option(NUTBLAST_BUILD_TEST "Build a NutBlast test binary?" ${PROJECT_IS_TOP_LEVEL})
 option(NUTBLAST_DEV_LOCALHOST "Connect to ws://localhost:36900 by default?" OFF)
 
-if(PROJECT_IS_TOP_LEVEL AND EMSCRIPTEN)
-    if(NUTBLAST_BUILD_TEST)
-        set(CMAKE_EXECUTABLE_SUFFIX ".html")
-        set(PLATFORM Web CACHE INTERNAL "")
-    endif()
+if(PROJECT_IS_TOP_LEVEL AND EMSCRIPTEN AND NUTBLAST_BUILD_TEST)
+    set(CMAKE_EXECUTABLE_SUFFIX ".html")
+    set(PLATFORM Web CACHE INTERNAL "")
 endif()
 
 include(FetchContent)

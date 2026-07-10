@@ -109,9 +109,10 @@ template <typename V> static std::vector<V> copy_and_clear(std::vector<V>& vec) 
     return copy;
 }
 
-struct Pinger {
+class Pinger {
     std::uint64_t last_ping = 0, last_roundtrip = 0;
 
+  public:
     int millis() const {
         return (int)last_roundtrip;
     }
@@ -130,6 +131,28 @@ struct Pinger {
     }
 };
 
+class Once {
+    bool f_fired = false;
+
+  public:
+    bool fired() const {
+        return f_fired;
+    }
+
+    void reset() {
+        f_fired = false;
+    }
+
+    explicit operator bool() {
+        if (f_fired) {
+            return false;
+        } else {
+            f_fired = true;
+            return true;
+        }
+    }
+};
+
 struct ByeReason {
     bool err = false;
     std::string code = NUTBLAST_ERROR_OK, msg = "Graceful disconnection";
@@ -144,7 +167,7 @@ struct ByeReason {
 
 struct Player {
     const NutBlast_ID id;
-    bool joined = false;
+    Once fire_join;
 
     Pinger pinger;
     Metadata meta;
@@ -159,7 +182,7 @@ struct Player {
 
     bool is_offerer() const;
 
-    bool is_alive() const {
+    bool is_online() const {
         return unreliable_dc && reliable_dc && ping_dc;
     }
 
@@ -211,13 +234,14 @@ static NutBlast_ID master = 0;
 static std::unordered_map<NutBlast_ID, std::shared_ptr<Player>> players;
 
 static Pinger ws_pinger;
+static Once fire_ready;
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
 static std::vector<nlohmann::json> ws_in, ws_out;
 
 static Metadata player_meta, lobby_meta;
 
 // TODO: refactor each of these into a struct.
-static void (*on_connected)() = nullptr, (*on_disconnected)(NutBlast_Reason) = nullptr,
+static void (*on_ready)() = nullptr, (*on_disconnected)(NutBlast_Reason) = nullptr,
             (*on_player_joined)(NutBlast_ID) = nullptr, (*on_player_left)(NutBlast_ID, NutBlast_Reason) = nullptr,
             (*on_lobbies_found)(const NutBlast_Lobby*, size_t) = nullptr, (*on_master_changed)(NutBlast_ID) = nullptr,
             (*on_player_meta_changed)(NutBlast_ID, NutBlast_FieldDiff) = nullptr,
@@ -240,10 +264,11 @@ static void ws_send(nlohmann::json&& obj) {
     } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
 }
 
-struct Ticker {
+class Ticker {
     const std::uint64_t interval;
     std::uint64_t last_tick = 0;
 
+  public:
     Ticker(std::uint64_t interval) : interval(interval) {}
 
     explicit operator bool() {
@@ -362,7 +387,7 @@ void Player::init(const std::weak_ptr<Player>& self) {
 }
 
 static NutBlast_ID generate_id() {
-    static const char characters[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    static constexpr const char characters[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     std::mt19937 mt(NutBlast_TimeNS());
     std::uniform_int_distribution<size_t> dist(0, sizeof(characters) - 2);
@@ -571,8 +596,6 @@ static void join_pro() {
                 {"player_meta", ::player_meta},
                 {"lobby_meta", ::lobby_meta},
             });
-
-            fire(::on_connected);
         }
     });
 
@@ -607,6 +630,7 @@ extern "C" void NutBlast_Disconnect() {
 
     ::blaster_ws = nullptr, ::lid = 0;
     ::players.clear(), ::ws_in.clear(), ::ws_out.clear();
+    ::fire_ready.reset();
 
     if (fire_disconnect) {
         log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
@@ -798,7 +822,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
                 diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
                 diff.new_value = new_value.c_str();
 
-                if (player->joined)
+                if (player->fire_join.fired())
                     fire(::on_player_meta_changed, pid, diff);
             }
         }},
@@ -947,30 +971,31 @@ extern "C" void NutBlast_Flush() {
     }
 }
 
-static void maybe_init_players_after_ready() {
-    if (!NutBlast_IsReady())
-        return;
+static void init_players_after_ready() {
+    if (::fire_ready) {
+        log(NB_LogInfo, "NutBlast connected and ready!");
+        fire(::on_ready);
+    }
 
     for (const auto& [id, player] : ::players) {
-        if (player->joined)
-            continue;
+        if (player->fire_join) {
+            fire(::on_player_joined, id);
 
-        player->joined = true;
-        fire(::on_player_joined, id);
-
-        for (const auto& [key, value] : player->meta) {
-            NutBlast_FieldDiff diff = {0};
-            diff.name = key.c_str();
-            diff.old_value = nullptr;
-            diff.new_value = value.c_str();
-            fire(::on_player_meta_changed, pid, diff);
+            for (const auto& [key, value] : player->meta) {
+                NutBlast_FieldDiff diff = {0};
+                diff.name = key.c_str();
+                diff.old_value = nullptr;
+                diff.new_value = value.c_str();
+                fire(::on_player_meta_changed, pid, diff);
+            }
         }
     }
 }
 
 extern "C" void NutBlast_Update() {
     recv_stuff();
-    maybe_init_players_after_ready();
+    if (NutBlast_IsReady())
+        init_players_after_ready();
     NutBlast_Flush();
 }
 
@@ -997,9 +1022,6 @@ static void greatest_technician_thats_ever_lived(
         log(NB_LogError, "Cannot send a null message");
         return;
     }
-
-    if (id == get_pid())
-        return;
 
     const auto& player = ::players.at(id);
 
@@ -1058,7 +1080,7 @@ extern "C" bool NutBlast_IsReady() {
         return false;
 
     for (const auto& [id, player] : ::players)
-        if (!player->is_alive())
+        if (!player->is_online())
             return false;
 
     return true;
@@ -1069,7 +1091,7 @@ extern "C" bool NutBlast_IsReady() {
         (var) = cb;                                                                                                    \
     }
 
-MakeCb(OnConnected, ::on_connected);
+MakeCb(OnReady, ::on_ready);
 MakeCb(OnDisconnected, ::on_disconnected, NutBlast_Reason);
 MakeCb(OnPlayerJoined, ::on_player_joined, NutBlast_ID);
 MakeCb(OnPlayerLeft, ::on_player_left, NutBlast_ID, NutBlast_Reason);
@@ -1087,7 +1109,7 @@ extern "C" int NutBlast_PlayerPing(NutBlast_ID id) {
         return 0;
 
     const auto& player = ::players.at(id);
-    return player->is_alive() ? player->pinger.millis() : 0;
+    return player->is_online() ? player->pinger.millis() : 0;
 }
 
 extern "C" void NutBlast_SleepMS(int _ms) {
