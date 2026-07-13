@@ -634,6 +634,7 @@ extern "C" void NutBlast_Disconnect() {
 
     if (fire_disconnect) {
         log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
+        // TODO: maybe NOT fire this in the lobby-listing mode?
         fire(::on_disconnected, ::disconnection_reason);
     }
 }
@@ -972,7 +973,7 @@ extern "C" void NutBlast_Flush() {
 }
 
 static void init_players_after_ready() {
-    if (::fire_ready) {
+    if (::fire_ready && !::listing_lobbies) {
         log(NB_LogInfo, "NutBlast connected and ready!");
         fire(::on_ready);
     }
