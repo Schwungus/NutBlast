@@ -643,9 +643,7 @@ extern "C" void NutBlast_FindLobbies(size_t limit) {
     if (::blaster_ws) {
         log(NB_LogError, "You're already connected!");
     } else {
-        ::listing_lobbies = true;
-        ::listing_limit = limit;
-
+        ::listing_lobbies = true, ::listing_limit = limit;
         log(NB_LogInfo, "Connecting to {}", get_blaster());
         join_pro();
     }
@@ -657,9 +655,7 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
     } else if (!id) {
         log(NB_LogError, "No ID specified!");
     } else {
-        ::hosting = false, ::listing_lobbies = false;
-        ::lid = id;
-
+        ::hosting = false, ::listing_lobbies = false, ::lid = id;
         log(NB_LogInfo, "Trying to join '{}' at: {}", id, get_blaster());
         join_pro();
     }
