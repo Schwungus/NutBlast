@@ -180,7 +180,9 @@ struct Player {
 
     void init(const std::weak_ptr<Player>&);
 
-    bool is_offerer() const;
+    bool is_offerer() const {
+        return NutBlast_GetOurID() > id;
+    }
 
     bool is_online() const {
         return unreliable_dc && reliable_dc && ping_dc;
@@ -399,19 +401,6 @@ static NutBlast_ID generate_id() {
     return *reinterpret_cast<NutBlast_ID*>(id);
 }
 
-static NutBlast_ID get_pid() {
-    if (!pid) {
-        pid = generate_id();
-        log(NB_LogInfo, "You are {}", pid);
-    }
-
-    return pid;
-}
-
-bool Player::is_offerer() const {
-    return get_pid() > id;
-}
-
 static std::string get_blaster() {
     if (blaster == std::nullopt) {
         log(NB_LogInfo, "Using the default NutBlaster server as none was explicitly specified: {}",
@@ -466,7 +455,7 @@ extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name
     if (!pid || !name)
         return nullptr;
 
-    if (pid == get_pid())
+    if (pid == NutBlast_GetOurID())
         return ::player_meta.contains(name) ? ::player_meta.at(name).c_str() : nullptr;
 
     if (!NutBlast_IsOnline())
@@ -589,7 +578,7 @@ static void join_pro() {
                 {"type", "Connect"},
                 {"mode", ::hosting ? "Host" : "Join"},
                 {"gid", ::gid},
-                {"pid", ::get_pid()},
+                {"pid", ::NutBlast_GetOurID()},
                 {"lid", ::lid},
                 {"capacity", ::max_players},
                 {"listed", ::hosting_listed_lobby},
@@ -686,7 +675,7 @@ extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
     static NutBlast_ID buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
     size_t i = 0;
 
-    buf[i++] = get_pid();
+    buf[i++] = NutBlast_GetOurID();
 
     for (const auto& [id, player] : players)
         buf[i++] = id;
@@ -697,7 +686,12 @@ extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
 }
 
 extern "C" NutBlast_ID NutBlast_GetOurID() {
-    return get_pid();
+    if (!pid) {
+        pid = generate_id();
+        log(NB_LogInfo, "You are {}", pid);
+    }
+
+    return pid;
 }
 
 extern "C" NutBlast_ID NutBlast_GetLobbyID() {
@@ -712,7 +706,7 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
     if (!id || !NutBlast_IsOnline())
         return false;
 
-    if (id == get_pid())
+    if (id == NutBlast_GetOurID())
         return true;
 
     return ::players.contains(id);
