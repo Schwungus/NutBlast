@@ -578,7 +578,7 @@ static void join_pro() {
                 {"type", "Connect"},
                 {"mode", ::hosting ? "Host" : "Join"},
                 {"gid", ::gid},
-                {"pid", ::NutBlast_GetOurID()},
+                {"pid", NutBlast_GetOurID()},
                 {"lid", ::lid},
                 {"capacity", ::max_players},
                 {"listed", ::hosting_listed_lobby},
