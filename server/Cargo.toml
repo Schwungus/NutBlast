@@ -12,4 +12,4 @@ log = "0.4.32"
 serde = { version = "1.0.228", features = ["alloc", "derive"] }
 serde_json = { version = "1.0.150", features = ["alloc"] }
 tokio = { version = "1.52.3", features = ["full"] }
-tokio-tungstenite = "0.29.0"
+tokio-tungstenite = "0.30.0"
