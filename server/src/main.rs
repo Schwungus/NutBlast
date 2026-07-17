@@ -165,6 +165,7 @@ enum ClientMessage {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type")]
 enum ServerMessage {
+    LetMeCook,
     Pong,
     Bye {
         reason: Reason,
@@ -501,6 +502,8 @@ impl Connection {
                     if let Some(mastah) = mastah {
                         player.send(&ServerMessage::SetMaster { pid: mastah });
                     }
+
+                    player.send(&ServerMessage::LetMeCook);
                 }
 
                 for other in pmeta.keys() {

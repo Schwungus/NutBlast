@@ -57,10 +57,6 @@ namespace interval {
     constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second;
 };
 
-namespace debounce {
-    constexpr const std::uint64_t ready = 2 * ::ns::second;
-};
-
 extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
     switch (level) {
     case NB_LogInfo:
@@ -231,7 +227,7 @@ static ByeReason disconnection_reason;
 static NutBlast_ChannelID max_chan = 1;
 static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
 
-static bool hosting = false, listing_lobbies = false, hosting_listed_lobby = true;
+static bool hosting = false, listing_lobbies = false, hosting_a_listed_lobby = true, permission_to_cook = false;
 static std::size_t listing_limit = 0;
 static NutBlast_ID master = 0;
 
@@ -243,8 +239,6 @@ static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
 static std::vector<nlohmann::json> ws_in, ws_out;
 
 static Metadata player_meta, lobby_meta;
-
-static std::uint64_t joined_at = 0;
 
 // TODO: refactor each of these into a struct.
 static void (*on_ready)() = nullptr, (*on_disconnected)(NutBlast_Reason) = nullptr,
@@ -437,7 +431,7 @@ extern "C" void NutBlast_SetMaxPlayers(int max) {
 }
 
 extern "C" void NutBlast_SetListed(bool listed) {
-    ::hosting_listed_lobby = listed;
+    ::hosting_a_listed_lobby = listed;
 
     ::ws_send({
         {"type", "SetListed"},
@@ -446,7 +440,7 @@ extern "C" void NutBlast_SetListed(bool listed) {
 }
 
 extern "C" bool NutBlast_IsListed() {
-    return ::hosting_listed_lobby;
+    return ::hosting_a_listed_lobby;
 }
 
 extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name) {
@@ -541,7 +535,7 @@ static void join_pro() {
     rtc::Preload();
 
     get_blaster();
-    ::master = 0, ::disconnection_reason = ByeReason();
+    ::master = 0, ::disconnection_reason = ByeReason(), ::permission_to_cook = false;
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
     ::ws_pinger.reset();
@@ -571,8 +565,6 @@ static void join_pro() {
                 {"gid", ::gid},
                 {"limit", ::listing_limit},
             });
-
-            ::joined_at = 0;
         } else {
             ::ws_send({
                 {"type", "Connect"},
@@ -581,12 +573,10 @@ static void join_pro() {
                 {"pid", NutBlast_GetOurID()},
                 {"lid", ::lid},
                 {"capacity", ::max_players},
-                {"listed", ::hosting_listed_lobby},
+                {"listed", ::hosting_a_listed_lobby},
                 {"player_meta", ::player_meta},
                 {"lobby_meta", ::lobby_meta},
             });
-
-            ::joined_at = NutBlast_TimeNS();
         }
     });
 
@@ -657,7 +647,7 @@ extern "C" void NutBlast_Host(NutBlast_ID id, int max, bool listed) {
         log(NB_LogError, "You're already connected!");
     } else {
         NutBlast_SetMaxPlayers(max);
-        ::hosting = true, ::listing_lobbies = false, ::hosting_listed_lobby = listed;
+        ::hosting = true, ::listing_lobbies = false, ::hosting_a_listed_lobby = listed;
         ::lid = id ? id : generate_id();
 
         log(NB_LogInfo, "Trying to host '{}' at: {}", lid, get_blaster());
@@ -778,6 +768,10 @@ static void handle_list(const nlohmann::json& obj) {
 }
 
 static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> payload_types{
+    {"LetMeCook",
+        [](const auto&) {
+            ::permission_to_cook = true;
+        }},
     {"Bye",
         [](const auto& obj) {
             ::disconnection_reason = obj["reason"];
@@ -785,7 +779,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
         }},
     {"SetListed",
         [](const auto& obj) {
-            ::hosting_listed_lobby = obj["listed"];
+            ::hosting_a_listed_lobby = obj["listed"];
         }},
     {"SetCapacity",
         [](const auto& obj) {
@@ -1066,10 +1060,7 @@ extern "C" bool NutBlast_IsOnline() {
 }
 
 extern "C" bool NutBlast_IsReady() {
-    if (!NutBlast_IsOnline())
-        return false;
-
-    if (!::joined_at || NutBlast_TimeNS() - ::joined_at < ::debounce::ready)
+    if (!NutBlast_IsOnline() || !::permission_to_cook)
         return false;
 
     for (const auto& [id, player] : ::players)
