@@ -165,7 +165,7 @@ struct ByeReason {
     }
 };
 
-struct Player {
+struct Player : std::enable_shared_from_this<Player> {
     const NutBlast_ID id;
     Once fire_join;
 
@@ -178,7 +178,7 @@ struct Player {
 
     Player(NutBlast_ID id, const Metadata& meta) : id(id), meta(meta) {}
 
-    void init(const std::weak_ptr<Player>&);
+    void init();
 
     bool is_offerer() const {
         return NutBlast_GetOurID() > id;
@@ -285,14 +285,12 @@ class Ticker {
     }
 };
 
-// gotta use a weak `this` pointer in lambda captures instead of plain `this` since we'll be sharing this `Player`
-// instance with other threads with possibly different lifetimes, procured by libdatachannel in the background.
-void Player::init(const std::weak_ptr<Player>& self) {
+void Player::init() {
     const auto id = this->id;
 
     pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
 
-    pc->onLocalDescription([id](const auto& desc) {
+    pc->onLocalDescription([=](const auto& desc) {
         std::string type;
 
         if (desc.typeString() == "offer")
@@ -309,14 +307,12 @@ void Player::init(const std::weak_ptr<Player>& self) {
         });
     });
 
-    pc->onLocalCandidate([self](const auto& candidate) {
-        if (self.expired())
-            return;
-
-        self.lock()->outgoing_candidates.push_back(candidate);
+    pc->onLocalCandidate([self = weak_from_this()](const auto& candidate) {
+        if (!self.expired())
+            self.lock()->outgoing_candidates.push_back(candidate);
     });
 
-    const auto on_msg = [id](const auto& variant) {
+    const auto on_msg = [=](const auto& variant) {
         if (!std::holds_alternative<rtc::binary>(variant))
             return;
 
@@ -333,7 +329,7 @@ void Player::init(const std::weak_ptr<Player>& self) {
         }
     };
 
-    const auto on_ping = [self](const auto& msg) {
+    const auto on_ping = [=, self = weak_from_this()](const auto& msg) {
         if (self.expired() || !std::holds_alternative<rtc::string>(msg))
             return;
 
@@ -369,7 +365,7 @@ void Player::init(const std::weak_ptr<Player>& self) {
 
         ping_dc->onMessage(on_ping);
     } else {
-        pc->onDataChannel([id, self, on_msg, on_ping](const auto& dc) {
+        pc->onDataChannel([=, self = weak_from_this()](const auto& dc) {
             if (self.expired())
                 return;
 
@@ -887,18 +883,16 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"Joined",
         [](const auto& obj) {
             const NutBlast_ID id = obj["pid"];
-
-            const auto ptr = std::make_shared<Player>(id, obj["meta"]);
-            ::players.insert({id, ptr});
-            ptr->init(ptr);
+            ::players.insert({id, std::make_shared<Player>(id, obj["meta"])});
+            ::players.at(id)->init();
         }},
     {"Left",
         [](const auto& obj) {
             const NutBlast_ID pid = obj["pid"];
 
             if (::players.contains(pid)) {
-                fire(::on_player_left, pid,
-                    obj.contains("reason") && !obj["reason"].is_null() ? obj["reason"] : ByeReason());
+                const bool got_reason = obj.contains("reason") && !obj["reason"].is_null();
+                fire(::on_player_left, pid, got_reason ? obj["reason"] : ByeReason());
                 ::players.erase(pid);
             }
         }},
