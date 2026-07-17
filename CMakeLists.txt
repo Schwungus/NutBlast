@@ -18,6 +18,7 @@ endif()
 include(FetchContent)
 
 if(PROJECT_IS_TOP_LEVEL)
+    set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
     set(FETCHCONTENT_QUIET OFF)
 endif()
 
