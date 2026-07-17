@@ -7,6 +7,9 @@ project(NutBlast
 option(NUTBLAST_BUILD_TEST "Build a NutBlast test binary?" ${PROJECT_IS_TOP_LEVEL})
 option(NUTBLAST_DEV_LOCALHOST "Connect to ws://localhost:36900 by default?" OFF)
 
+set(NB_BUILD_SHARED_LIBS_ORIGINAL_VALUE ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+
 if(PROJECT_IS_TOP_LEVEL AND EMSCRIPTEN AND NUTBLAST_BUILD_TEST)
     set(CMAKE_EXECUTABLE_SUFFIX ".html")
     set(PLATFORM Web CACHE INTERNAL "")
@@ -76,9 +79,10 @@ FetchContent_MakeAvailable(${NB_DEPS})
 target_link_libraries(NutBlast PRIVATE ${NB_LIBS})
 
 if(NUTBLAST_BUILD_TEST)
+    # personal raylib fork that skips `-sEXPORTED_RUNTIME_METHODS=...` entirely for emscripten builds; multiple `-sEXPORTED_RUNTIME_METHODS=...` declarations don't get squashed together for some bizzare reason
     FetchContent_Declare(raylib
-        GIT_REPOSITORY https://github.com/raysan5/raylib.git
-        GIT_TAG 6.0
+        GIT_REPOSITORY https://github.com/nonk123/raylib.git
+        GIT_TAG 58ae9b2961cb7f14b57b70d1e40b802cb7fba0bf
         EXCLUDE_FROM_ALL)
 
     FetchContent_Declare(S_tructures
@@ -99,3 +103,5 @@ if(NUTBLAST_BUILD_TEST)
         target_link_options(NutBlast-lobbyist PRIVATE -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
     endif()
 endif()
+
+set(BUILD_SHARED_LIBS ${NB_BUILD_SHARED_LIBS_ORIGINAL_VALUE})
