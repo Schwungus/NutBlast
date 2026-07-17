@@ -776,7 +776,7 @@ static void handle_list(const nlohmann::json& obj) {
 }
 
 static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> payload_types{
-    {"LetMeCook",
+    {"Connected",
         [](const auto&) {
             ::permission_to_cook = true;
         }},
