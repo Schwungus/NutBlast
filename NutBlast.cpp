@@ -220,6 +220,8 @@ struct Player : std::enable_shared_from_this<Player> {
 struct Message {
     NutBlast_ID from;
     std::vector<std::uint8_t> bytes;
+
+    Message(NutBlast_ID from, const std::vector<std::uint8_t>& bytes) : from(from), bytes(bytes) {}
 };
 
 static std::string gid = "";
@@ -228,7 +230,7 @@ static std::optional<std::string> blaster;
 static ByeReason disconnection_reason;
 
 static NutBlast_ChannelID max_chan = 1;
-static std::array<std::deque<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
+static std::deque<Message> recv_queues[1 << 8 * sizeof(max_chan)];
 
 static bool hosting = false, listing_lobbies = false, hosting_a_listed_lobby = true, permission_to_cook = false;
 static std::size_t listing_limit = 0;
@@ -332,7 +334,7 @@ void Player::init() {
         for (size_t i = 0; i < buf.size(); i++)
             buf[i] = std::to_integer<std::uint8_t>(bytes[1 + i]);
 
-        recv_queues[chan].emplace_back(id, std::move(buf));
+        recv_queues[chan].emplace_back(id, buf);
     };
 
     const auto on_ping = [=, self = weak_from_this()](const auto& msg) {
@@ -1055,7 +1057,7 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
         return false;
 
     static std::vector<std::uint8_t> bytes;
-    bytes = queue.front().bytes;
+    bytes = std::move(queue.front().bytes);
 
     out->from = queue.front().from;
     out->data = reinterpret_cast<char*>(bytes.data());
