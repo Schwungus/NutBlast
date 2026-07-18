@@ -218,7 +218,7 @@ struct Player : std::enable_shared_from_this<Player> {
 
 struct Message {
     NutBlast_ID from;
-    std::vector<std::byte> bytes;
+    std::vector<std::uint8_t> bytes;
 };
 
 static std::string gid = "";
@@ -321,11 +321,15 @@ void Player::init() {
         if (bytes.empty())
             return;
 
-        const auto chan = static_cast<NutBlast_ChannelID>(bytes[0]);
+        const auto chan = std::to_integer<NutBlast_ChannelID>(bytes[0]);
 
         if (chan < ::max_chan) {
-            bytes.erase(bytes.begin());
-            recv_queues[chan].push_back({.from = id, .bytes = bytes});
+            std::vector<std::uint8_t> buf(bytes.size() - 1);
+
+            for (size_t i = 0; i < buf.size(); i++)
+                buf[i] = std::to_integer<std::uint8_t>(bytes[1 + i]);
+
+            recv_queues[chan].push_back({.from = id, .bytes = buf});
         }
     };
 
@@ -1044,21 +1048,19 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
     }
 
     auto& queue = recv_queues[chan];
+
     if (queue.empty())
         return false;
 
-    auto& msg = queue.front();
-    out->data = reinterpret_cast<const char*>(msg.bytes.data());
+    static Message msg; // keeps the buffers valid between calls
+    msg = std::move(queue.front());
+    queue.erase(queue.begin());
+
+    out->data = reinterpret_cast<char*>(msg.bytes.data());
     out->size = msg.bytes.size();
     out->from = msg.from;
 
     return true;
-}
-
-extern "C" void NutBlast_PopMessage(NutBlast_ChannelID chan) {
-    auto& queue = recv_queues[chan];
-    if (!queue.empty())
-        queue.erase(queue.begin());
 }
 
 extern "C" bool NutBlast_IsOnline() {
