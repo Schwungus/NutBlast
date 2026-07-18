@@ -1044,20 +1044,21 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
     }
 
     auto& queue = recv_queues[chan];
-
     if (queue.empty())
         return false;
 
-    static Message msg; // keeps the buffers valid between calls
-
-    msg = queue.front();
-    queue.erase(queue.begin());
-
+    auto& msg = queue.front();
     out->data = reinterpret_cast<const char*>(msg.bytes.data());
     out->size = msg.bytes.size();
     out->from = msg.from;
 
     return true;
+}
+
+extern "C" void NutBlast_PopMessage(NutBlast_ChannelID chan) {
+    auto& queue = recv_queues[chan];
+    if (!queue.empty())
+        queue.erase(queue.begin());
 }
 
 extern "C" bool NutBlast_IsOnline() {
