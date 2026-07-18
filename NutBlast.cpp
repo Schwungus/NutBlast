@@ -25,6 +25,7 @@
 
 #include <array>
 #include <chrono>
+#include <deque>
 #include <format>
 #include <optional>
 #include <random>
@@ -227,7 +228,7 @@ static std::optional<std::string> blaster;
 static ByeReason disconnection_reason;
 
 static NutBlast_ChannelID max_chan = 1;
-static std::array<std::vector<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
+static std::array<std::deque<Message>, 1 << 8 * sizeof(max_chan)> recv_queues;
 
 static bool hosting = false, listing_lobbies = false, hosting_a_listed_lobby = true, permission_to_cook = false;
 static std::size_t listing_limit = 0;
@@ -323,14 +324,15 @@ void Player::init() {
 
         const auto chan = std::to_integer<NutBlast_ChannelID>(bytes[0]);
 
-        if (chan < ::max_chan) {
-            std::vector<std::uint8_t> buf(bytes.size() - 1);
+        if (chan >= ::max_chan)
+            return;
 
-            for (size_t i = 0; i < buf.size(); i++)
-                buf[i] = std::to_integer<std::uint8_t>(bytes[1 + i]);
+        std::vector<std::uint8_t> buf(bytes.size() - 1);
 
-            recv_queues[chan].push_back({.from = id, .bytes = buf});
-        }
+        for (size_t i = 0; i < buf.size(); i++)
+            buf[i] = std::to_integer<std::uint8_t>(bytes[1 + i]);
+
+        recv_queues[chan].emplace_back(id, std::move(buf));
     };
 
     const auto on_ping = [=, self = weak_from_this()](const auto& msg) {
@@ -1052,13 +1054,14 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
     if (queue.empty())
         return false;
 
-    static Message msg; // keeps the buffers valid between calls
-    msg = std::move(queue.front());
-    queue.erase(queue.begin());
+    static std::vector<std::uint8_t> bytes;
+    bytes = queue.front().bytes;
 
-    out->data = reinterpret_cast<char*>(msg.bytes.data());
-    out->size = msg.bytes.size();
-    out->from = msg.from;
+    out->from = queue.front().from;
+    out->data = reinterpret_cast<char*>(bytes.data());
+    out->size = bytes.size();
+
+    queue.pop_front();
 
     return true;
 }
