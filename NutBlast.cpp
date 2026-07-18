@@ -1051,6 +1051,11 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
         return false;
     }
 
+    if (chan >= ::max_chan) {
+        log(NB_LogError, "NutBlast_NextMessage called with channel {} out of {} max channels", chan, ::max_chan);
+        return false;
+    }
+
     auto& queue = recv_queues[chan];
 
     if (queue.empty())
