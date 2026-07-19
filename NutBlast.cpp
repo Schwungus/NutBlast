@@ -105,12 +105,6 @@ static const rtc::Configuration rtc_config = {
 static std::unordered_map<NutBlast_ID, std::vector<rtc::Candidate>> incoming_candidates;
 static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers;
 
-template <typename V> static std::vector<V> copy_and_clear(std::vector<V>& vec) {
-    const std::vector<V> copy = vec;
-    vec.clear();
-    return copy;
-}
-
 class Pinger {
     std::uint64_t last_ping = 0, last_roundtrip = 0;
 
@@ -194,24 +188,21 @@ struct Player : std::enable_shared_from_this<Player> {
         if (!::incoming_offers.contains(id))
             return;
 
-        for (const auto& offer : copy_and_clear(::incoming_offers.at(id))) {
+        for (const auto& offer : ::incoming_offers.at(id)) {
             try {
                 pc->setRemoteDescription(offer);
             } catch (const std::invalid_argument&) { continue; }
         }
 
+        ::incoming_offers.at(id).clear();
+
         if (!::incoming_candidates.contains(id))
             return;
 
-        const auto copy = ::incoming_candidates.at(id);
-
-        for (const auto& candidate : copy) {
+        for (const auto& candidate : ::incoming_candidates.at(id)) {
             try {
                 pc->addRemoteCandidate(candidate);
-            } catch (const std::logic_error&) {
-                return; // cannot use `copy_and_clear` here since that would clear incoming candidates immediately. we
-                        // need them kept despite any state-related errors.
-            }
+            } catch (const std::logic_error&) { return; }
         }
 
         ::incoming_candidates.at(id).clear();
@@ -223,6 +214,13 @@ struct Message {
     std::vector<std::uint8_t> bytes;
 
     Message(NutBlast_ID from, const std::vector<std::uint8_t>& bytes) : from(from), bytes(bytes) {}
+
+    // google ai mode recommendation :frowning_face:
+    Message(const Message&) = default;
+    Message(Message&&) noexcept = default;
+    Message& operator=(const Message&) = default;
+    Message& operator=(Message&&) noexcept = default;
+    ~Message() = default;
 };
 
 static std::string gid = "";
@@ -258,15 +256,16 @@ template <typename... Args> static void fire(void (*cb)(Args...), const std::dec
         cb(args...);
 }
 
-static void ws_send(nlohmann::json&& obj) {
+static void ws_send(const nlohmann::json& obj) {
     ::ws_out.push_back(obj);
 
     if (!NutBlast_IsOnline())
         return;
 
     try {
-        for (const auto& obj : copy_and_clear(::ws_out))
+        for (const auto& obj : ::ws_out)
             ::blaster_ws->send(obj.dump());
+        ::ws_out.clear();
     } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
 }
 
@@ -916,7 +915,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
 };
 
 static void recv_stuff() {
-    for (const auto& obj : copy_and_clear(::ws_in)) {
+    for (const auto& obj : ::ws_in) {
         if (!obj.contains("type"))
             continue;
 
@@ -927,6 +926,8 @@ static void recv_stuff() {
 
         payload_types.at(type)(obj);
     }
+
+    ::ws_in.clear();
 
     for (auto& [id, player] : ::players)
         player->drain_incoming_offers_and_candidates();
@@ -957,7 +958,7 @@ extern "C" void NutBlast_Flush() {
 
     if (beater) {
         for (auto& [id, player] : ::players) {
-            for (const auto& candidate : copy_and_clear(player->outgoing_candidates)) {
+            for (const auto& candidate : player->outgoing_candidates) {
                 ::ws_send({
                     {"type", "PassCandidate"},
                     {"to", id},
@@ -965,6 +966,8 @@ extern "C" void NutBlast_Flush() {
                     {"mid", candidate.mid()},
                 });
             }
+
+            player->outgoing_candidates.clear();
         }
     }
 }
