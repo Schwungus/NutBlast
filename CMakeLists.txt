@@ -74,7 +74,7 @@ else()
 
     FetchContent_Declare(datachannel
         GIT_REPOSITORY https://github.com/Schwungus/libdatachannel.git
-        GIT_TAG 0f03e48f7e75de79d673000c6fcc35c538147fc4
+        GIT_TAG 01ceb8466478449571e22c5356f344950b94732d
         EXCLUDE_FROM_ALL)
 
     list(APPEND NB_LIBS datachannel-static)
