@@ -106,7 +106,7 @@ static std::unordered_map<NutBlast_ID, std::vector<rtc::Candidate>> incoming_can
 static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers;
 
 template <typename V> static std::vector<V> copy_and_clear(std::vector<V>& vec) {
-    const auto copy = vec;
+    const std::vector<V> copy = vec;
     vec.clear();
     return copy;
 }
