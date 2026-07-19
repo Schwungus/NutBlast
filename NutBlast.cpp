@@ -170,7 +170,9 @@ struct Player : std::enable_shared_from_this<Player> {
 
     std::shared_ptr<rtc::PeerConnection> pc = nullptr;
     std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
+
     std::vector<rtc::Candidate> outgoing_candidates;
+    std::mutex candidates_mutex;
 
     Player(NutBlast_ID id, const Metadata& meta) : id(id), meta(meta) {}
 
@@ -223,6 +225,7 @@ static ByeReason disconnection_reason;
 
 static NutBlast_ChannelID max_chan = 1;
 static std::deque<Message> recv_queues[MAX_CHANNELS];
+static std::mutex recv_mutexes[MAX_CHANNELS];
 
 static bool hosting = false, listing_lobbies = false, hosting_a_listed_lobby = true, permission_to_cook = false,
             time_to_die = false;
@@ -311,8 +314,12 @@ void Player::init() {
     });
 
     pc->onLocalCandidate([self = weak_from_this()](const auto& candidate) {
-        if (!self.expired())
-            self.lock()->outgoing_candidates.emplace_back(candidate);
+        if (self.expired())
+            return;
+
+        auto state = self.lock();
+        std::lock_guard<std::mutex> lock(state->candidates_mutex);
+        state->outgoing_candidates.emplace_back(candidate);
     });
 
     const auto on_msg = [=](const auto& variant) {
@@ -332,7 +339,10 @@ void Player::init() {
         std::vector<std::uint8_t> buf(bytes);
         buf.erase(buf.begin());
 
-        ::recv_queues[chan].emplace_back(id, buf);
+        {
+            std::lock_guard<std::mutex> lock(::recv_mutexes[chan]);
+            ::recv_queues[chan].emplace_back(id, buf);
+        }
     };
 
     const auto on_ping = [=, self = weak_from_this()](const auto& msg) {
@@ -956,7 +966,15 @@ extern "C" void NutBlast_Flush() {
 
     if (beater) {
         for (auto& [id, player] : ::players) {
-            for (const auto candidate : player->outgoing_candidates) {
+            std::vector<rtc::Candidate> local_candidates;
+
+            {
+                std::lock_guard<std::mutex> lock(player->candidates_mutex);
+                local_candidates = std::move(player->outgoing_candidates);
+                player->outgoing_candidates.clear();
+            }
+
+            for (const auto& candidate : local_candidates) {
                 ::ws_send({
                     {"type", "PassCandidate"},
                     {"to", id},
@@ -964,8 +982,6 @@ extern "C" void NutBlast_Flush() {
                     {"mid", candidate.mid()},
                 });
             }
-
-            player->outgoing_candidates.clear();
         }
     }
 }
@@ -1065,7 +1081,8 @@ extern "C" bool NutBlast_PeekMessage(NutBlast_ChannelID chan, NutBlast_Message* 
         return false;
     }
 
-    auto& queue = recv_queues[chan];
+    std::lock_guard<std::mutex> lock(::recv_mutexes[chan]);
+    auto& queue = ::recv_queues[chan];
 
     if (queue.empty())
         return false;
@@ -1084,7 +1101,8 @@ extern "C" bool NutBlast_PopMessage(NutBlast_ChannelID chan) {
         return false;
     }
 
-    auto& queue = recv_queues[chan];
+    std::lock_guard<std::mutex> lock(::recv_mutexes[chan]);
+    auto& queue = ::recv_queues[chan];
 
     if (queue.empty())
         return false;
