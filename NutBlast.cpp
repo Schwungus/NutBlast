@@ -325,17 +325,15 @@ void Player::init() {
         if (bytes.empty())
             return;
 
-        const auto chan = std::to_integer<NutBlast_ChannelID>(bytes[0]);
+        const auto chan = static_cast<NutBlast_ChannelID>(bytes[0]);
 
         if (chan >= ::max_chan)
             return;
 
-        std::vector<std::uint8_t> buf(bytes.size() - 1);
+        std::vector<std::uint8_t> buf(bytes);
+        buf.erase(buf.begin());
 
-        for (size_t i = 0; i < buf.size(); i++)
-            buf[i] = std::to_integer<std::uint8_t>(bytes[1 + i]);
-
-        recv_queues[chan].emplace_back(id, buf);
+        ::recv_queues[chan].emplace_back(id, buf);
     };
 
     const auto on_ping = [=, self = weak_from_this()](const auto& msg) {
@@ -1029,10 +1027,10 @@ static void greatest_technician_thats_ever_lived(
         size = (int)std::strlen(msg) + 1;
 
     rtc::binary buf(1 + size);
-    buf[0] = static_cast<std::byte>(chan);
+    buf[0] = chan;
 
     for (size_t i = 0; i < size; i++)
-        buf[i + 1] = static_cast<std::byte>(msg[i]);
+        buf[i + 1] = msg[i];
 
     try {
         const auto& dc = reliable ? player->reliable_dc : player->unreliable_dc;
