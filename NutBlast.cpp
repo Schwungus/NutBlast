@@ -104,6 +104,7 @@ static const rtc::Configuration rtc_config = {
 
 static std::unordered_map<NutBlast_ID, std::vector<rtc::Candidate>> incoming_candidates;
 static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers;
+static std::mutex candidates_and_offers_mutex;
 
 class Pinger {
     std::uint64_t last_ping = 0, last_roundtrip = 0;
@@ -187,27 +188,34 @@ struct Player : std::enable_shared_from_this<Player> {
     }
 
     void drain_incoming_offers_and_candidates() {
-        if (!::incoming_offers.contains(id))
-            return;
+        std::vector<rtc::Description> local_incoming_offers;
+        std::vector<rtc::Candidate> local_incoming_candidates;
 
-        for (const auto offer : ::incoming_offers.at(id)) {
+        {
+            std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
+
+            if (::incoming_offers.contains(id)) {
+                local_incoming_offers = std::move(::incoming_offers.at(id));
+                ::incoming_offers.erase(id);
+            }
+
+            if (::incoming_candidates.contains(id)) {
+                local_incoming_candidates = std::move(::incoming_candidates.at(id));
+                ::incoming_candidates.erase(id);
+            }
+        }
+
+        for (const auto& offer : local_incoming_offers) {
             try {
                 pc->setRemoteDescription(offer);
             } catch (const std::invalid_argument&) { continue; }
         }
 
-        ::incoming_offers.at(id).clear();
-
-        if (!::incoming_candidates.contains(id))
-            return;
-
-        for (const auto candidate : ::incoming_candidates.at(id)) {
+        for (const auto& candidate : local_incoming_candidates) {
             try {
                 pc->addRemoteCandidate(candidate);
             } catch (const std::logic_error&) { return; }
         }
-
-        ::incoming_candidates.at(id).clear();
     }
 };
 
@@ -238,6 +246,7 @@ static Pinger ws_pinger;
 static Once fire_ready;
 static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
 static std::vector<nlohmann::json> ws_in, ws_out;
+static std::mutex ws_in_mutex;
 
 static Metadata player_meta, lobby_meta;
 
@@ -263,7 +272,6 @@ static void ws_send(const nlohmann::json& obj) {
     ::ws_out.clear();
 
     try {
-
         for (const auto& obj : out)
             ::blaster_ws->send(obj.dump());
     } catch (const std::runtime_error&) {
@@ -606,6 +614,8 @@ static void join_pro() {
 
         try {
             const auto obj = nlohmann::json::parse(std::get<std::string>(msg));
+
+            std::lock_guard<std::mutex> lock(::ws_in_mutex);
             ::ws_in.emplace_back(obj);
         } catch (const nlohmann::json::parse_error&) {}
     });
@@ -620,14 +630,32 @@ static void join_pro() {
 extern "C" void NutBlast_Disconnect() {
     if (::blaster_ws) {
         ::blaster_ws->onClosed(nullptr);
+        ::blaster_ws->onMessage(nullptr);
 
         try {
             ::blaster_ws->close();
         } catch (const std::runtime_error&) {}
     }
 
-    ::blaster_ws = nullptr, ::lid = 0;
-    ::players.clear(), ::ws_in.clear(), ::ws_out.clear();
+    for (auto& [id, player] : ::players)
+        if (player && player->pc)
+            player->pc->close();
+
+    {
+        std::lock_guard<std::mutex> lock(::ws_in_mutex);
+        ::ws_in.clear();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
+        ::incoming_candidates.clear();
+        ::incoming_offers.clear();
+    }
+
+    ::ws_out.clear();
+    ::players.clear();
+    ::blaster_ws = nullptr;
+    ::lid = 0;
     ::fire_ready.reset();
 
     log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
@@ -723,14 +751,10 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
 
 static void handle_offer_or_answer(const nlohmann::json& obj) {
     const NutBlast_ID& id = obj["from"];
-
-    if (!::incoming_offers.contains(id))
-        ::incoming_offers.insert({id, {}});
-
-    auto& queue = incoming_offers.at(id);
-
     const auto type = obj["type"] == "Offer" ? "offer" : "answer";
-    queue.emplace_back(obj["sdp"], type);
+
+    std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
+    ::incoming_offers[id].emplace_back(obj["sdp"], type);
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
@@ -922,10 +946,15 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
 };
 
 static void recv_stuff() {
-    const auto in = ::ws_in;
-    ::ws_in.clear();
+    std::vector<nlohmann::json> local_ws_in;
 
-    for (const auto& obj : in) {
+    {
+        std::lock_guard<std::mutex> lock(::ws_in_mutex);
+        local_ws_in = std::move(::ws_in);
+        ::ws_in.clear();
+    }
+
+    for (const auto& obj : local_ws_in) {
         if (!obj.contains("type"))
             continue;
 
@@ -966,15 +995,15 @@ extern "C" void NutBlast_Flush() {
 
     if (beater) {
         for (auto& [id, player] : ::players) {
-            std::vector<rtc::Candidate> local_candidates;
+            std::vector<rtc::Candidate> local_outgoing_candidates;
 
             {
                 std::lock_guard<std::mutex> lock(player->candidates_mutex);
-                local_candidates = std::move(player->outgoing_candidates);
+                local_outgoing_candidates = std::move(player->outgoing_candidates);
                 player->outgoing_candidates.clear();
             }
 
-            for (const auto& candidate : local_candidates) {
+            for (const auto& candidate : local_outgoing_candidates) {
                 ::ws_send({
                     {"type", "PassCandidate"},
                     {"to", id},
