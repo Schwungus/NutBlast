@@ -735,7 +735,9 @@ static void handle_candidate(const nlohmann::json& obj) {
         ::incoming_candidates.insert({id, {}});
 
     auto& queue = ::incoming_candidates.at(id);
-    queue.emplace_back(obj["candidate"], obj["mid"]);
+    try {
+        queue.emplace_back(obj["candidate"], obj["mid"]);
+    } catch (const std::invalid_argument&) { ::incoming_candidates.erase(id); }
 }
 
 struct LobbyInfo {
