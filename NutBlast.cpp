@@ -23,7 +23,6 @@
 //
 // For more information, please refer to <https://unlicense.org>
 
-#include <array>
 #include <chrono>
 #include <deque>
 #include <format>
@@ -223,9 +222,7 @@ struct Message {
     NutBlast_ID from;
     std::vector<std::uint8_t> bytes;
 
-    Message() = default;
-
-    Message(NutBlast_ID from, std::vector<std::uint8_t> bytes) : from(from), bytes(std::move(bytes)) {}
+    Message(NutBlast_ID from, const std::vector<std::uint8_t>& bytes) : from(from), bytes(bytes) {}
 };
 
 static std::string gid = "";
@@ -262,13 +259,13 @@ template <typename... Args> static void fire(void (*cb)(Args...), const std::dec
 }
 
 static void ws_send(nlohmann::json&& obj) {
-    ws_out.push_back(obj);
+    ::ws_out.push_back(obj);
 
     if (!NutBlast_IsOnline())
         return;
 
     try {
-        for (const auto& obj : copy_and_clear(ws_out))
+        for (const auto& obj : copy_and_clear(::ws_out))
             ::blaster_ws->send(obj.dump());
     } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
 }
@@ -601,7 +598,7 @@ static void join_pro() {
             return;
 
         try {
-            ws_in.push_back(nlohmann::json::parse(std::get<std::string>(msg)));
+            ::ws_in.push_back(nlohmann::json::parse(std::get<std::string>(msg)));
         } catch (const nlohmann::json::parse_error&) {}
     });
 
