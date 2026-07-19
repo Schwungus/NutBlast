@@ -48,6 +48,8 @@ static constexpr const bool WINDOSE =
 #include <errno.h>
 #endif
 
+static constexpr const size_t MAX_CHANNELS = 16;
+
 using Metadata = std::unordered_map<std::string, std::string>;
 
 namespace ns {
@@ -221,7 +223,9 @@ struct Message {
     NutBlast_ID from;
     std::vector<std::uint8_t> bytes;
 
-    Message(NutBlast_ID from, const std::vector<std::uint8_t>& bytes) : from(from), bytes(bytes) {}
+    Message() = default;
+
+    Message(NutBlast_ID from, std::vector<std::uint8_t> bytes) : from(from), bytes(std::move(bytes)) {}
 };
 
 static std::string gid = "";
@@ -230,7 +234,7 @@ static std::optional<std::string> blaster;
 static ByeReason disconnection_reason;
 
 static NutBlast_ChannelID max_chan = 1;
-static std::deque<Message> recv_queues[1 << 8 * sizeof(max_chan)];
+static std::deque<Message> recv_queues[MAX_CHANNELS];
 
 static bool hosting = false, listing_lobbies = false, hosting_a_listed_lobby = true, permission_to_cook = false;
 static std::size_t listing_limit = 0;
@@ -426,7 +430,7 @@ extern "C" void NutBlast_SetGameID(const char* gid) {
 }
 
 extern "C" void NutBlast_SetMaxChannels(NutBlast_ChannelID max) {
-    if (max)
+    if (max > 0 && max <= MAX_CHANNELS)
         ::max_chan = max;
 }
 
