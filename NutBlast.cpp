@@ -1061,12 +1061,15 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
     if (queue.empty())
         return false;
 
-    static std::vector<std::uint8_t> bytes;
-    bytes = std::move(queue.front().bytes);
+    const auto& msg = queue.front();
+    static std::unique_ptr<char[]> bytes = nullptr;
+
+    bytes = std::make_unique<char[]>(msg.bytes.size());
+    std::memcpy(bytes.get(), msg.bytes.data(), msg.bytes.size());
 
     out->from = queue.front().from;
-    out->data = reinterpret_cast<char*>(bytes.data());
-    out->size = bytes.size();
+    out->data = bytes.get();
+    out->size = msg.bytes.size();
 
     queue.pop_front();
 
