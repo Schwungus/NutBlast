@@ -24,6 +24,7 @@
 // For more information, please refer to <https://unlicense.org>
 
 #include <chrono>
+#include <cstring>
 #include <deque>
 #include <format>
 #include <optional>
@@ -334,22 +335,21 @@ void Player::init() {
         if (!std::holds_alternative<rtc::binary>(variant))
             return;
 
-        auto bytes = std::get<rtc::binary>(variant);
-
+        const auto& bytes = std::get<rtc::binary>(variant);
         if (bytes.empty())
             return;
 
-        const auto chan = static_cast<NutBlast_ChannelID>(bytes[0]);
+        const auto* data = reinterpret_cast<const std::uint8_t*>(bytes.data());
 
+        const auto chan = static_cast<NutBlast_ChannelID>(data[0]);
         if (chan >= ::max_chan)
             return;
 
-        std::vector<std::uint8_t> buf(bytes);
-        buf.erase(buf.begin());
+        std::vector<std::uint8_t> buf(data + 1, data + bytes.size());
 
         {
             std::lock_guard<std::mutex> lock(::recv_mutexes[chan]);
-            ::recv_queues[chan].emplace_back(id, buf);
+            ::recv_queues[chan].emplace_back(id, std::move(buf));
         }
     };
 
@@ -1080,14 +1080,14 @@ static void greatest_technician_thats_ever_lived(
         size = (int)std::strlen(msg) + 1;
 
     rtc::binary buf(1 + size);
-    buf[0] = chan;
-
-    for (size_t i = 0; i < size; i++)
-        buf[i + 1] = msg[i];
+    auto* ptr = reinterpret_cast<std::uint8_t*>(buf.data());
+    ptr[0] = chan;
+    std::memcpy(ptr + 1, msg, size);
 
     try {
         const auto& dc = reliable ? player->reliable_dc : player->unreliable_dc;
-        dc && dc->send(buf);
+        if (dc)
+            dc->send(buf);
     } catch (const std::runtime_error&) {}
 }
 
