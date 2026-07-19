@@ -6,6 +6,7 @@ Checks: [
     -bugprone-empty-catch, # nothing but false positives
     performance-*,
     -performance-enum-size, # suggested fix is not portable across GCC/Clang/MSVC
+    -performance-for-range-copy, # what if i *need* to copy???
     portability-*,
     misc-*,
     -misc-use-anonymous-namespace,

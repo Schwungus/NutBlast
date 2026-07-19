@@ -188,7 +188,7 @@ struct Player : std::enable_shared_from_this<Player> {
         if (!::incoming_offers.contains(id))
             return;
 
-        for (const auto& offer : ::incoming_offers.at(id)) {
+        for (const auto offer : ::incoming_offers.at(id)) {
             try {
                 pc->setRemoteDescription(offer);
             } catch (const std::invalid_argument&) { continue; }
@@ -199,7 +199,7 @@ struct Player : std::enable_shared_from_this<Player> {
         if (!::incoming_candidates.contains(id))
             return;
 
-        for (const auto& candidate : ::incoming_candidates.at(id)) {
+        for (const auto candidate : ::incoming_candidates.at(id)) {
             try {
                 pc->addRemoteCandidate(candidate);
             } catch (const std::logic_error&) { return; }
@@ -214,13 +214,6 @@ struct Message {
     std::vector<std::uint8_t> bytes;
 
     Message(NutBlast_ID from, const std::vector<std::uint8_t>& bytes) : from(from), bytes(bytes) {}
-
-    // google ai mode recommendation :frowning_face:
-    Message(const Message&) = default;
-    Message(Message&&) noexcept = default;
-    Message& operator=(const Message&) = default;
-    Message& operator=(Message&&) noexcept = default;
-    ~Message() = default;
 };
 
 static std::string gid = "";
@@ -231,7 +224,8 @@ static ByeReason disconnection_reason;
 static NutBlast_ChannelID max_chan = 1;
 static std::deque<Message> recv_queues[MAX_CHANNELS];
 
-static bool hosting = false, listing_lobbies = false, hosting_a_listed_lobby = true, permission_to_cook = false;
+static bool hosting = false, listing_lobbies = false, hosting_a_listed_lobby = true, permission_to_cook = false,
+            time_to_die = false;
 static std::size_t listing_limit = 0;
 static NutBlast_ID master = 0;
 
@@ -257,16 +251,22 @@ template <typename... Args> static void fire(void (*cb)(Args...), const std::dec
 }
 
 static void ws_send(const nlohmann::json& obj) {
-    ::ws_out.push_back(obj);
+    ::ws_out.emplace_back(obj);
 
     if (!NutBlast_IsOnline())
         return;
 
+    const auto out = ::ws_out;
+    ::ws_out.clear();
+
     try {
-        for (const auto& obj : ::ws_out)
+
+        for (const auto& obj : out)
             ::blaster_ws->send(obj.dump());
-        ::ws_out.clear();
-    } catch (const std::runtime_error&) { NutBlast_Disconnect(); }
+    } catch (const std::runtime_error&) {
+        ::time_to_die = true;
+        return;
+    }
 }
 
 class Ticker {
@@ -312,7 +312,7 @@ void Player::init() {
 
     pc->onLocalCandidate([self = weak_from_this()](const auto& candidate) {
         if (!self.expired())
-            self.lock()->outgoing_candidates.push_back(candidate);
+            self.lock()->outgoing_candidates.emplace_back(candidate);
     });
 
     const auto on_msg = [=](const auto& variant) {
@@ -595,25 +595,22 @@ static void join_pro() {
             return;
 
         try {
-            ::ws_in.push_back(nlohmann::json::parse(std::get<std::string>(msg)));
+            const auto obj = nlohmann::json::parse(std::get<std::string>(msg));
+            ::ws_in.emplace_back(obj);
         } catch (const nlohmann::json::parse_error&) {}
     });
 
-    ::blaster_ws->onClosed(NutBlast_Disconnect);
+    ::blaster_ws->onClosed([]() {
+        ::time_to_die = true;
+    });
 
     ::blaster_ws->open(get_blaster());
 }
 
 extern "C" void NutBlast_Disconnect() {
-    bool fire_disconnect = false;
-
     if (::blaster_ws) {
         ::blaster_ws->onClosed(nullptr);
-        recv_stuff();
-        fire_disconnect = true;
-    }
 
-    if (::blaster_ws) { // `recv_stuff` could've nuked the socket so we check for null once again
         try {
             ::blaster_ws->close();
         } catch (const std::runtime_error&) {}
@@ -623,11 +620,11 @@ extern "C" void NutBlast_Disconnect() {
     ::players.clear(), ::ws_in.clear(), ::ws_out.clear();
     ::fire_ready.reset();
 
-    if (fire_disconnect) {
-        log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
-        // TODO: maybe NOT fire this in the lobby-listing mode?
-        fire(::on_disconnected, ::disconnection_reason);
-    }
+    log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
+    // TODO: maybe NOT fire this in the lobby-listing mode?
+    fire(::on_disconnected, ::disconnection_reason);
+
+    ::time_to_die = false;
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
@@ -732,8 +729,8 @@ static void handle_candidate(const nlohmann::json& obj) {
     if (!::incoming_candidates.contains(id))
         ::incoming_candidates.insert({id, {}});
 
-    auto& queue = ::incoming_candidates.at(id);
     try {
+        auto& queue = ::incoming_candidates.at(id);
         queue.emplace_back(obj["candidate"], obj["mid"]);
     } catch (const std::invalid_argument&) { ::incoming_candidates.erase(id); }
 }
@@ -787,7 +784,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
     {"Bye",
         [](const auto& obj) {
             ::disconnection_reason = obj["reason"];
-            NutBlast_Disconnect();
+            ::time_to_die = true;
         }},
     {"SetListed",
         [](const auto& obj) {
@@ -915,7 +912,10 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
 };
 
 static void recv_stuff() {
-    for (const auto& obj : ::ws_in) {
+    const auto in = ::ws_in;
+    ::ws_in.clear();
+
+    for (const auto& obj : in) {
         if (!obj.contains("type"))
             continue;
 
@@ -926,8 +926,6 @@ static void recv_stuff() {
 
         payload_types.at(type)(obj);
     }
-
-    ::ws_in.clear();
 
     for (auto& [id, player] : ::players)
         player->drain_incoming_offers_and_candidates();
@@ -958,7 +956,7 @@ extern "C" void NutBlast_Flush() {
 
     if (beater) {
         for (auto& [id, player] : ::players) {
-            for (const auto& candidate : player->outgoing_candidates) {
+            for (const auto candidate : player->outgoing_candidates) {
                 ::ws_send({
                     {"type", "PassCandidate"},
                     {"to", id},
@@ -995,8 +993,15 @@ static void init_players_after_ready() {
 
 extern "C" void NutBlast_Update() {
     recv_stuff();
+
+    if (::time_to_die) {
+        NutBlast_Disconnect();
+        return;
+    }
+
     if (NutBlast_IsReady())
         init_players_after_ready();
+
     NutBlast_Flush();
 }
 
