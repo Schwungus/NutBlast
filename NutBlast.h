@@ -187,7 +187,13 @@ void NutBlast_OnPlayerMetadataChanged(void (*)(NutBlast_ID, NutBlast_FieldDiff))
 void NutBlast_OnLobbyMetadataChanged(void (*)(NutBlast_FieldDiff));
 
 /// Returns true and copies the incoming message if there is a message waiting in the queue for the specified channel.
-bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
+///
+/// USE `NutBlast_PopMessage` WHEN YOU ARE DONE WITH THE MESSAGE.
+bool NutBlast_PeekMessage(NutBlast_ChannelID, NutBlast_Message*);
+
+/// Pops the last message off of the specified channel. Returns true if successful, so you can also use this to clear an
+/// entire channel if needed.
+bool NutBlast_PopMessage(NutBlast_ChannelID);
 
 /// Sends a null-terminated string to the specified player. Failures are silent. Delivery is not guaranteed.
 ///

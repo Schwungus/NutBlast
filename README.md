@@ -41,7 +41,7 @@ The current server implementation uses a lobby-based approach, where each lobby 
 5. Run the game logic.
 6. Keep in sync with other players:
     1. Send messages with `NutBlast_SendTo()` or `NutBlast_SendReliablyTo()` (for reliable delivery).
-    2. Retrieve incoming messages with `NutBlast_NextMessage()`.
+    2. Retrieve incoming messages with `NutBlast_PeekMessage()`, then dispose of them with `NutBlast_PopMessage()`.
     3. Set/retrieve lobby or player metadata with `NutBlast_Set*Field()`/`NutBlast_Get*Field()`.
 7. Repeat steps 4 through 6 throughout the networking session.
 8. Use `NutBlast_Disconnect()` to leave the lobby, or `NutBlast_Cleanup()` at the end of your program to perform final cleanup. (The latter disconnects you from the lobby as well.) You're all set!

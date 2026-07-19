@@ -1045,14 +1045,14 @@ extern "C" void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID id,
     greatest_technician_thats_ever_lived(chan, id, msg, size, true);
 }
 
-extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
+extern "C" bool NutBlast_PeekMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
     if (!out) {
-        log(NB_LogError, "NutBlast_NextMessage wants a non-null pointer instead");
+        log(NB_LogError, "NutBlast_PeekMessage called with null pointer");
         return false;
     }
 
     if (chan >= ::max_chan) {
-        log(NB_LogError, "NutBlast_NextMessage called with channel {} out of {} max channels", chan, ::max_chan);
+        log(NB_LogError, "NutBlast_PeekMessage called with channel {} out of {} max channels", chan, ::max_chan);
         return false;
     }
 
@@ -1062,14 +1062,23 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
         return false;
 
     const auto& msg = queue.front();
-    static std::unique_ptr<char[]> bytes = nullptr;
-
-    bytes = std::make_unique<char[]>(msg.bytes.size());
-    std::memcpy(bytes.get(), msg.bytes.data(), msg.bytes.size());
-
-    out->from = queue.front().from;
-    out->data = bytes.get();
+    out->from = msg.from;
+    out->data = (const char*)msg.bytes.data();
     out->size = msg.bytes.size();
+
+    return true;
+}
+
+extern "C" bool NutBlast_PopMessage(NutBlast_ChannelID chan) {
+    if (chan >= ::max_chan) {
+        log(NB_LogError, "NutBlast_PopMessage called with channel {} out of {} max channels", chan, ::max_chan);
+        return false;
+    }
+
+    auto& queue = recv_queues[chan];
+
+    if (queue.empty())
+        return false;
 
     queue.pop_front();
 
