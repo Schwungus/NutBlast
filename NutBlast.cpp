@@ -234,8 +234,10 @@ static std::optional<std::string> blaster;
 static ByeReason disconnection_reason;
 
 static NutBlast_ChannelID max_chan = 1;
-static std::deque<Message> recv_queues[MAX_CHANNELS];
-static std::mutex recv_mutexes[MAX_CHANNELS];
+static struct {
+    std::mutex mutex;
+    std::deque<Message> messages;
+} recv_queues[MAX_CHANNELS];
 
 static bool hosting = false, listing_lobbies = false, hosting_a_listed_lobby = true, permission_to_cook = false,
             time_to_die = false;
@@ -346,12 +348,11 @@ void Player::init() {
         if (chan >= ::max_chan)
             return;
 
-        std::vector<std::uint8_t> buf(bytes.begin() + 1, bytes.end());
+        auto& queue = ::recv_queues[chan];
 
-        {
-            std::lock_guard<std::mutex> lock(::recv_mutexes[chan]);
-            ::recv_queues[chan].emplace_back(id, std::move(buf));
-        }
+        std::lock_guard<std::mutex> lock(queue.mutex);
+        std::vector<std::uint8_t> buf(bytes.begin() + 1, bytes.end());
+        queue.messages.emplace_back(id, std::move(buf));
     };
 
     const auto on_ping = [=, self = weak_from_this()](const auto& msg) {
@@ -563,14 +564,24 @@ static void recv_stuff();
 static void join_pro() {
     rtc::Preload();
 
+    {
+        std::lock_guard<std::mutex> lock(::ws_in_mutex);
+        ::ws_in.clear(), ::ws_out.clear();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
+        ::incoming_candidates.clear(), ::incoming_offers.clear();
+    }
+
     get_blaster();
     ::master = 0, ::disconnection_reason = ByeReason(), ::permission_to_cook = false;
-    ::ws_in.clear(), ::ws_out.clear();
-    ::incoming_candidates.clear(), ::incoming_offers.clear();
     ::ws_pinger.reset();
 
-    for (auto& queue : recv_queues)
-        queue.clear();
+    for (auto& queue : recv_queues) {
+        std::lock_guard<std::mutex> lock(queue.mutex);
+        queue.messages.clear();
+    }
 
 #ifndef __EMSCRIPTEN__
     std::optional<rtc::string> ca = std::nullopt;
@@ -1117,15 +1128,15 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(::recv_mutexes[chan]);
     auto& queue = ::recv_queues[chan];
+    std::lock_guard<std::mutex> lock(queue.mutex);
 
-    if (queue.empty())
+    if (queue.messages.empty())
         return false;
 
     static Message msg; // keeps the buffers valid between calls
-    msg = queue.front();
-    queue.pop_front();
+    msg = queue.messages.front();
+    queue.messages.pop_front();
 
     out->from = msg.from;
     out->data = (const char*)msg.bytes.data();
