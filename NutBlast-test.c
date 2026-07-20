@@ -199,18 +199,15 @@ static void maybe_spam() {
 static void recv_stuff() {
     NutBlast_Message msg = {0};
 
-    while (NutBlast_PeekMessage(CHAN_POS, &msg)) {
+    while (NutBlast_NextMessage(CHAN_POS, &msg)) {
         Player* p = (Player*)TinyMapGet(&players, msg.from);
+
         if (p)
             sscanf(msg.data, "%d:%d", &p->x, &p->y);
-
-        NutBlast_PopMessage(CHAN_POS);
     }
 
-    while (NutBlast_PeekMessage(CHAN_CHAT, &msg)) {
+    while (NutBlast_NextMessage(CHAN_CHAT, &msg))
         TraceLog(LOG_INFO, "chat <%s> %s", NutBlast_GetPlayerField(msg.from, NUTBLAST_FIELD_PLAYER_NAME), msg.data);
-        NutBlast_PopMessage(CHAN_CHAT);
-    }
 }
 
 static void on_disconnected(NutBlast_Reason reason) {

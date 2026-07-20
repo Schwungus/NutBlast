@@ -189,30 +189,30 @@ struct Player : std::enable_shared_from_this<Player> {
     }
 
     void drain_incoming_offers_and_candidates() {
-        std::vector<rtc::Description> local_incoming_offers;
-        std::vector<rtc::Candidate> local_incoming_candidates;
+        std::vector<rtc::Description> incoming_offers_copy;
+        std::vector<rtc::Candidate> incoming_candidates_copy;
 
         {
             std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
 
             if (::incoming_offers.contains(id)) {
-                local_incoming_offers = std::move(::incoming_offers.at(id));
+                incoming_offers_copy = ::incoming_offers.at(id);
                 ::incoming_offers.erase(id);
             }
 
             if (::incoming_candidates.contains(id)) {
-                local_incoming_candidates = std::move(::incoming_candidates.at(id));
+                incoming_candidates_copy = ::incoming_candidates.at(id);
                 ::incoming_candidates.erase(id);
             }
         }
 
-        for (const auto& offer : local_incoming_offers) {
+        for (const auto& offer : incoming_offers_copy) {
             try {
                 pc->setRemoteDescription(offer);
             } catch (const std::invalid_argument&) { continue; }
         }
 
-        for (const auto& candidate : local_incoming_candidates) {
+        for (const auto& candidate : incoming_candidates_copy) {
             try {
                 pc->addRemoteCandidate(candidate);
             } catch (const std::logic_error&) { return; }
@@ -224,6 +224,7 @@ struct Message {
     NutBlast_ID from;
     std::vector<std::uint8_t> bytes;
 
+    Message() = default;
     Message(NutBlast_ID from, const std::vector<std::uint8_t>& bytes) : from(from), bytes(bytes) {}
 };
 
@@ -336,16 +337,16 @@ void Player::init() {
             return;
 
         const auto& bytes = std::get<rtc::binary>(variant);
+
         if (bytes.empty())
             return;
 
-        const auto* data = reinterpret_cast<const std::uint8_t*>(bytes.data());
+        const auto chan = static_cast<NutBlast_ChannelID>(bytes[0]);
 
-        const auto chan = static_cast<NutBlast_ChannelID>(data[0]);
         if (chan >= ::max_chan)
             return;
 
-        std::vector<std::uint8_t> buf(data + 1, data + bytes.size());
+        std::vector<std::uint8_t> buf(bytes.begin() + 1, bytes.end());
 
         {
             std::lock_guard<std::mutex> lock(::recv_mutexes[chan]);
@@ -754,7 +755,11 @@ static void handle_offer_or_answer(const nlohmann::json& obj) {
     const auto type = obj["type"] == "Offer" ? "offer" : "answer";
 
     std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
-    ::incoming_offers[id].emplace_back(obj["sdp"], type);
+
+    if (!::incoming_offers.contains(id))
+        ::incoming_offers.insert({id, {}});
+
+    incoming_offers.at(id).emplace_back(obj["sdp"], type);
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
@@ -1080,9 +1085,11 @@ static void greatest_technician_thats_ever_lived(
         size = (int)std::strlen(msg) + 1;
 
     rtc::binary buf(1 + size);
-    auto* ptr = reinterpret_cast<std::uint8_t*>(buf.data());
-    ptr[0] = chan;
-    std::memcpy(ptr + 1, msg, size);
+
+    buf[0] = chan;
+
+    for (size_t i = 0; i < size; i++)
+        buf[i + 1] = msg[i];
 
     try {
         const auto& dc = reliable ? player->reliable_dc : player->unreliable_dc;
@@ -1099,7 +1106,7 @@ extern "C" void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID id,
     greatest_technician_thats_ever_lived(chan, id, msg, size, true);
 }
 
-extern "C" bool NutBlast_PeekMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
+extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
     if (!out) {
         log(NB_LogError, "NutBlast_PeekMessage called with null pointer");
         return false;
@@ -1116,27 +1123,13 @@ extern "C" bool NutBlast_PeekMessage(NutBlast_ChannelID chan, NutBlast_Message* 
     if (queue.empty())
         return false;
 
-    const auto& msg = queue.front();
+    static Message msg; // keeps the buffers valid between calls
+    msg = queue.front();
+    queue.pop_front();
+
     out->from = msg.from;
     out->data = (const char*)msg.bytes.data();
     out->size = msg.bytes.size();
-
-    return true;
-}
-
-extern "C" bool NutBlast_PopMessage(NutBlast_ChannelID chan) {
-    if (chan >= ::max_chan) {
-        log(NB_LogError, "NutBlast_PopMessage called with channel {} out of {} max channels", chan, ::max_chan);
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(::recv_mutexes[chan]);
-    auto& queue = ::recv_queues[chan];
-
-    if (queue.empty())
-        return false;
-
-    queue.pop_front();
 
     return true;
 }

@@ -57,7 +57,7 @@ if(EMSCRIPTEN)
 
     FetchContent_Declare(datachannel-wasm
         GIT_REPOSITORY https://github.com/Schwungus/datachannel-wasm.git
-        GIT_TAG 760cbf88f0aa6d45cb4a953e268c60943994d987
+        GIT_TAG 8681bd3b8cd862ed05933db91d06235b75bcb9ce
         EXCLUDE_FROM_ALL)
 
     list(APPEND NB_LIBS datachannel-wasm)
