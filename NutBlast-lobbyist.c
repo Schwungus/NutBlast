@@ -31,15 +31,15 @@ int main(int argc, char* argv[]) {
     NutBlast_OnLobbiesFound(on_lobbies_found);
     NutBlast_FindLobbies(LIMOZ);
 
-    int count = 0;
+    int timer = 0;
 
     for (;;) {
         NutBlast_Update();
         NutBlast_SleepMS(100);
 
-        if (count++ >= 50) {
+        if (timer++ >= 50) {
             NutBlast_FindLobbies(LIMOZ);
-            count = 0;
+            timer = 0;
         }
     }
 

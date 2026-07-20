@@ -239,12 +239,17 @@ static struct {
     std::deque<Message> messages;
 } recv_queues[MAX_CHANNELS];
 
-static bool hosting = false, listing_lobbies = false, hosting_a_listed_lobby = true, permission_to_cook = false,
-            time_to_die = false;
+static enum class Mode {
+    Hosting,
+    Joining,
+    Listing,
+} mode = Mode::Joining;
+
+static bool hosting_a_listed_lobby = true, permission_to_cook = false, time_to_die = false;
 static std::size_t listing_limit = 0;
-static NutBlast_ID master = 0;
 
 static std::unordered_map<NutBlast_ID, std::shared_ptr<Player>> players;
+static NutBlast_ID master = 0;
 
 static Pinger ws_pinger;
 static Once fire_ready;
@@ -566,8 +571,10 @@ static void join_pro() {
 
     {
         std::lock_guard<std::mutex> lock(::ws_in_mutex);
-        ::ws_in.clear(), ::ws_out.clear();
+        ::ws_in.clear();
     }
+
+    ::ws_out.clear();
 
     {
         std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
@@ -584,22 +591,20 @@ static void join_pro() {
     }
 
 #ifndef __EMSCRIPTEN__
-    std::optional<rtc::string> ca = std::nullopt;
+    rtc::WebSocketConfiguration conf;
 
     if (!WINDOSE)
-        ca = "/etc/ssl/certs/ca-certificates.crt";
+        conf.caCertificatePemFile = "/etc/ssl/certs/ca-certificates.crt";
 #endif
 
     ::blaster_ws = std::make_shared<rtc::WebSocket>(
 #ifndef __EMSCRIPTEN__
-        rtc::WebSocketConfiguration{
-            .caCertificatePemFile = ca,
-        }
+        conf
 #endif
     );
 
     ::blaster_ws->onOpen([]() {
-        if (listing_lobbies) {
+        if (::mode == Mode::Listing) {
             ::ws_send({
                 {"type", "List"},
                 {"gid", ::gid},
@@ -608,7 +613,7 @@ static void join_pro() {
         } else {
             ::ws_send({
                 {"type", "Connect"},
-                {"mode", ::hosting ? "Host" : "Join"},
+                {"mode", ::mode == Mode::Hosting ? "Host" : "Join"},
                 {"gid", ::gid},
                 {"pid", NutBlast_GetOurID()},
                 {"lid", ::lid},
@@ -625,8 +630,7 @@ static void join_pro() {
             return;
 
         try {
-            const auto obj = nlohmann::json::parse(std::get<std::string>(msg));
-
+            auto obj = nlohmann::json::parse(std::get<std::string>(msg));
             std::lock_guard<std::mutex> lock(::ws_in_mutex);
             ::ws_in.emplace_back(obj);
         } catch (const nlohmann::json::parse_error&) {}
@@ -640,6 +644,8 @@ static void join_pro() {
 }
 
 extern "C" void NutBlast_Disconnect() {
+    ::time_to_die = false;
+
     if (::blaster_ws) {
         ::blaster_ws->onClosed(nullptr);
         ::blaster_ws->onMessage(nullptr);
@@ -660,28 +666,23 @@ extern "C" void NutBlast_Disconnect() {
 
     {
         std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
-        ::incoming_candidates.clear();
-        ::incoming_offers.clear();
+        ::incoming_candidates.clear(), ::incoming_offers.clear();
     }
 
-    ::ws_out.clear();
-    ::players.clear();
-    ::blaster_ws = nullptr;
-    ::lid = 0;
+    ::ws_out.clear(), ::players.clear();
+    ::blaster_ws = nullptr, ::lid = 0;
     ::fire_ready.reset();
 
     log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
     // TODO: maybe NOT fire this in the lobby-listing mode?
     fire(::on_disconnected, ::disconnection_reason);
-
-    ::time_to_die = false;
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
     if (::blaster_ws) {
         log(NB_LogError, "You're already connected!");
     } else {
-        ::listing_lobbies = true, ::listing_limit = limit;
+        ::mode = Mode::Listing, ::listing_limit = limit;
         log(NB_LogInfo, "Connecting to {}", get_blaster());
         join_pro();
     }
@@ -693,7 +694,7 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
     } else if (!id) {
         log(NB_LogError, "No ID specified!");
     } else {
-        ::hosting = false, ::listing_lobbies = false, ::lid = id;
+        ::mode = Mode::Joining, ::lid = id;
         log(NB_LogInfo, "Trying to join '{}' at: {}", id, get_blaster());
         join_pro();
     }
@@ -704,7 +705,7 @@ extern "C" void NutBlast_Host(NutBlast_ID id, int max, bool listed) {
         log(NB_LogError, "You're already connected!");
     } else {
         NutBlast_SetMaxPlayers(max);
-        ::hosting = true, ::listing_lobbies = false, ::hosting_a_listed_lobby = listed;
+        ::mode = Mode::Hosting, ::hosting_a_listed_lobby = listed;
         ::lid = id ? id : generate_id();
 
         log(NB_LogInfo, "Trying to host '{}' at: {}", lid, get_blaster());
@@ -962,15 +963,15 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
 };
 
 static void recv_stuff() {
-    std::vector<nlohmann::json> local_ws_in;
+    std::vector<nlohmann::json> ws_in_copy;
 
     {
         std::lock_guard<std::mutex> lock(::ws_in_mutex);
-        local_ws_in = std::move(::ws_in);
+        ws_in_copy = ::ws_in;
         ::ws_in.clear();
     }
 
-    for (const auto& obj : local_ws_in) {
+    for (const auto& obj : ws_in_copy) {
         if (!obj.contains("type"))
             continue;
 
@@ -989,7 +990,7 @@ static void recv_stuff() {
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat), pinger(interval::ping);
 
-    if (!NutBlast_IsOnline() || listing_lobbies)
+    if (!NutBlast_IsOnline() || ::mode == Mode::Listing)
         return;
 
     if (pinger) {
@@ -1032,7 +1033,7 @@ extern "C" void NutBlast_Flush() {
 }
 
 static void init_players_after_ready() {
-    if (::fire_ready && !::listing_lobbies) {
+    if (::fire_ready && ::mode != Mode::Listing) {
         log(NB_LogInfo, "NutBlast connected and ready!");
         fire(::on_ready);
     }
@@ -1104,6 +1105,7 @@ static void greatest_technician_thats_ever_lived(
 
     try {
         const auto& dc = reliable ? player->reliable_dc : player->unreliable_dc;
+
         if (dc)
             dc->send(buf);
     } catch (const std::runtime_error&) {}
@@ -1119,12 +1121,12 @@ extern "C" void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID id,
 
 extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
     if (!out) {
-        log(NB_LogError, "NutBlast_PeekMessage called with null pointer");
+        log(NB_LogError, "NutBlast_NextMessage called with null pointer");
         return false;
     }
 
     if (chan >= ::max_chan) {
-        log(NB_LogError, "NutBlast_PeekMessage called with channel {} out of {} max channels", chan, ::max_chan);
+        log(NB_LogError, "NutBlast_NextMessage called with channel {} out of {} max channels", chan, ::max_chan);
         return false;
     }
 
@@ -1135,7 +1137,7 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
         return false;
 
     static Message msg; // keeps the buffers valid between calls
-    msg = queue.messages.front();
+    msg = std::move(queue.messages.front());
     queue.messages.pop_front();
 
     out->from = msg.from;
