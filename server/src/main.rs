@@ -3,12 +3,14 @@ extern crate log;
 
 use std::{
     collections::{HashMap, HashSet},
+    fs::File,
+    io::BufReader,
     net::SocketAddr,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 
-use color_eyre::eyre;
+use color_eyre::eyre::{self, eyre};
 use futures_util::{SinkExt as _, StreamExt as _, stream::SplitSink};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -165,7 +167,9 @@ enum ClientMessage {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type")]
 enum ServerMessage {
-    Connected,
+    Connected {
+        ice_servers: Vec<String>,
+    },
     Pong,
     Bye {
         reason: Reason,
@@ -264,11 +268,21 @@ impl State {
     }
 }
 
+#[derive(Deserialize)]
+struct Config {
+    ice_servers: Vec<String>,
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
     let _ = color_eyre::install();
+
+    let config: Config = serde_json::from_reader(BufReader::new(
+        File::open("nutblaster.json").map_err(|x| eyre!("nutblaster.json: {x}"))?,
+    ))?;
+
+    let config = Arc::new(config);
 
     let addr = if let Some(addr) = std::env::args().nth(1) {
         addr
@@ -286,7 +300,7 @@ async fn main() -> eyre::Result<()> {
     }));
 
     while let Ok((stream, player_addr)) = listener.accept().await {
-        tokio::spawn(handle(state.clone(), stream, player_addr));
+        tokio::spawn(handle(config.clone(), state.clone(), stream, player_addr));
     }
 
     Ok(())
@@ -310,12 +324,13 @@ struct Connection {
 impl Connection {
     async fn recv(
         &mut self,
+        config: Arc<Config>,
         msg: Option<Result<Message, TungError>>,
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
     ) -> bool {
         match msg {
             Some(Ok(msg)) => {
-                match self.handle(msg) {
+                match self.handle(config, msg) {
                     Outcome::Good => {}
                     Outcome::Boot(reason) => {
                         warn!("boot to the face for {}: {}", self.addr, reason.code);
@@ -376,7 +391,7 @@ impl Connection {
         lobbies.into_values().collect()
     }
 
-    fn handle(&mut self, msg: Message) -> Outcome {
+    fn handle(&mut self, config: Arc<Config>, msg: Message) -> Outcome {
         let json = match msg {
             Message::Text(text) => text.to_string(),
             Message::Close(_) => return Outcome::Bye(None),
@@ -503,7 +518,9 @@ impl Connection {
                         player.send(&ServerMessage::SetMaster { pid: mastah });
                     }
 
-                    player.send(&ServerMessage::Connected);
+                    player.send(&ServerMessage::Connected {
+                        ice_servers: config.ice_servers.clone(),
+                    });
                 }
 
                 for other in pmeta.keys() {
@@ -719,7 +736,12 @@ impl Connection {
     }
 }
 
-async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: SocketAddr) {
+async fn handle(
+    config: Arc<Config>,
+    state: Arc<Mutex<State>>,
+    stream: TcpStream,
+    player_addr: SocketAddr,
+) {
     info!("conn: {}", player_addr);
 
     let (mut sender, mut receiver) = match tokio_tungstenite::accept_async(stream).await {
@@ -754,7 +776,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
                 if conn.load >= 1.0 {
                     warn!("CALM DOWN, {}", player_addr);
                     die = Some(Reason::err("rate_limited", "Too many payloads"));
-                } else if !conn.recv(msg, &mut sender).await {
+                } else if !conn.recv(config.clone(), msg, &mut sender).await {
                     break;
                 }
             }

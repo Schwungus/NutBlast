@@ -93,16 +93,7 @@ extern "C" uint64_t NutBlast_TimeNS() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
 }
 
-static const rtc::Configuration rtc_config = {
-    .iceServers = {
-        {"stun:stun.l.google.com:19302"},
-        {"stun:stun1.l.google.com:19302"},
-        {"stun:stun2.l.google.com:19302"},
-        {"stun:stun3.l.google.com:19302"},
-        {"stun:stun4.l.google.com:19302"},
-    },
-};
-
+static rtc::Configuration rtc_config;
 static std::unordered_map<NutBlast_ID, std::vector<rtc::Candidate>> incoming_candidates;
 static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers;
 static std::mutex candidates_and_offers_mutex;
@@ -832,7 +823,16 @@ static void handle_list(const nlohmann::json& obj) {
 
 static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> payload_types{
     {"Connected",
-        [](const auto&) {
+        [](const auto& obj) {
+            ::rtc_config.iceServers.clear();
+
+            log(NB_LogInfo, "ICE servers from NutBlaster:");
+
+            for (const auto& server : obj["ice_servers"]) {
+                ::rtc_config.iceServers.emplace_back(server);
+                log(NB_LogInfo, "  {}", (std::string)server);
+            }
+
             ::permission_to_cook = true;
         }},
     {"Bye",
