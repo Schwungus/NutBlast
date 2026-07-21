@@ -165,7 +165,7 @@ struct ByeReason {
 
 struct Player : std::enable_shared_from_this<Player> {
     const NutBlast_ID id;
-    Once fire_join;
+    Once fire_join, init_once;
 
     Pinger pinger;
     Metadata meta;
@@ -309,6 +309,9 @@ class Ticker {
 };
 
 void Player::init() {
+    if (!init_once)
+        return;
+
     const auto id = this->id;
 
     pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
@@ -940,7 +943,6 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
         [](const auto& obj) {
             const NutBlast_ID id = obj["pid"];
             ::players.insert({id, std::make_shared<Player>(id, obj["meta"])});
-            ::players.at(id)->init();
         }},
     {"Left",
         [](const auto& obj) {
@@ -1060,6 +1062,10 @@ extern "C" void NutBlast_Update() {
         NutBlast_Disconnect();
         return;
     }
+
+    if (::permission_to_cook)
+        for (auto& [id, player] : ::players)
+            player->init();
 
     if (NutBlast_IsReady())
         init_players_after_ready();
