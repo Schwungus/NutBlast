@@ -558,8 +558,6 @@ extern "C" void NutBlast_PurgeMetadata() {
     ::player_meta.clear(), ::lobby_meta.clear();
 }
 
-static void recv_stuff();
-
 static void join_pro() {
     rtc::Preload();
 
@@ -821,7 +819,7 @@ static void handle_list(const nlohmann::json& obj) {
     fire(::on_lobbies_found, lobbies.data(), lobbies.size());
 }
 
-static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> payload_types{
+static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> response_types{
     {"Connected",
         [](const auto& obj) {
             ::rtc_config.iceServers.clear();
@@ -835,7 +833,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> pa
 
             ::permission_to_cook = true;
         }},
-    {"Bye",
+    {"Disconnected",
         [](const auto& obj) {
             ::disconnection_reason = obj["reason"];
             ::time_to_die = true;
@@ -977,12 +975,9 @@ static void recv_stuff() {
         if (!obj.contains("type"))
             continue;
 
-        const std::string type = obj["type"];
-
-        if (!payload_types.contains(type))
-            continue;
-
-        payload_types.at(type)(obj);
+        const auto restype = response_types.find(obj["type"]);
+        if (restype != response_types.end())
+            restype->second(obj);
     }
 
     for (auto& [id, player] : ::players)

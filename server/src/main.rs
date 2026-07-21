@@ -171,7 +171,7 @@ enum ServerMessage {
         ice_servers: Vec<String>,
     },
     Pong,
-    Bye {
+    Disconnected {
         reason: Reason,
     },
     SetListed {
@@ -308,7 +308,7 @@ async fn main() -> eyre::Result<()> {
 
 enum Outcome {
     Good,
-    Bye(Option<ServerMessage>),
+    Disconnected(Option<ServerMessage>),
     Boot(Reason),
 }
 
@@ -334,11 +334,11 @@ impl Connection {
                     Outcome::Good => {}
                     Outcome::Boot(reason) => {
                         warn!("boot to the face for {}: {}", self.addr, reason.code);
-                        let bye = Some(ServerMessage::Bye { reason });
+                        let bye = Some(ServerMessage::Disconnected { reason });
                         self.finalize(sender, bye).await;
                         return false;
                     }
-                    Outcome::Bye(fatality) => {
+                    Outcome::Disconnected(fatality) => {
                         self.finalize(sender, fatality).await;
                         return false;
                     }
@@ -394,7 +394,7 @@ impl Connection {
     fn handle(&mut self, config: Arc<Config>, msg: Message) -> Outcome {
         let json = match msg {
             Message::Text(text) => text.to_string(),
-            Message::Close(_) => return Outcome::Bye(None),
+            Message::Close(_) => return Outcome::Disconnected(None),
             Message::Binary(_) => {
                 return Outcome::Boot(Reason::err(
                     "binary_unsupported",
@@ -421,7 +421,7 @@ impl Connection {
                 }
             }
             ClientMessage::List { gid, limit } => {
-                return Outcome::Bye(Some(ServerMessage::List {
+                return Outcome::Disconnected(Some(ServerMessage::List {
                     list: self.list_lobbies(state, &gid, limit),
                 }));
             }
@@ -646,7 +646,7 @@ impl Connection {
                     && let Some(guy) = state.players.get_mut(&id)
                     && guy.lid == lid
                 {
-                    guy.send(&ServerMessage::Bye {
+                    guy.send(&ServerMessage::Disconnected {
                         reason: Reason::ok("kick", "Kicked by lobby's master"),
                     });
                 }
@@ -679,7 +679,7 @@ impl Connection {
         sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
         value: &ServerMessage,
     ) -> bool {
-        if let ServerMessage::Bye { reason } = value {
+        if let ServerMessage::Disconnected { reason } = value {
             self.bye_reason = Some(reason.clone());
         }
 
@@ -717,7 +717,7 @@ impl Connection {
         for msg in queue.unwrap_or_default() {
             self.send_json(sender, &msg).await;
 
-            if let ServerMessage::Bye { .. } = msg {
+            if let ServerMessage::Disconnected { .. } = msg {
                 break;
             }
         }
@@ -809,7 +809,7 @@ async fn handle(
         }
 
         if let Some(reason) = die {
-            let msg = ServerMessage::Bye { reason };
+            let msg = ServerMessage::Disconnected { reason };
             conn.send_json(&mut sender, &msg).await;
             break;
         }
