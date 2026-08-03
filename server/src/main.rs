@@ -370,6 +370,10 @@ impl Connection {
                     return None;
                 }
 
+                if state.players_in(lid) >= lobby.capacity {
+                    return None;
+                }
+
                 let lobby = LobbyListing {
                     lid: lid.lid,
                     max: lobby.capacity,
