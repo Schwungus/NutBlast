@@ -253,6 +253,14 @@ impl State {
         counter
     }
 
+    fn lobby_full(&self, lid: &LobbyId) -> bool {
+        if let Some(ref lobby) = self.lobbies.get(lid) {
+            return self.players_in(lid) >= lobby.capacity;
+        } else {
+            return false;
+        }
+    }
+
     fn send_to(&mut self, pid: &BasicId, msg: &ServerMessage) {
         if let Some(player) = self.players.get_mut(pid) {
             player.send(msg);
@@ -366,11 +374,7 @@ impl Connection {
             .lobbies
             .iter()
             .filter_map(|(lid, lobby)| {
-                if lid.gid != gid || !lobby.listed {
-                    return None;
-                }
-
-                if state.players_in(lid) >= lobby.capacity {
+                if lid.gid != gid || !lobby.listed || state.lobby_full(lid) {
                     return None;
                 }
 
@@ -474,9 +478,7 @@ impl Connection {
                     capacity
                 };
 
-                if let Some(Lobby { capacity, .. }) = state.lobbies.get(&lid)
-                    && state.players_in(&lid) >= *capacity
-                {
+                if state.lobby_full(&lid) {
                     return Outcome::Boot(Reason::err("lobby_full", "Lobby is full"));
                 }
 
