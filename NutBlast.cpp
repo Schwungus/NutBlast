@@ -231,10 +231,11 @@ static struct {
 } recv_queues[MAX_CHANNELS];
 
 static enum class Mode {
-    Hosting,
-    Joining,
-    Listing,
-} mode = Mode::Joining;
+    Host,
+    Join,
+    List,
+    Swarm,
+} mode = Mode::Join;
 
 static bool hosting_a_listed_lobby = true, permission_to_cook = false, time_to_die = false;
 static std::size_t listing_limit = 0;
@@ -596,13 +597,21 @@ static void join_pro() {
     );
 
     ::blaster_ws->onOpen([]() {
-        if (::mode == Mode::Listing) {
+        if (::mode == Mode::List) {
             ::ws_send({
                 {"type", "List"},
                 {"gid", ::gid},
                 {"limit", ::listing_limit},
             });
-        } else if (::mode == Mode::Hosting) {
+        } else if (::mode == Mode::Swarm) {
+            ::ws_send({
+                {"type", "Swarm"},
+                {"gid", ::gid},
+                {"pid", NutBlast_GetOurID()},
+                {"player_meta", ::player_meta},
+                {"lobby_meta", ::lobby_meta},
+            });
+        } else if (::mode == Mode::Host) {
             ::ws_send({
                 {"type", "Host"},
                 {"gid", ::gid},
@@ -681,7 +690,7 @@ extern "C" void NutBlast_FindLobbies(size_t limit) {
     if (::blaster_ws) {
         log(NB_LogError, "You're already connected!");
     } else {
-        ::mode = Mode::Listing, ::listing_limit = limit;
+        ::mode = Mode::List, ::listing_limit = limit;
         log(NB_LogInfo, "Connecting to {}", get_blaster());
         join_pro();
     }
@@ -693,7 +702,7 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
     } else if (!id) {
         log(NB_LogError, "No ID specified!");
     } else {
-        ::mode = Mode::Joining, ::lid = id;
+        ::mode = Mode::Join, ::lid = id;
         log(NB_LogInfo, "Trying to join '{}' at: {}", id, get_blaster());
         join_pro();
     }
@@ -704,10 +713,20 @@ extern "C" void NutBlast_Host(NutBlast_ID id, int max, bool listed) {
         log(NB_LogError, "You're already connected!");
     } else {
         NutBlast_SetMaxPlayers(max);
-        ::mode = Mode::Hosting, ::hosting_a_listed_lobby = listed;
+        ::mode = Mode::Host, ::hosting_a_listed_lobby = listed;
         ::lid = id ? id : generate_id();
 
         log(NB_LogInfo, "Trying to host '{}' at: {}", lid, get_blaster());
+        join_pro();
+    }
+}
+
+extern "C" void NutBlast_JoinSwarm() {
+    if (::blaster_ws) {
+        log(NB_LogError, "You're already connected!");
+    } else {
+        ::mode = Mode::Swarm;
+        log(NB_LogInfo, "Trying to join a swarm for '{}'", ::gid);
         join_pro();
     }
 }
@@ -994,7 +1013,7 @@ static void recv_stuff() {
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat), pinger(interval::ping);
 
-    if (!NutBlast_IsOnline() || ::mode == Mode::Listing)
+    if (!NutBlast_IsOnline() || ::mode == Mode::List)
         return;
 
     if (pinger) {
@@ -1037,7 +1056,7 @@ extern "C" void NutBlast_Flush() {
 }
 
 static void init_players_after_ready() {
-    if (::fire_ready && ::mode != Mode::Listing) {
+    if (::fire_ready && ::mode != Mode::List) {
         log(NB_LogInfo, "NutBlast connected and ready!");
         fire(::on_ready);
     }

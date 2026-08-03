@@ -4,6 +4,7 @@ extern crate log;
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
+    hash::Hasher as _,
     io::BufReader,
     net::SocketAddr,
     sync::{Arc, Mutex, MutexGuard},
@@ -11,6 +12,7 @@ use std::{
 };
 
 use color_eyre::eyre::{self, eyre};
+use fnv::FnvHasher;
 use futures_util::{SinkExt as _, StreamExt as _, stream::SplitSink};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -36,9 +38,24 @@ const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(10);
 type BasicId = u64;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+struct GameId(String);
+
+impl GameId {
+    fn valid(&self) -> bool {
+        (1..=GAME_ID_LEN).contains(&self.0.len())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 struct LobbyId {
     lid: BasicId,
-    gid: String,
+    gid: GameId,
+}
+
+impl LobbyId {
+    fn valid(&self) -> bool {
+        self.gid.valid()
+    }
 }
 
 #[derive(Clone)]
@@ -106,7 +123,7 @@ impl Reason {
 enum ClientMessage {
     Ping,
     List {
-        gid: String,
+        gid: GameId,
         limit: usize,
     },
     Host {
@@ -126,7 +143,7 @@ enum ClientMessage {
     },
     Swarm {
         pid: BasicId,
-        gid: String,
+        gid: GameId,
         player_meta: HashMap<String, String>,
         lobby_meta: HashMap<String, String>,
     },
@@ -458,12 +475,17 @@ impl Connection {
         return true;
     }
 
-    fn list_lobbies(&self, state: MutexGuard<State>, gid: &str, limit: usize) -> Vec<LobbyListing> {
+    fn list_lobbies(
+        &self,
+        state: MutexGuard<State>,
+        gid: &GameId,
+        limit: usize,
+    ) -> Vec<LobbyListing> {
         let mut lobbies: HashMap<LobbyId, LobbyListing> = state
             .lobbies
             .iter()
             .filter_map(|(lid, lobby)| {
-                if lid.gid != gid || !lobby.listed || state.lobby_full(lid) {
+                if &lid.gid != gid || !lobby.listed || state.lobby_full(lid) {
                     return None;
                 }
 
@@ -533,7 +555,7 @@ impl Connection {
                 && self.pid.is_none()
                 && self.lid.is_none()
                 && !state.players.contains_key(&pid)
-                && (1..=GAME_ID_LEN).contains(&lid.gid.len())
+                && lid.valid()
                 && check_meta(&player_meta)
                 && check_meta(&lobby_meta) =>
             {
@@ -544,7 +566,7 @@ impl Connection {
                     return Outcome::Boot(Reason::err("lobby_exists", "Lobby already exists"));
                 }
 
-                info!("new lobby max={1} {:?}", lid, capacity);
+                info!("new lobby max={capacity} {lid:?}");
 
                 let lober = Lobby {
                     master: pid,
@@ -556,15 +578,6 @@ impl Connection {
 
                 state.lobbies.insert(lid.clone(), lober);
 
-                state.players.insert(
-                    pid,
-                    Player {
-                        lid: lid.clone(),
-                        meta: player_meta.clone(),
-                        queue: Vec::new(),
-                    },
-                );
-
                 state.introduce_player(config, pid, &lid, player_meta);
             }
             ClientMessage::Join {
@@ -574,7 +587,7 @@ impl Connection {
             } if self.pid.is_none()
                 && self.lid.is_none()
                 && !state.players.contains_key(&pid)
-                && (1..=GAME_ID_LEN).contains(&lid.gid.len())
+                && lid.valid()
                 && check_meta(&player_meta) =>
             {
                 self.pid = Some(pid);
@@ -586,6 +599,50 @@ impl Connection {
 
                 if state.lobby_full(&lid) {
                     return Outcome::Boot(Reason::err("lobby_full", "Lobby is full"));
+                }
+
+                state.introduce_player(config, pid, &lid, player_meta);
+            }
+            ClientMessage::Swarm {
+                pid,
+                gid,
+                player_meta,
+                lobby_meta,
+            } if self.pid.is_none()
+                && self.lid.is_none()
+                && !state.players.contains_key(&pid)
+                && gid.valid()
+                && check_meta(&player_meta)
+                && check_meta(&lobby_meta) =>
+            {
+                self.pid = Some(pid);
+
+                let lid = {
+                    let mut hasher = FnvHasher::default();
+                    hasher.write(gid.0.as_bytes());
+
+                    let lid = hasher.finish();
+                    LobbyId { gid, lid }
+                };
+
+                self.lid = Some(lid.clone());
+
+                if !state.lobbies.contains_key(&lid) {
+                    info!("new swarm lobby {lid:?}");
+
+                    let lober = Lobby {
+                        master: pid,
+                        meta: lobby_meta,
+                        capacity: MAX_PLAYERS,
+                        listed: false,
+                        death_timer: None,
+                    };
+
+                    state.lobbies.insert(lid.clone(), lober);
+                }
+
+                if state.lobby_full(&lid) {
+                    return Outcome::Boot(Reason::err("lobby_full", "Swarm is full"));
                 }
 
                 state.introduce_player(config, pid, &lid, player_meta);

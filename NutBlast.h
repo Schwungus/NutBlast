@@ -219,10 +219,16 @@ void NutBlast_Join(NutBlast_ID id);
 /// Hosts a lobby with a given ID, name, maximum player count and visibility.
 ///
 /// Pass 0 for `id` if you want NutBlast to generate one for you.
-/// `name` must not be NULL or empty.
+///
 /// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
+///
 /// Call `NutBlast_SetListed()` if you need to change the visibility later.
 void NutBlast_Host(NutBlast_ID id, int players, bool listed);
+
+/// Joins whatever "swarm" lobby is available for your game ID.
+///
+/// TODO: explain swarms.
+void NutBlast_JoinSwarm();
 
 /// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
 void NutBlast_FindLobbies(size_t);

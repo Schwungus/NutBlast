@@ -116,7 +116,7 @@ static void draw_gui() {
         i++;
     }
 
-    DrawText("H to host, J to join, K to reset", 0, GetScreenHeight() - fs * 2, fs, BLACK);
+    DrawText("H to host, J to join, U to swarm, K to reset", 0, GetScreenHeight() - fs * 2, fs, BLACK);
     DrawText("T to chat (reliable), L to kick everyone", 0, GetScreenHeight() - fs * 1, fs, BLACK);
 }
 
@@ -266,6 +266,8 @@ int main(int argc, char* argv[]) {
             NutBlast_Host(lid, 4, true);
         else if (IsKeyPressed(KEY_J))
             NutBlast_Join(lid);
+        else if (IsKeyPressed(KEY_U))
+            NutBlast_JoinSwarm();
         else if (IsKeyPressed(KEY_K))
             NutBlast_Disconnect();
 

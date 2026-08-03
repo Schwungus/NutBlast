@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 color-eyre = "0.6.5"
 env_logger = "0.11.10"
+fnv = "1.0.7"
 futures-util = "0.3.32"
 indexmap = "2.14.0"
 log = "0.4.32"
