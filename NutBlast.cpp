@@ -602,10 +602,9 @@ static void join_pro() {
                 {"gid", ::gid},
                 {"limit", ::listing_limit},
             });
-        } else {
+        } else if (::mode == Mode::Hosting) {
             ::ws_send({
-                {"type", "Connect"},
-                {"mode", ::mode == Mode::Hosting ? "Host" : "Join"},
+                {"type", "Host"},
                 {"gid", ::gid},
                 {"pid", NutBlast_GetOurID()},
                 {"lid", ::lid},
@@ -613,6 +612,14 @@ static void join_pro() {
                 {"listed", ::hosting_a_listed_lobby},
                 {"player_meta", ::player_meta},
                 {"lobby_meta", ::lobby_meta},
+            });
+        } else {
+            ::ws_send({
+                {"type", "Join"},
+                {"gid", ::gid},
+                {"pid", NutBlast_GetOurID()},
+                {"lid", ::lid},
+                {"player_meta", ::player_meta},
             });
         }
     });

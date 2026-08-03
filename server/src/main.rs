@@ -41,6 +41,7 @@ struct LobbyId {
     gid: String,
 }
 
+#[derive(Clone)]
 struct Lobby {
     master: BasicId,
     meta: HashMap<String, String>,
@@ -49,6 +50,7 @@ struct Lobby {
     death_timer: Option<Instant>,
 }
 
+#[derive(Clone)]
 struct Player {
     lid: LobbyId,
     meta: HashMap<String, String>,
@@ -100,12 +102,6 @@ impl Reason {
 }
 
 #[derive(Debug, Deserialize)]
-enum ConnectionMode {
-    Host,
-    Join,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum ClientMessage {
     Ping,
@@ -113,13 +109,24 @@ enum ClientMessage {
         gid: String,
         limit: usize,
     },
-    Connect {
-        mode: ConnectionMode,
+    Host {
         pid: BasicId,
         #[serde(flatten)]
         lid: LobbyId,
         capacity: usize,
         listed: bool,
+        player_meta: HashMap<String, String>,
+        lobby_meta: HashMap<String, String>,
+    },
+    Join {
+        pid: BasicId,
+        #[serde(flatten)]
+        lid: LobbyId,
+        player_meta: HashMap<String, String>,
+    },
+    Swarm {
+        pid: BasicId,
+        gid: String,
         player_meta: HashMap<String, String>,
         lobby_meta: HashMap<String, String>,
     },
@@ -226,6 +233,80 @@ enum ServerMessage {
 }
 
 impl State {
+    fn introduce_player(
+        &mut self,
+        config: Arc<Config>,
+        pid: BasicId,
+        lid: &LobbyId,
+        player_meta: HashMap<String, String>,
+    ) {
+        let Some(Lobby {
+            listed,
+            capacity,
+            meta: lobby_meta,
+            ..
+        }) = self.lobbies.get(lid).cloned()
+        else {
+            return;
+        };
+
+        self.players.insert(
+            pid,
+            Player {
+                lid: lid.clone(),
+                meta: player_meta.clone(),
+                queue: Vec::new(),
+            },
+        );
+
+        let mastah = self.master_of(&lid);
+
+        let pmeta: HashMap<_, _> = self
+            .players
+            .iter()
+            .filter_map(|(id, p)| {
+                if id != &pid && &p.lid == lid {
+                    Some((*id, p.meta.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if let Some(player) = self.players.get_mut(&pid) {
+            player.send(&ServerMessage::SetListed { listed });
+            player.send(&ServerMessage::SetCapacity { capacity });
+
+            for (key, value) in lobby_meta {
+                player.send(&ServerMessage::SetLobbyMeta { key, value });
+            }
+
+            for (&other, meta) in &pmeta {
+                player.send(&ServerMessage::Joined {
+                    pid: other,
+                    meta: meta.clone(),
+                });
+            }
+
+            if let Some(mastah) = mastah {
+                player.send(&ServerMessage::SetMaster { pid: mastah });
+            }
+
+            player.send(&ServerMessage::Connected {
+                ice_servers: config.ice_servers.clone(),
+            });
+        }
+
+        for other in pmeta.keys() {
+            let msg = ServerMessage::Joined {
+                pid,
+                meta: player_meta.clone(),
+            };
+
+            self.send_to(other, &msg);
+        }
+    }
+
     fn master_of(&mut self, lid: &LobbyId) -> Option<BasicId> {
         let empty = self.players_in(lid) == 0;
         let lobby = self.lobbies.get_mut(lid)?;
@@ -312,6 +393,14 @@ async fn main() -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+fn check_meta(meta: &HashMap<String, String>) -> bool {
+    meta.len() < MAX_FIELDS
+        && meta.iter().all(|(key, value)| {
+            (1..=FIELD_NAME_MAX).contains(&key.len())
+                && (0..=FIELD_VALUE_MAX).contains(&value.len())
+        })
 }
 
 enum Outcome {
@@ -433,8 +522,7 @@ impl Connection {
                     list: self.list_lobbies(state, &gid, limit),
                 }));
             }
-            ClientMessage::Connect {
-                mode,
+            ClientMessage::Host {
                 pid,
                 lid,
                 capacity,
@@ -445,98 +533,62 @@ impl Connection {
                 && self.pid.is_none()
                 && self.lid.is_none()
                 && !state.players.contains_key(&pid)
-                && (1..=GAME_ID_LEN).contains(&lid.gid.len()) =>
+                && (1..=GAME_ID_LEN).contains(&lid.gid.len())
+                && check_meta(&player_meta)
+                && check_meta(&lobby_meta) =>
             {
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
-                match (mode, state.lobbies.contains_key(&lid)) {
-                    (ConnectionMode::Host, true) => {
-                        return Outcome::Boot(Reason::err("lobby_exists", "Lobby already exists"));
-                    }
-                    (ConnectionMode::Join, false) => {
-                        return Outcome::Boot(Reason::err("lobby_not_found", "Lobby not found"));
-                    }
-                    _ => {}
+                if state.lobbies.contains_key(&lid) {
+                    return Outcome::Boot(Reason::err("lobby_exists", "Lobby already exists"));
                 }
 
-                let capacity = if state.lobbies.contains_key(&lid) {
-                    state.lobbies[&lid].capacity
-                } else {
-                    info!("new lobby max={1} {:?}", lid, capacity);
+                info!("new lobby max={1} {:?}", lid, capacity);
 
-                    let lober = Lobby {
-                        master: pid,
-                        meta: lobby_meta,
-                        capacity,
-                        listed,
-                        death_timer: None,
-                    };
-
-                    state.lobbies.insert(lid.clone(), lober);
-
-                    capacity
+                let lober = Lobby {
+                    master: pid,
+                    meta: lobby_meta,
+                    capacity,
+                    listed,
+                    death_timer: None,
                 };
+
+                state.lobbies.insert(lid.clone(), lober);
+
+                state.players.insert(
+                    pid,
+                    Player {
+                        lid: lid.clone(),
+                        meta: player_meta.clone(),
+                        queue: Vec::new(),
+                    },
+                );
+
+                state.introduce_player(config, pid, &lid, player_meta);
+            }
+            ClientMessage::Join {
+                pid,
+                lid,
+                player_meta,
+            } if self.pid.is_none()
+                && self.lid.is_none()
+                && !state.players.contains_key(&pid)
+                && (1..=GAME_ID_LEN).contains(&lid.gid.len())
+                && check_meta(&player_meta) =>
+            {
+                self.pid = Some(pid);
+                self.lid = Some(lid.clone());
+
+                if !state.lobbies.contains_key(&lid) {
+                    return Outcome::Boot(Reason::err("lobby_not_found", "Lobby not found"));
+                }
 
                 if state.lobby_full(&lid) {
                     return Outcome::Boot(Reason::err("lobby_full", "Lobby is full"));
                 }
 
-                let p = Player {
-                    lid: lid.clone(),
-                    meta: player_meta.clone(),
-                    queue: Vec::new(),
-                };
-
-                state.players.insert(pid, p);
-
-                let mastah = state.master_of(&lid);
-                let meta = state.lobbies[&lid].meta.clone();
-
-                let pmeta: HashMap<_, _> = state
-                    .players
-                    .iter()
-                    .filter_map(|(id, p)| {
-                        if id != &pid && p.lid == lid {
-                            Some((*id, p.meta.clone()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                if let Some(player) = state.players.get_mut(&pid) {
-                    player.send(&ServerMessage::SetListed { listed });
-                    player.send(&ServerMessage::SetCapacity { capacity });
-
-                    for (key, value) in meta {
-                        player.send(&ServerMessage::SetLobbyMeta { key, value });
-                    }
-
-                    for (&other, meta) in &pmeta {
-                        player.send(&ServerMessage::Joined {
-                            pid: other,
-                            meta: meta.clone(),
-                        });
-                    }
-
-                    if let Some(mastah) = mastah {
-                        player.send(&ServerMessage::SetMaster { pid: mastah });
-                    }
-
-                    player.send(&ServerMessage::Connected {
-                        ice_servers: config.ice_servers.clone(),
-                    });
-                }
-
-                for other in pmeta.keys() {
-                    let msg = ServerMessage::Joined {
-                        pid,
-                        meta: player_meta.clone(),
-                    };
-
-                    state.send_to(other, &msg);
-                }
+                state.introduce_player(config, pid, &lid, player_meta);
             }
             ClientMessage::PassCandidate {
                 ref to,
