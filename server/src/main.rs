@@ -640,7 +640,7 @@ impl Connection {
                 self.lid = Some(lid.clone());
 
                 if !state.lobbies.contains_key(&lid) {
-                    info!("new swarm lobby {lid:?}");
+                    info!("new swarm {lid:?}");
 
                     let lober = Lobby {
                         master: pid,
@@ -970,11 +970,12 @@ async fn handle(
         nonempty.insert(player.lid.clone());
     }
 
-    state.lobbies.retain(move |k, _| {
+    state.lobbies.retain(move |k, l| {
         if nonempty.contains(k) {
             return true;
         } else {
-            info!("bye lober: {:?}", k);
+            let noun = if l.swarm { "swarm" } else { "lober" };
+            info!("bye {noun}: {:?}", k);
             return false;
         }
     });
