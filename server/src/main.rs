@@ -64,6 +64,7 @@ struct Lobby {
     meta: HashMap<String, String>,
     capacity: usize,
     listed: bool,
+    swarm: bool,
     death_timer: Option<Instant>,
 }
 
@@ -485,7 +486,7 @@ impl Connection {
             .lobbies
             .iter()
             .filter_map(|(lid, lobby)| {
-                if &lid.gid != gid || !lobby.listed || state.lobby_full(lid) {
+                if &lid.gid != gid || !lobby.listed || lobby.swarm || state.lobby_full(lid) {
                     return None;
                 }
 
@@ -573,6 +574,7 @@ impl Connection {
                     meta: lobby_meta,
                     capacity,
                     listed,
+                    swarm: false,
                     death_timer: None,
                 };
 
@@ -594,6 +596,11 @@ impl Connection {
                 self.lid = Some(lid.clone());
 
                 if !state.lobbies.contains_key(&lid) {
+                    return Outcome::Boot(Reason::err("lobby_not_found", "Lobby not found"));
+                }
+
+                // protecting swarms from aboose
+                if let Some(Lobby { swarm: true, .. }) = state.lobbies.get(&lid) {
                     return Outcome::Boot(Reason::err("lobby_not_found", "Lobby not found"));
                 }
 
@@ -640,6 +647,7 @@ impl Connection {
                         meta: lobby_meta,
                         capacity: MAX_PLAYERS,
                         listed: false,
+                        swarm: true,
                         death_timer: None,
                     };
 
