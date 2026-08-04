@@ -87,7 +87,7 @@ impl Player {
     }
 }
 
-struct State {
+struct Blaster {
     config: Arc<Config>,
     lobbies: HashMap<LobbyId, Lobby>,
     players: IndexMap<BasicId, Player>,
@@ -197,10 +197,10 @@ enum ClientMessage {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type")]
 enum ServerMessage {
+    Pong,
     Connected {
         ice_servers: Vec<String>,
     },
-    Pong,
     Disconnected {
         reason: Error,
     },
@@ -255,7 +255,7 @@ enum ServerMessage {
     },
 }
 
-impl State {
+impl Blaster {
     fn introduce_player(
         &mut self,
         pid: BasicId,
@@ -405,14 +405,42 @@ async fn main() -> eyre::Result<()> {
 
     info!("listening on: ws://{}", addr);
 
-    let state = Arc::new(Mutex::new(State {
+    let blaster = Arc::new(Mutex::new(Blaster {
         config: config.clone(),
         lobbies: HashMap::new(),
         players: IndexMap::new(),
     }));
 
-    while let Ok((stream, player_addr)) = listener.accept().await {
-        tokio::spawn(handle(state.clone(), stream, player_addr));
+    while let Ok((stream, addr)) = listener.accept().await {
+        let blaster = blaster.clone();
+
+        tokio::spawn(async move {
+            info!("conn: {}", addr);
+
+            let (sender, receiver) = match tokio_tungstenite::accept_async(stream).await {
+                Ok(ws) => {
+                    info!("hi {}", addr);
+                    ws.split()
+                }
+                Err(e) => {
+                    error!("{}: {}", addr, e);
+                    return;
+                }
+            };
+
+            let conn = Connection {
+                load: 0.0,
+                blaster,
+                sender,
+                receiver,
+                addr,
+                pid: None,
+                lid: None,
+                bye_reason: None,
+            };
+
+            conn.mainloop().await;
+        });
     }
 
     Ok(())
@@ -427,7 +455,7 @@ fn check_meta(meta: &HashMap<String, String>) -> bool {
 }
 
 struct Connection {
-    state: Arc<Mutex<State>>,
+    blaster: Arc<Mutex<Blaster>>,
     receiver: SplitStream<WebSocketStream<TcpStream>>,
     sender: SplitSink<WebSocketStream<TcpStream>, Message>,
     addr: SocketAddr,
@@ -488,13 +516,13 @@ impl Connection {
     }
 
     async fn list_lobbies(&self, gid: &GameId, limit: usize) -> Vec<LobbyListing> {
-        let state = self.state.lock().await;
+        let blaster = self.blaster.lock().await;
 
-        let mut lobbies: HashMap<LobbyId, LobbyListing> = state
+        let mut lobbies: HashMap<LobbyId, LobbyListing> = blaster
             .lobbies
             .iter()
             .filter_map(|(lid, lobby)| {
-                if &lid.gid != gid || !lobby.listed || lobby.swarm || state.lobby_full(lid) {
+                if &lid.gid != gid || !lobby.listed || lobby.swarm || blaster.lobby_full(lid) {
                     return None;
                 }
 
@@ -510,7 +538,7 @@ impl Connection {
             .take(limit.clamp(1, MAX_LOBBIES_IN_LIST))
             .collect();
 
-        for (_, player) in state.players.iter() {
+        for (_, player) in blaster.players.iter() {
             if let Some(lober) = lobbies.get_mut(&player.lid) {
                 lober.players += 1;
             }
@@ -540,17 +568,17 @@ impl Connection {
             }
         };
 
-        let state = self.state.clone();
-        let mut state = state.lock().await;
+        let blaster = self.blaster.clone();
+        let mut blaster = blaster.lock().await;
 
         match request {
             ClientMessage::Ping => {
                 if let Some(ref pid) = self.pid {
-                    state.send_to(pid, &ServerMessage::Pong);
+                    blaster.send_to(pid, &ServerMessage::Pong);
                 }
             }
             ClientMessage::List { gid, limit } => {
-                self.send_json(&ServerMessage::List {
+                self.send(&ServerMessage::List {
                     list: self.list_lobbies(&gid, limit).await,
                 })
                 .await;
@@ -567,7 +595,7 @@ impl Connection {
             } if (1..=MAX_PLAYERS).contains(&capacity)
                 && self.pid.is_none()
                 && self.lid.is_none()
-                && !state.players.contains_key(&pid)
+                && !blaster.players.contains_key(&pid)
                 && lid.valid()
                 && check_meta(&player_meta)
                 && check_meta(&lobby_meta) =>
@@ -575,7 +603,7 @@ impl Connection {
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
-                if state.lobbies.contains_key(&lid) {
+                if blaster.lobbies.contains_key(&lid) {
                     return Err(Error::violation("lobby_exists", "Lobby already exists"));
                 }
 
@@ -590,9 +618,9 @@ impl Connection {
                     death_timer: None,
                 };
 
-                state.lobbies.insert(lid.clone(), lober);
+                blaster.lobbies.insert(lid.clone(), lober);
 
-                state.introduce_player(pid, &lid, player_meta);
+                blaster.introduce_player(pid, &lid, player_meta);
             }
             ClientMessage::Join {
                 pid,
@@ -600,27 +628,27 @@ impl Connection {
                 player_meta,
             } if self.pid.is_none()
                 && self.lid.is_none()
-                && !state.players.contains_key(&pid)
+                && !blaster.players.contains_key(&pid)
                 && lid.valid()
                 && check_meta(&player_meta) =>
             {
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
-                if !state.lobbies.contains_key(&lid) {
+                if !blaster.lobbies.contains_key(&lid) {
                     return Err(Error::violation("lobby_not_found", "Lobby not found"));
                 }
 
                 // protecting swarms from aboose
-                if let Some(Lobby { swarm: true, .. }) = state.lobbies.get(&lid) {
+                if let Some(Lobby { swarm: true, .. }) = blaster.lobbies.get(&lid) {
                     return Err(Error::violation("lobby_not_found", "Lobby not found"));
                 }
 
-                if state.lobby_full(&lid) {
+                if blaster.lobby_full(&lid) {
                     return Err(Error::violation("lobby_full", "Lobby is full"));
                 }
 
-                state.introduce_player(pid, &lid, player_meta);
+                blaster.introduce_player(pid, &lid, player_meta);
             }
             ClientMessage::Swarm {
                 pid,
@@ -629,7 +657,7 @@ impl Connection {
                 lobby_meta,
             } if self.pid.is_none()
                 && self.lid.is_none()
-                && !state.players.contains_key(&pid)
+                && !blaster.players.contains_key(&pid)
                 && gid.valid()
                 && check_meta(&player_meta)
                 && check_meta(&lobby_meta) =>
@@ -645,13 +673,13 @@ impl Connection {
                 };
 
                 // INFINITE SWARMS!!!
-                while state.lobby_full(&lid) {
+                while blaster.lobby_full(&lid) {
                     lid.lid += 1;
                 }
 
                 self.lid = Some(lid.clone());
 
-                if !state.lobbies.contains_key(&lid) {
+                if !blaster.lobbies.contains_key(&lid) {
                     info!("new swarm {lid:?}");
 
                     let lober = Lobby {
@@ -663,10 +691,10 @@ impl Connection {
                         death_timer: None,
                     };
 
-                    state.lobbies.insert(lid.clone(), lober);
+                    blaster.lobbies.insert(lid.clone(), lober);
                 }
 
-                state.introduce_player(pid, &lid, player_meta);
+                blaster.introduce_player(pid, &lid, player_meta);
             }
             ClientMessage::PassCandidate {
                 ref to,
@@ -679,34 +707,34 @@ impl Connection {
                     mid,
                 };
 
-                state.send_to(to, &msg);
+                blaster.send_to(to, &msg);
             }
             ClientMessage::PassOffer { ref to, sdp } if let Some(from) = self.pid => {
-                state.send_to(to, &ServerMessage::Offer { from, sdp });
+                blaster.send_to(to, &ServerMessage::Offer { from, sdp });
             }
             ClientMessage::PassAnswer { ref to, sdp } if let Some(from) = self.pid => {
-                state.send_to(to, &ServerMessage::Answer { from, sdp });
+                blaster.send_to(to, &ServerMessage::Answer { from, sdp });
             }
             ClientMessage::SetListed { listed }
                 if let Some(pid) = self.pid
                     && let Some(ref lid) = self.lid =>
             {
-                if state.master_of(lid) == Some(pid)
-                    && let Some(lober) = state.lobbies.get_mut(lid)
+                if blaster.master_of(lid) == Some(pid)
+                    && let Some(lober) = blaster.lobbies.get_mut(lid)
                 {
                     lober.listed = listed;
-                    state.send_to_lobby(lid, &ServerMessage::SetListed { listed });
+                    blaster.send_to_lobby(lid, &ServerMessage::SetListed { listed });
                 }
             }
             ClientMessage::SetCapacity { capacity }
                 if let Some(pid) = self.pid
                     && let Some(ref lid) = self.lid =>
             {
-                if state.master_of(lid) == Some(pid)
-                    && let Some(lober) = state.lobbies.get_mut(lid)
+                if blaster.master_of(lid) == Some(pid)
+                    && let Some(lober) = blaster.lobbies.get_mut(lid)
                 {
                     lober.capacity = capacity;
-                    state.send_to_lobby(lid, &ServerMessage::SetCapacity { capacity });
+                    blaster.send_to_lobby(lid, &ServerMessage::SetCapacity { capacity });
                 }
             }
             // ok to boot since the size limits are enforced client-side
@@ -715,7 +743,7 @@ impl Connection {
                     && (0..=FIELD_VALUE_MAX).contains(&value.len())
                     && let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
-                    && let Some(player) = state.players.get_mut(&pid) =>
+                    && let Some(player) = blaster.players.get_mut(&pid) =>
             {
                 if player.meta.contains_key(&key) || player.meta.len() < MAX_FIELDS {
                     player.meta.insert(key.to_string(), value.to_string());
@@ -726,18 +754,18 @@ impl Connection {
                         value: value.to_string(),
                     };
 
-                    state.send_to_lobby(lid, &msg);
+                    blaster.send_to_lobby(lid, &msg);
                 }
             }
             ClientMessage::ErasePlayerMeta { key }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
-                    && let Some(player) = state.players.get_mut(&pid) =>
+                    && let Some(player) = blaster.players.get_mut(&pid) =>
             {
                 if player.meta.contains_key(&key) {
                     player.meta.remove(&key);
-                    state.send_to_lobby(lid, &ServerMessage::ErasePlayerMeta { pid, key });
+                    blaster.send_to_lobby(lid, &ServerMessage::ErasePlayerMeta { pid, key });
                 }
             }
             // ok to boot since the size limits are enforced client-side
@@ -745,8 +773,8 @@ impl Connection {
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && (0..=FIELD_VALUE_MAX).contains(&value.len())
                     && let Some(ref lid) = self.lid
-                    && let master = state.master_of(&lid)
-                    && let Some(lober) = state.lobbies.get_mut(&lid) =>
+                    && let master = blaster.master_of(&lid)
+                    && let Some(lober) = blaster.lobbies.get_mut(&lid) =>
             {
                 if master == self.pid
                     && (lober.meta.contains_key(&key) || lober.meta.len() < MAX_FIELDS)
@@ -758,28 +786,28 @@ impl Connection {
                         value: value.to_string(),
                     };
 
-                    state.send_to_lobby(lid, &msg);
+                    blaster.send_to_lobby(lid, &msg);
                 }
             }
             ClientMessage::EraseLobbyMeta { key }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && let Some(ref lid) = self.lid
-                    && let master = state.master_of(&lid)
-                    && let Some(lober) = state.lobbies.get_mut(&lid) =>
+                    && let master = blaster.master_of(&lid)
+                    && let Some(lober) = blaster.lobbies.get_mut(&lid) =>
             {
                 if master == self.pid && lober.meta.contains_key(&key) {
                     lober.meta.remove(&key);
-                    state.send_to_lobby(lid, &ServerMessage::EraseLobbyMeta { key });
+                    blaster.send_to_lobby(lid, &ServerMessage::EraseLobbyMeta { key });
                 }
             }
             ClientMessage::Kick { pid: id }
                 if let Some(lid) = self.lid.clone()
                     && let Some(pid) = self.pid
-                    && let Some(mastah) = state.master_of(&lid) =>
+                    && let Some(mastah) = blaster.master_of(&lid) =>
             {
                 if pid == mastah
                     && id != pid
-                    && let Some(guy) = state.players.get_mut(&id)
+                    && let Some(guy) = blaster.players.get_mut(&id)
                     && guy.lid == lid
                 {
                     guy.send(&ServerMessage::Disconnected {
@@ -790,15 +818,15 @@ impl Connection {
             ClientMessage::SetMaster { pid: id }
                 if let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
-                    && let Some(mastah) = state.master_of(&lid) =>
+                    && let Some(mastah) = blaster.master_of(&lid) =>
             {
                 if pid == mastah
                     && id != pid
-                    && state.players.get(&id).map(|x| &x.lid) == Some(lid)
-                    && let Some(lobby) = state.lobbies.get_mut(lid)
+                    && blaster.players.get(&id).map(|x| &x.lid) == Some(lid)
+                    && let Some(lobby) = blaster.lobbies.get_mut(lid)
                 {
                     lobby.master = id;
-                    state.send_to_lobby(lid, &ServerMessage::SetMaster { pid: id });
+                    blaster.send_to_lobby(lid, &ServerMessage::SetMaster { pid: id });
                 }
             }
             other => {
@@ -816,11 +844,11 @@ impl Connection {
 
         // #27. single-player lobby timeouts
         if let Some(lid) = self.lid.clone() {
-            let mut state = self.state.lock().await;
+            let mut blaster = self.blaster.lock().await;
 
-            let chud = state.players_in(&lid) == 1;
+            let chud = blaster.players_in(&lid) == 1;
 
-            if let Some(lober) = state.lobbies.get_mut(&lid)
+            if let Some(lober) = blaster.lobbies.get_mut(&lid)
                 // swarm lobbies can hang indefinitely i suppose
                 && !lober.swarm
             {
@@ -839,7 +867,7 @@ impl Connection {
         Ok(())
     }
 
-    async fn send_json(&mut self, value: &ServerMessage) -> bool {
+    async fn send(&mut self, value: &ServerMessage) -> bool {
         if let ServerMessage::Disconnected { reason } = value {
             self.bye_reason = Some(reason.clone());
         }
@@ -866,10 +894,10 @@ impl Connection {
         };
 
         let queue = {
-            let state = self.state.clone();
-            let mut state = state.lock().await;
+            let blaster = self.blaster.clone();
+            let mut blaster = blaster.lock().await;
 
-            state.players.get_mut(&pid).map(|p| {
+            blaster.players.get_mut(&pid).map(|p| {
                 let queue = p.queue.clone();
                 p.queue.clear();
                 queue
@@ -877,96 +905,73 @@ impl Connection {
         };
 
         for msg in queue.unwrap_or_default() {
-            self.send_json(&msg).await;
+            self.send(&msg).await;
 
             if let ServerMessage::Disconnected { .. } = msg {
                 break;
             }
         }
     }
-}
 
-async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: SocketAddr) {
-    info!("conn: {}", player_addr);
+    async fn mainloop(mut self) {
+        loop {
+            match self.handle_next_websock_msg().await {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(reason) => {
+                    if let Error::Violation { ref code, .. } = reason {
+                        warn!("boot to the face for {}: {}", self.addr, code);
+                    }
 
-    let (sender, receiver) = match tokio_tungstenite::accept_async(stream).await {
-        Ok(ws) => {
-            info!("hi {}", player_addr);
-            ws.split()
-        }
-        Err(e) => {
-            error!("{}: {}", player_addr, e);
-            return;
-        }
-    };
+                    let bye = ServerMessage::Disconnected { reason };
+                    self.send(&bye).await;
+                    self.flush().await;
 
-    let mut conn = Connection {
-        load: 0.0,
-        state: state.clone(),
-        addr: player_addr,
-        pid: None,
-        lid: None,
-        bye_reason: None,
-        sender,
-        receiver,
-    };
-
-    loop {
-        match conn.handle_next_websock_msg().await {
-            Ok(true) => {}
-            Ok(false) => break,
-            Err(reason) => {
-                if let Error::Violation { ref code, .. } = reason {
-                    warn!("boot to the face for {}: {}", conn.addr, code);
+                    break;
                 }
-
-                let bye = ServerMessage::Disconnected { reason };
-                conn.send_json(&bye).await;
-                conn.flush().await;
-
-                break;
             }
         }
-    }
 
-    if let Some(pid) = conn.pid
-        && let Some(ref lid) = conn.lid
-    {
-        let mut state = state.lock().await;
-        state.players.shift_remove(&pid);
+        let blaster = self.blaster.clone();
+        let mut blaster = blaster.lock().await;
 
-        let left = ServerMessage::Left {
-            pid,
-            reason: conn.bye_reason,
-        };
+        if let Some(pid) = self.pid
+            && let Some(ref lid) = self.lid
+        {
+            blaster.players.shift_remove(&pid);
 
-        state.send_to_lobby(lid, &left);
+            let left = ServerMessage::Left {
+                pid,
+                reason: self.bye_reason,
+            };
 
-        if let Some(mastah) = state.master_of(lid) {
-            state.send_to_lobby(lid, &ServerMessage::SetMaster { pid: mastah });
+            blaster.send_to_lobby(lid, &left);
+
+            if let Some(mastah) = blaster.master_of(lid) {
+                blaster.send_to_lobby(lid, &ServerMessage::SetMaster { pid: mastah });
+            }
         }
-    }
 
-    info!("bye {}", player_addr);
+        info!("bye {}", self.addr);
 
-    if let Ok(mut ws) = conn.receiver.reunite(conn.sender) {
-        let _ = ws.close(None).await;
-    }
-
-    let mut state = state.lock().await;
-    let mut nonempty = HashSet::new();
-
-    for player in state.players.values() {
-        nonempty.insert(player.lid.clone());
-    }
-
-    state.lobbies.retain(move |k, l| {
-        if nonempty.contains(k) {
-            return true;
-        } else {
-            let noun = if l.swarm { "swarm" } else { "lober" };
-            info!("bye {noun}: {:?}", k);
-            return false;
+        if let Ok(mut ws) = self.receiver.reunite(self.sender) {
+            let _ = ws.close(None).await;
         }
-    });
+
+        let mut nonempty = HashSet::new();
+
+        for player in blaster.players.values() {
+            nonempty.insert(player.lid.clone());
+        }
+
+        blaster.lobbies.retain(move |k, l| {
+            if nonempty.contains(k) {
+                return true;
+            } else {
+                let noun = if l.swarm { "swarm" } else { "lober" };
+                info!("bye {noun}: {:?}", k);
+                return false;
+            }
+        });
+    }
 }
