@@ -587,6 +587,8 @@ impl Connection {
                     list: self.list_lobbies(&gid, limit),
                 })
                 .await;
+
+                return Ok(Loop::Stop);
             }
             ClientMessage::Host {
                 pid,
