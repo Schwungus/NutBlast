@@ -617,13 +617,18 @@ impl Connection {
             {
                 self.pid = Some(pid);
 
-                let lid = {
+                let mut lid = {
                     let mut hasher = FnvHasher::default();
                     hasher.write(gid.0.as_bytes());
 
                     let lid = hasher.finish();
                     LobbyId { gid, lid }
                 };
+
+                // INFINITE SWARMS!!!
+                while state.lobby_full(&lid) {
+                    lid.lid += 1;
+                }
 
                 self.lid = Some(lid.clone());
 
@@ -639,10 +644,6 @@ impl Connection {
                     };
 
                     state.lobbies.insert(lid.clone(), lober);
-                }
-
-                if state.lobby_full(&lid) {
-                    return Outcome::Boot(Reason::err("lobby_full", "Swarm is full"));
                 }
 
                 state.introduce_player(config, pid, &lid, player_meta);
