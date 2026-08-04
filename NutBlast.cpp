@@ -147,7 +147,7 @@ struct ByeReason {
     std::string code = NUTBLAST_ERROR_OK, msg = "Graceful disconnection";
 
     ByeReason() {}
-    ByeReason(const nlohmann::json& obj) : err(obj["err"]), code(obj["code"]), msg(obj["msg"]) {}
+    ByeReason(const nlohmann::json& obj) : err(obj["type"] == "Violation"), code(obj["code"]), msg(obj["msg"]) {}
 
     operator NutBlast_Reason() const {
         return {.err = err, .code = code.c_str(), .msg = msg.c_str()};

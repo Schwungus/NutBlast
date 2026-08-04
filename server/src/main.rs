@@ -7,16 +7,22 @@ use std::{
     hash::Hasher as _,
     io::BufReader,
     net::SocketAddr,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use color_eyre::eyre::{self, eyre};
 use fnv::FnvHasher;
-use futures_util::{SinkExt as _, StreamExt as _, stream::SplitSink};
+use futures_util::{
+    SinkExt as _, StreamExt as _,
+    stream::{SplitSink, SplitStream},
+};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::{Mutex, MutexGuard},
+};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Error as TungError, Message},
@@ -82,6 +88,7 @@ impl Player {
 }
 
 struct State {
+    config: Arc<Config>,
     lobbies: HashMap<LobbyId, Lobby>,
     players: IndexMap<BasicId, Player>,
 }
@@ -95,24 +102,22 @@ struct LobbyListing {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct Reason {
-    err: bool,
-    code: String,
-    msg: String,
+#[serde(tag = "type")]
+enum Error {
+    Natural { code: String, msg: String },
+    Violation { code: String, msg: String },
 }
 
-impl Reason {
-    fn ok(code: impl Into<String>, msg: impl Into<String>) -> Self {
-        Self {
-            err: false,
+impl Error {
+    fn natural(code: impl Into<String>, msg: impl Into<String>) -> Self {
+        Self::Natural {
             code: code.into(),
             msg: msg.into(),
         }
     }
 
-    fn err(code: impl Into<String>, msg: impl Into<String>) -> Self {
-        Self {
-            err: true,
+    fn violation(code: impl Into<String>, msg: impl Into<String>) -> Self {
+        Self::Violation {
             code: code.into(),
             msg: msg.into(),
         }
@@ -197,7 +202,7 @@ enum ServerMessage {
     },
     Pong,
     Disconnected {
-        reason: Reason,
+        reason: Error,
     },
     SetListed {
         listed: bool,
@@ -230,7 +235,7 @@ enum ServerMessage {
     },
     Left {
         pid: BasicId,
-        reason: Option<Reason>,
+        reason: Option<Error>,
     },
     Candidate {
         from: BasicId,
@@ -253,7 +258,6 @@ enum ServerMessage {
 impl State {
     fn introduce_player(
         &mut self,
-        config: Arc<Config>,
         pid: BasicId,
         lid: &LobbyId,
         player_meta: HashMap<String, String>,
@@ -311,7 +315,7 @@ impl State {
             }
 
             player.send(&ServerMessage::Connected {
-                ice_servers: config.ice_servers.clone(),
+                ice_servers: self.config.ice_servers.clone(),
             });
         }
 
@@ -402,12 +406,13 @@ async fn main() -> eyre::Result<()> {
     info!("listening on: ws://{}", addr);
 
     let state = Arc::new(Mutex::new(State {
+        config: config.clone(),
         lobbies: HashMap::new(),
         players: IndexMap::new(),
     }));
 
     while let Ok((stream, player_addr)) = listener.accept().await {
-        tokio::spawn(handle(config.clone(), state.clone(), stream, player_addr));
+        tokio::spawn(handle(state.clone(), stream, player_addr));
     }
 
     Ok(())
@@ -421,67 +426,70 @@ fn check_meta(meta: &HashMap<String, String>) -> bool {
         })
 }
 
-enum Outcome {
-    Good,
-    Disconnected(Option<ServerMessage>),
-    Boot(Reason),
-}
-
 struct Connection {
-    load: f32,
     state: Arc<Mutex<State>>,
+    receiver: SplitStream<WebSocketStream<TcpStream>>,
+    sender: SplitSink<WebSocketStream<TcpStream>, Message>,
     addr: SocketAddr,
     pid: Option<BasicId>,
     lid: Option<LobbyId>,
-    bye_reason: Option<Reason>,
+    bye_reason: Option<Error>,
+    load: f32,
 }
 
 impl Connection {
-    async fn recv(
+    async fn handle_next_websock_msg(&mut self) -> Result<bool, Error> {
+        let start = Instant::now();
+        let mut result = true;
+
+        tokio::select! {
+            msg = self.receiver.next() => {
+                result = self.handle_websock_msg(msg).await?;
+            }
+            _ = tokio::time::sleep(TICK_DELAY) => {
+                self.flush().await;
+            }
+        }
+
+        self.advance(start).await?;
+
+        Ok(result)
+    }
+
+    async fn handle_websock_msg(
         &mut self,
-        config: Arc<Config>,
         msg: Option<Result<Message, TungError>>,
-        sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-    ) -> bool {
+    ) -> Result<bool, Error> {
+        // #28. rate-limiting
+        self.load += 1.0 / PAYLOADS_PER_SEC;
+
+        if self.load >= 1.0 {
+            warn!("CALM DOWN, {}", self.addr);
+            return Err(Error::violation("rate_limited", "Too many payloads"));
+        }
+
         match msg {
             Some(Ok(msg)) => {
-                match self.handle(config, msg) {
-                    Outcome::Good => {}
-                    Outcome::Boot(reason) => {
-                        warn!("boot to the face for {}: {}", self.addr, reason.code);
-                        let bye = Some(ServerMessage::Disconnected { reason });
-                        self.finalize(sender, bye).await;
-                        return false;
-                    }
-                    Outcome::Disconnected(fatality) => {
-                        self.finalize(sender, fatality).await;
-                        return false;
-                    }
-                }
-
-                self.flush(sender).await;
+                let result = self.handle_client_msg(msg).await?;
+                self.flush().await;
+                return Ok(result);
             }
             Some(Err(e)) => {
                 if !matches!(e, TungError::ConnectionClosed) {
                     error!("{}: {}", self.addr, e);
                 }
 
-                return false;
+                return Ok(false);
             }
             None => {
-                return false;
+                return Ok(false);
             }
         }
-
-        return true;
     }
 
-    fn list_lobbies(
-        &self,
-        state: MutexGuard<State>,
-        gid: &GameId,
-        limit: usize,
-    ) -> Vec<LobbyListing> {
+    async fn list_lobbies(&self, gid: &GameId, limit: usize) -> Vec<LobbyListing> {
+        let state = self.state.freaking_lock().await;
+
         let mut lobbies: HashMap<LobbyId, LobbyListing> = state
             .lobbies
             .iter()
@@ -511,28 +519,29 @@ impl Connection {
         lobbies.into_values().collect()
     }
 
-    fn handle(&mut self, config: Arc<Config>, msg: Message) -> Outcome {
+    async fn handle_client_msg(&mut self, msg: Message) -> Result<bool, Error> {
         let json = match msg {
             Message::Text(text) => text.to_string(),
-            Message::Close(_) => return Outcome::Disconnected(None),
+            Message::Close(_) => return Ok(false),
             Message::Binary(_) => {
-                return Outcome::Boot(Reason::err(
+                return Err(Error::violation(
                     "binary_unsupported",
                     "Binary messages not supported",
                 ));
             }
-            _ => return Outcome::Good,
+            _ => return Ok(true),
         };
 
         let request = match serde_json::from_str(&json) {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", self.addr, err);
-                return Outcome::Boot(Reason::err("bad_json", "JSON parse error"));
+                return Err(Error::violation("bad_json", "JSON parse error"));
             }
         };
 
-        let mut state = self.state.freaking_lock();
+        let state = self.state.clone();
+        let mut state = state.freaking_lock().await;
 
         match request {
             ClientMessage::Ping => {
@@ -541,9 +550,12 @@ impl Connection {
                 }
             }
             ClientMessage::List { gid, limit } => {
-                return Outcome::Disconnected(Some(ServerMessage::List {
-                    list: self.list_lobbies(state, &gid, limit),
-                }));
+                self.send_json(&ServerMessage::List {
+                    list: self.list_lobbies(&gid, limit).await,
+                })
+                .await;
+
+                return Ok(false);
             }
             ClientMessage::Host {
                 pid,
@@ -564,7 +576,7 @@ impl Connection {
                 self.lid = Some(lid.clone());
 
                 if state.lobbies.contains_key(&lid) {
-                    return Outcome::Boot(Reason::err("lobby_exists", "Lobby already exists"));
+                    return Err(Error::violation("lobby_exists", "Lobby already exists"));
                 }
 
                 info!("new lobby max={capacity} {lid:?}");
@@ -580,7 +592,7 @@ impl Connection {
 
                 state.lobbies.insert(lid.clone(), lober);
 
-                state.introduce_player(config, pid, &lid, player_meta);
+                state.introduce_player(pid, &lid, player_meta);
             }
             ClientMessage::Join {
                 pid,
@@ -596,19 +608,19 @@ impl Connection {
                 self.lid = Some(lid.clone());
 
                 if !state.lobbies.contains_key(&lid) {
-                    return Outcome::Boot(Reason::err("lobby_not_found", "Lobby not found"));
+                    return Err(Error::violation("lobby_not_found", "Lobby not found"));
                 }
 
                 // protecting swarms from aboose
                 if let Some(Lobby { swarm: true, .. }) = state.lobbies.get(&lid) {
-                    return Outcome::Boot(Reason::err("lobby_not_found", "Lobby not found"));
+                    return Err(Error::violation("lobby_not_found", "Lobby not found"));
                 }
 
                 if state.lobby_full(&lid) {
-                    return Outcome::Boot(Reason::err("lobby_full", "Lobby is full"));
+                    return Err(Error::violation("lobby_full", "Lobby is full"));
                 }
 
-                state.introduce_player(config, pid, &lid, player_meta);
+                state.introduce_player(pid, &lid, player_meta);
             }
             ClientMessage::Swarm {
                 pid,
@@ -654,7 +666,7 @@ impl Connection {
                     state.lobbies.insert(lid.clone(), lober);
                 }
 
-                state.introduce_player(config, pid, &lid, player_meta);
+                state.introduce_player(pid, &lid, player_meta);
             }
             ClientMessage::PassCandidate {
                 ref to,
@@ -771,7 +783,7 @@ impl Connection {
                     && guy.lid == lid
                 {
                     guy.send(&ServerMessage::Disconnected {
-                        reason: Reason::ok("kick", "Kicked by lobby's master"),
+                        reason: Error::natural("kick", "Kicked by lobby's master"),
                     });
                 }
             }
@@ -791,18 +803,43 @@ impl Connection {
             }
             other => {
                 warn!("bad: {:?}", other);
-                return Outcome::Boot(Reason::err("bad_payload", "Invalid payload"));
+                return Err(Error::violation("bad_payload", "Invalid payload"));
             }
         };
 
-        Outcome::Good
+        Ok(true)
     }
 
-    async fn send_json(
-        &mut self,
-        sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-        value: &ServerMessage,
-    ) -> bool {
+    async fn advance(&mut self, start: Instant) -> Result<(), Error> {
+        let reimburse = Instant::now().duration_since(start).as_secs_f32();
+        self.load = (self.load - reimburse).max(0.0);
+
+        // #27. single-player lobby timeouts
+        if let Some(lid) = self.lid.clone() {
+            let mut state = self.state.freaking_lock().await;
+
+            let chud = state.players_in(&lid) == 1;
+
+            if let Some(lober) = state.lobbies.get_mut(&lid)
+                // swarm lobbies can hang indefinitely i suppose
+                && !lober.swarm
+            {
+                if chud && let Some(start) = lober.death_timer {
+                    if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
+                        return Err(Error::natural("inactive_lobby", "Inactive lobby"));
+                    }
+                } else if chud {
+                    lober.death_timer = Some(Instant::now());
+                } else {
+                    lober.death_timer = None;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_json(&mut self, value: &ServerMessage) -> bool {
         if let ServerMessage::Disconnected { reason } = value {
             self.bye_reason = Some(reason.clone());
         }
@@ -815,7 +852,7 @@ impl Connection {
             }
         };
 
-        if let Err(err) = sender.send(Message::text(s)).await {
+        if let Err(err) = self.sender.send(Message::text(s)).await {
             error!("send to {}: {}", self.addr, err);
             return false;
         }
@@ -823,13 +860,14 @@ impl Connection {
         true
     }
 
-    async fn flush(&mut self, sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>) {
+    async fn flush(&mut self) {
         let Some(pid) = self.pid.to_owned() else {
             return;
         };
 
         let queue = {
-            let mut state = self.state.freaking_lock();
+            let state = self.state.clone();
+            let mut state = state.freaking_lock().await;
 
             state.players.get_mut(&pid).map(|p| {
                 let queue = p.queue.clone();
@@ -839,36 +877,19 @@ impl Connection {
         };
 
         for msg in queue.unwrap_or_default() {
-            self.send_json(sender, &msg).await;
+            self.send_json(&msg).await;
 
             if let ServerMessage::Disconnected { .. } = msg {
                 break;
             }
         }
     }
-
-    async fn finalize(
-        &mut self,
-        sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-        fatality: Option<ServerMessage>,
-    ) {
-        let _ = self.flush(sender).await;
-
-        if let Some(fatality) = fatality {
-            let _ = self.send_json(sender, &fatality).await;
-        }
-    }
 }
 
-async fn handle(
-    config: Arc<Config>,
-    state: Arc<Mutex<State>>,
-    stream: TcpStream,
-    player_addr: SocketAddr,
-) {
+async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: SocketAddr) {
     info!("conn: {}", player_addr);
 
-    let (mut sender, mut receiver) = match tokio_tungstenite::accept_async(stream).await {
+    let (sender, receiver) = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => {
             info!("hi {}", player_addr);
             ws.split()
@@ -886,65 +907,32 @@ async fn handle(
         pid: None,
         lid: None,
         bye_reason: None,
+        sender,
+        receiver,
     };
 
     loop {
-        let start = Instant::now();
-        let mut die = None;
-
-        tokio::select! {
-            msg = receiver.next() => {
-                // #28. rate-limiting
-                conn.load += 1.0 / PAYLOADS_PER_SEC;
-
-                if conn.load >= 1.0 {
-                    warn!("CALM DOWN, {}", player_addr);
-                    die = Some(Reason::err("rate_limited", "Too many payloads"));
-                } else if !conn.recv(config.clone(), msg, &mut sender).await {
-                    break;
+        match conn.handle_next_websock_msg().await {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(reason) => {
+                if let Error::Violation { ref code, .. } = reason {
+                    warn!("boot to the face for {}: {}", conn.addr, code);
                 }
+
+                let bye = ServerMessage::Disconnected { reason };
+                conn.send_json(&bye).await;
+                conn.flush().await;
+
+                break;
             }
-            _ = tokio::time::sleep(TICK_DELAY) => {
-                conn.flush(&mut sender).await;
-            }
-        }
-
-        let reimburse = Instant::now().duration_since(start).as_secs_f32();
-        conn.load = (conn.load - reimburse).max(0.0);
-
-        // #27. single-player lobby timeouts
-        if let Some(lid) = conn.lid.clone() {
-            let mut state = state.freaking_lock();
-
-            let chud = state.players_in(&lid) == 1;
-
-            if let Some(lober) = state.lobbies.get_mut(&lid)
-                // swarm lobbies can hang indefinitely i suppose
-                && !lober.swarm
-            {
-                if chud && let Some(start) = lober.death_timer {
-                    if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
-                        die = Some(Reason::ok("inactive_lobby", "Inactive lobby"));
-                    }
-                } else if chud {
-                    lober.death_timer = Some(Instant::now());
-                } else {
-                    lober.death_timer = None;
-                }
-            }
-        }
-
-        if let Some(reason) = die {
-            let msg = ServerMessage::Disconnected { reason };
-            conn.send_json(&mut sender, &msg).await;
-            break;
         }
     }
 
     if let Some(pid) = conn.pid
         && let Some(ref lid) = conn.lid
     {
-        let mut state = state.freaking_lock();
+        let mut state = state.freaking_lock().await;
         state.players.shift_remove(&pid);
 
         let left = ServerMessage::Left {
@@ -961,11 +949,11 @@ async fn handle(
 
     info!("bye {}", player_addr);
 
-    if let Ok(mut ws) = receiver.reunite(sender) {
+    if let Ok(mut ws) = conn.receiver.reunite(conn.sender) {
         let _ = ws.close(None).await;
     }
 
-    let mut state = state.freaking_lock();
+    let mut state = state.freaking_lock().await;
     let mut nonempty = HashSet::new();
 
     for player in state.players.values() {
@@ -984,11 +972,11 @@ async fn handle(
 }
 
 trait ArcMutexStateExt {
-    fn freaking_lock<'a>(&'a self) -> MutexGuard<'a, State>;
+    async fn freaking_lock(&self) -> MutexGuard<'_, State>;
 }
 
 impl ArcMutexStateExt for Arc<Mutex<State>> {
-    fn freaking_lock<'a>(&'a self) -> MutexGuard<'a, State> {
-        self.lock().unwrap()
+    async fn freaking_lock(&self) -> MutexGuard<'_, State> {
+        self.lock().await
     }
 }
