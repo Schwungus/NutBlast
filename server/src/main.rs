@@ -101,14 +101,19 @@ struct LobbyListing {
     meta: HashMap<String, String>,
 }
 
+enum Loop {
+    Continue,
+    Stop,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
-enum Error {
+enum Kick {
     Natural { code: String, msg: String },
     Violation { code: String, msg: String },
 }
 
-impl Error {
+impl Kick {
     fn natural(code: impl Into<String>, msg: impl Into<String>) -> Self {
         Self::Natural {
             code: code.into(),
@@ -202,7 +207,7 @@ enum ServerMessage {
         ice_servers: Vec<String>,
     },
     Disconnected {
-        reason: Error,
+        reason: Kick,
     },
     SetListed {
         listed: bool,
@@ -235,7 +240,7 @@ enum ServerMessage {
     },
     Left {
         pid: BasicId,
-        reason: Option<Error>,
+        reason: Option<Kick>,
     },
     Candidate {
         from: BasicId,
@@ -461,24 +466,24 @@ struct Connection {
     addr: SocketAddr,
     pid: Option<BasicId>,
     lid: Option<LobbyId>,
-    bye_reason: Option<Error>,
+    bye_reason: Option<Kick>,
     load: f32,
 }
 
 impl Connection {
-    async fn handle_next_websock_msg(&mut self) -> Result<bool, Error> {
+    async fn handle_next_websock_msg(&mut self) -> Result<Loop, Kick> {
         let start = Instant::now();
-        let mut result = true;
 
-        tokio::select! {
+        let result = tokio::select! {
             msg = self.receiver.next() => {
-                result = self.handle_websock_msg(msg).await?;
+                self.handle_websock_msg(msg).await?
             }
             _ = tokio::time::sleep(TICK_DELAY) => {
-                self.flush().await;
+                Loop::Continue
             }
-        }
+        };
 
+        self.flush().await;
         self.advance(start).await?;
 
         Ok(result)
@@ -487,30 +492,28 @@ impl Connection {
     async fn handle_websock_msg(
         &mut self,
         msg: Option<Result<Message, TungError>>,
-    ) -> Result<bool, Error> {
+    ) -> Result<Loop, Kick> {
         // #28. rate-limiting
         self.load += 1.0 / PAYLOADS_PER_SEC;
 
         if self.load >= 1.0 {
             warn!("CALM DOWN, {}", self.addr);
-            return Err(Error::violation("rate_limited", "Too many payloads"));
+            return Err(Kick::violation("rate_limited", "Too many payloads"));
         }
 
         match msg {
             Some(Ok(msg)) => {
-                let result = self.handle_client_msg(msg).await?;
-                self.flush().await;
-                return Ok(result);
+                return self.handle_client_msg(msg).await;
             }
             Some(Err(e)) => {
                 if !matches!(e, TungError::ConnectionClosed) {
                     error!("{}: {}", self.addr, e);
                 }
 
-                return Ok(false);
+                return Ok(Loop::Stop);
             }
             None => {
-                return Ok(false);
+                return Ok(Loop::Stop);
             }
         }
     }
@@ -547,24 +550,24 @@ impl Connection {
         lobbies.into_values().collect()
     }
 
-    async fn handle_client_msg(&mut self, msg: Message) -> Result<bool, Error> {
+    async fn handle_client_msg(&mut self, msg: Message) -> Result<Loop, Kick> {
         let json = match msg {
             Message::Text(text) => text.to_string(),
-            Message::Close(_) => return Ok(false),
+            Message::Close(_) => return Ok(Loop::Stop),
             Message::Binary(_) => {
-                return Err(Error::violation(
+                return Err(Kick::violation(
                     "binary_unsupported",
                     "Binary messages not supported",
                 ));
             }
-            _ => return Ok(true),
+            _ => return Ok(Loop::Continue),
         };
 
         let msg = match serde_json::from_str(&json) {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", self.addr, err);
-                return Err(Error::violation("bad_json", "JSON parse error"));
+                return Err(Kick::violation("bad_json", "JSON parse error"));
             }
         };
 
@@ -582,8 +585,6 @@ impl Connection {
                     list: self.list_lobbies(&gid, limit).await,
                 })
                 .await;
-
-                return Ok(false);
             }
             ClientMessage::Host {
                 pid,
@@ -604,7 +605,7 @@ impl Connection {
                 self.lid = Some(lid.clone());
 
                 if blaster.lobbies.contains_key(&lid) {
-                    return Err(Error::violation("lobby_exists", "Lobby already exists"));
+                    return Err(Kick::violation("lobby_exists", "Lobby already exists"));
                 }
 
                 info!("new lobby max={capacity} {lid:?}");
@@ -636,16 +637,16 @@ impl Connection {
                 self.lid = Some(lid.clone());
 
                 if !blaster.lobbies.contains_key(&lid) {
-                    return Err(Error::violation("lobby_not_found", "Lobby not found"));
+                    return Err(Kick::violation("lobby_not_found", "Lobby not found"));
                 }
 
                 // protecting swarms from aboose
                 if let Some(Lobby { swarm: true, .. }) = blaster.lobbies.get(&lid) {
-                    return Err(Error::violation("lobby_not_found", "Lobby not found"));
+                    return Err(Kick::violation("lobby_not_found", "Lobby not found"));
                 }
 
                 if blaster.lobby_full(&lid) {
-                    return Err(Error::violation("lobby_full", "Lobby is full"));
+                    return Err(Kick::violation("lobby_full", "Lobby is full"));
                 }
 
                 blaster.introduce_player(pid, &lid, player_meta);
@@ -811,7 +812,7 @@ impl Connection {
                     && guy.lid == lid
                 {
                     guy.send(&ServerMessage::Disconnected {
-                        reason: Error::natural("kick", "Kicked by lobby's master"),
+                        reason: Kick::natural("kick", "Kicked by lobby's master"),
                     });
                 }
             }
@@ -831,14 +832,14 @@ impl Connection {
             }
             other => {
                 warn!("bad: {:?}", other);
-                return Err(Error::violation("bad_payload", "Invalid payload"));
+                return Err(Kick::violation("bad_payload", "Invalid payload"));
             }
         };
 
-        Ok(true)
+        Ok(Loop::Continue)
     }
 
-    async fn advance(&mut self, start: Instant) -> Result<(), Error> {
+    async fn advance(&mut self, start: Instant) -> Result<(), Kick> {
         let reimburse = Instant::now().duration_since(start).as_secs_f32();
         self.load = (self.load - reimburse).max(0.0);
 
@@ -851,7 +852,7 @@ impl Connection {
             if let Some(lober) = blaster.lobbies.get_mut(&lid) {
                 if chud && let Some(start) = lober.death_timer {
                     if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
-                        return Err(Error::natural("inactive_lobby", "Inactive lobby"));
+                        return Err(Kick::natural("inactive_lobby", "Inactive lobby"));
                     }
                 } else if chud {
                     lober.death_timer = Some(Instant::now());
@@ -913,10 +914,10 @@ impl Connection {
     async fn mainloop(mut self) {
         loop {
             match self.handle_next_websock_msg().await {
-                Ok(true) => {}
-                Ok(false) => break,
+                Ok(Loop::Continue) => {}
+                Ok(Loop::Stop) => break,
                 Err(reason) => {
-                    if let Error::Violation { ref code, .. } = reason {
+                    if let Kick::Violation { ref code, .. } = reason {
                         warn!("boot to the face for {}: {}", self.addr, code);
                     }
 
