@@ -682,8 +682,11 @@ extern "C" void NutBlast_Disconnect() {
     ::fire_ready.reset();
 
     log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
+
     // TODO: maybe NOT fire this in the lobby-listing mode?
     fire(::on_disconnected, ::disconnection_reason);
+
+    ::disconnection_reason = ByeReason();
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
