@@ -21,7 +21,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{Mutex, MutexGuard},
+    sync::Mutex,
 };
 use tokio_tungstenite::{
     WebSocketStream,
@@ -488,7 +488,7 @@ impl Connection {
     }
 
     async fn list_lobbies(&self, gid: &GameId, limit: usize) -> Vec<LobbyListing> {
-        let state = self.state.freaking_lock().await;
+        let state = self.state.lock().await;
 
         let mut lobbies: HashMap<LobbyId, LobbyListing> = state
             .lobbies
@@ -541,7 +541,7 @@ impl Connection {
         };
 
         let state = self.state.clone();
-        let mut state = state.freaking_lock().await;
+        let mut state = state.lock().await;
 
         match request {
             ClientMessage::Ping => {
@@ -816,7 +816,7 @@ impl Connection {
 
         // #27. single-player lobby timeouts
         if let Some(lid) = self.lid.clone() {
-            let mut state = self.state.freaking_lock().await;
+            let mut state = self.state.lock().await;
 
             let chud = state.players_in(&lid) == 1;
 
@@ -867,7 +867,7 @@ impl Connection {
 
         let queue = {
             let state = self.state.clone();
-            let mut state = state.freaking_lock().await;
+            let mut state = state.lock().await;
 
             state.players.get_mut(&pid).map(|p| {
                 let queue = p.queue.clone();
@@ -932,7 +932,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
     if let Some(pid) = conn.pid
         && let Some(ref lid) = conn.lid
     {
-        let mut state = state.freaking_lock().await;
+        let mut state = state.lock().await;
         state.players.shift_remove(&pid);
 
         let left = ServerMessage::Left {
@@ -953,7 +953,7 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
         let _ = ws.close(None).await;
     }
 
-    let mut state = state.freaking_lock().await;
+    let mut state = state.lock().await;
     let mut nonempty = HashSet::new();
 
     for player in state.players.values() {
@@ -969,14 +969,4 @@ async fn handle(state: Arc<Mutex<State>>, stream: TcpStream, player_addr: Socket
             return false;
         }
     });
-}
-
-trait ArcMutexStateExt {
-    async fn freaking_lock(&self) -> MutexGuard<'_, State>;
-}
-
-impl ArcMutexStateExt for Arc<Mutex<State>> {
-    async fn freaking_lock(&self) -> MutexGuard<'_, State> {
-        self.lock().await
-    }
 }
