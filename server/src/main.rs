@@ -7,7 +7,7 @@ use std::{
     hash::Hasher as _,
     io::BufReader,
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 
@@ -19,10 +19,7 @@ use futures_util::{
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::Mutex,
-};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Error as TungError, Message},
@@ -89,8 +86,8 @@ impl Player {
 
 struct Blaster {
     config: Arc<Config>,
-    lobbies: HashMap<LobbyId, Lobby>,
-    players: IndexMap<BasicId, Player>,
+    lobbies: Arc<Mutex<HashMap<LobbyId, Lobby>>>,
+    players: Arc<Mutex<IndexMap<BasicId, Player>>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -261,23 +258,34 @@ enum ServerMessage {
 }
 
 impl Blaster {
-    fn introduce_player(
-        &mut self,
-        pid: BasicId,
-        lid: &LobbyId,
-        player_meta: HashMap<String, String>,
-    ) {
+    fn lock_lobbies(&self) -> MutexGuard<'_, HashMap<LobbyId, Lobby>> {
+        self.lobbies.lock().unwrap()
+    }
+
+    fn lock_players(&self) -> MutexGuard<'_, IndexMap<BasicId, Player>> {
+        self.players.lock().unwrap()
+    }
+
+    fn has_lobby(&self, lid: &LobbyId) -> bool {
+        self.lock_lobbies().contains_key(lid)
+    }
+
+    fn has_player(&self, pid: BasicId) -> bool {
+        self.lock_players().contains_key(&pid)
+    }
+
+    fn introduce_player(&self, pid: BasicId, lid: &LobbyId, player_meta: HashMap<String, String>) {
         let Some(Lobby {
             listed,
             capacity,
             meta: lobby_meta,
             ..
-        }) = self.lobbies.get(lid).cloned()
+        }) = self.lock_lobbies().get(lid).cloned()
         else {
             return;
         };
 
-        self.players.insert(
+        self.lock_players().insert(
             pid,
             Player {
                 lid: lid.clone(),
@@ -289,7 +297,7 @@ impl Blaster {
         let mastah = self.master_of(&lid);
 
         let pmeta: HashMap<_, _> = self
-            .players
+            .lock_players()
             .iter()
             .filter_map(|(id, p)| {
                 if id != &pid && &p.lid == lid {
@@ -300,7 +308,7 @@ impl Blaster {
             })
             .collect();
 
-        if let Some(player) = self.players.get_mut(&pid) {
+        if let Some(player) = self.lock_players().get_mut(&pid) {
             player.send(&ServerMessage::SetListed { listed });
             player.send(&ServerMessage::SetCapacity { capacity });
 
@@ -334,17 +342,17 @@ impl Blaster {
         }
     }
 
-    fn master_of(&mut self, lid: &LobbyId) -> Option<BasicId> {
+    fn master_of(&self, lid: &LobbyId) -> Option<BasicId> {
         let empty = self.players_in(lid) == 0;
-        let lobby = self.lobbies.get_mut(lid)?;
+        let lobby = self.lock_lobbies().get(lid)?.clone();
 
-        if self.players.contains_key(&lobby.master) {
+        if self.has_player(lobby.master) {
             Some(lobby.master)
         } else if empty {
             None
         } else {
-            let new = *self.players.iter().find(|(_, p)| p.lid == *lid)?.0;
-            lobby.master = new;
+            let new = *self.lock_players().iter().find(|(_, p)| p.lid == *lid)?.0;
+            self.lock_lobbies().get_mut(lid)?.master = new;
             Some(new)
         }
     }
@@ -352,7 +360,7 @@ impl Blaster {
     fn players_in(&self, lobby: &LobbyId) -> usize {
         let mut counter = 0;
 
-        for (_, p) in self.players.iter() {
+        for (_, p) in self.lock_players().iter() {
             if p.lid == *lobby {
                 counter += 1;
             }
@@ -362,21 +370,21 @@ impl Blaster {
     }
 
     fn lobby_full(&self, lid: &LobbyId) -> bool {
-        if let Some(ref lobby) = self.lobbies.get(lid) {
+        if let Some(ref lobby) = self.lock_lobbies().get(lid) {
             return self.players_in(lid) >= lobby.capacity;
         } else {
             return false;
         }
     }
 
-    fn send_to(&mut self, pid: &BasicId, msg: &ServerMessage) {
-        if let Some(player) = self.players.get_mut(pid) {
+    fn send_to(&self, pid: &BasicId, msg: &ServerMessage) {
+        if let Some(player) = self.lock_players().get_mut(pid) {
             player.send(msg);
         }
     }
 
-    fn send_to_lobby(&mut self, lid: &LobbyId, msg: &ServerMessage) {
-        for (_, player) in &mut self.players {
+    fn send_to_lobby(&self, lid: &LobbyId, msg: &ServerMessage) {
+        for (_, player) in self.lock_players().iter_mut() {
             if player.lid == *lid {
                 player.send(&msg);
             }
@@ -398,8 +406,6 @@ async fn main() -> eyre::Result<()> {
         File::open("nutblaster.json").map_err(|x| eyre!("nutblaster.json: {x}"))?,
     ))?;
 
-    let config = Arc::new(config);
-
     let addr = if let Some(addr) = std::env::args().nth(1) {
         addr
     } else {
@@ -410,11 +416,11 @@ async fn main() -> eyre::Result<()> {
 
     info!("listening on: ws://{}", addr);
 
-    let blaster = Arc::new(Mutex::new(Blaster {
-        config: config.clone(),
-        lobbies: HashMap::new(),
-        players: IndexMap::new(),
-    }));
+    let blaster = Arc::new(Blaster {
+        config: Arc::new(config),
+        lobbies: Arc::new(Mutex::new(HashMap::new())),
+        players: Arc::new(Mutex::new(IndexMap::new())),
+    });
 
     while let Ok((stream, addr)) = listener.accept().await {
         let blaster = blaster.clone();
@@ -460,7 +466,7 @@ fn check_meta(meta: &HashMap<String, String>) -> bool {
 }
 
 struct Connection {
-    blaster: Arc<Mutex<Blaster>>,
+    blaster: Arc<Blaster>,
     receiver: SplitStream<WebSocketStream<TcpStream>>,
     sender: SplitSink<WebSocketStream<TcpStream>, Message>,
     addr: SocketAddr,
@@ -518,14 +524,13 @@ impl Connection {
         }
     }
 
-    async fn list_lobbies(&self, gid: &GameId, limit: usize) -> Vec<LobbyListing> {
-        let blaster = self.blaster.lock().await;
-
-        let mut lobbies: HashMap<LobbyId, LobbyListing> = blaster
-            .lobbies
+    fn list_lobbies(&self, gid: &GameId, limit: usize) -> Vec<LobbyListing> {
+        let mut lobbies: HashMap<LobbyId, LobbyListing> = self
+            .blaster
+            .lock_lobbies()
             .iter()
             .filter_map(|(lid, lobby)| {
-                if &lid.gid != gid || !lobby.listed || lobby.swarm || blaster.lobby_full(lid) {
+                if &lid.gid != gid || !lobby.listed || lobby.swarm || self.blaster.lobby_full(lid) {
                     return None;
                 }
 
@@ -541,7 +546,7 @@ impl Connection {
             .take(limit.clamp(1, MAX_LOBBIES_IN_LIST))
             .collect();
 
-        for (_, player) in blaster.players.iter() {
+        for (_, player) in self.blaster.lock_players().iter() {
             if let Some(lober) = lobbies.get_mut(&player.lid) {
                 lober.players += 1;
             }
@@ -571,18 +576,15 @@ impl Connection {
             }
         };
 
-        let blaster = self.blaster.clone();
-        let mut blaster = blaster.lock().await;
-
         match msg {
             ClientMessage::Ping => {
                 if let Some(ref pid) = self.pid {
-                    blaster.send_to(pid, &ServerMessage::Pong);
+                    self.blaster.send_to(pid, &ServerMessage::Pong);
                 }
             }
             ClientMessage::List { gid, limit } => {
                 self.send(&ServerMessage::List {
-                    list: self.list_lobbies(&gid, limit).await,
+                    list: self.list_lobbies(&gid, limit),
                 })
                 .await;
             }
@@ -596,7 +598,7 @@ impl Connection {
             } if (1..=MAX_PLAYERS).contains(&capacity)
                 && self.pid.is_none()
                 && self.lid.is_none()
-                && !blaster.players.contains_key(&pid)
+                && !self.blaster.has_player(pid)
                 && lid.valid()
                 && check_meta(&player_meta)
                 && check_meta(&lobby_meta) =>
@@ -604,7 +606,7 @@ impl Connection {
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
-                if blaster.lobbies.contains_key(&lid) {
+                if self.blaster.has_lobby(&lid) {
                     return Err(Kick::violation("lobby_exists", "Lobby already exists"));
                 }
 
@@ -619,9 +621,9 @@ impl Connection {
                     death_timer: None,
                 };
 
-                blaster.lobbies.insert(lid.clone(), lober);
+                self.blaster.lock_lobbies().insert(lid.clone(), lober);
 
-                blaster.introduce_player(pid, &lid, player_meta);
+                self.blaster.introduce_player(pid, &lid, player_meta);
             }
             ClientMessage::Join {
                 pid,
@@ -629,27 +631,27 @@ impl Connection {
                 player_meta,
             } if self.pid.is_none()
                 && self.lid.is_none()
-                && !blaster.players.contains_key(&pid)
+                && !self.blaster.has_player(pid)
                 && lid.valid()
                 && check_meta(&player_meta) =>
             {
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
-                if !blaster.lobbies.contains_key(&lid) {
+                if !self.blaster.has_lobby(&lid) {
                     return Err(Kick::violation("lobby_not_found", "Lobby not found"));
                 }
 
                 // protecting swarms from aboose
-                if let Some(Lobby { swarm: true, .. }) = blaster.lobbies.get(&lid) {
+                if let Some(Lobby { swarm: true, .. }) = self.blaster.lock_lobbies().get(&lid) {
                     return Err(Kick::violation("lobby_not_found", "Lobby not found"));
                 }
 
-                if blaster.lobby_full(&lid) {
+                if self.blaster.lobby_full(&lid) {
                     return Err(Kick::violation("lobby_full", "Lobby is full"));
                 }
 
-                blaster.introduce_player(pid, &lid, player_meta);
+                self.blaster.introduce_player(pid, &lid, player_meta);
             }
             ClientMessage::Swarm {
                 pid,
@@ -658,7 +660,7 @@ impl Connection {
                 lobby_meta,
             } if self.pid.is_none()
                 && self.lid.is_none()
-                && !blaster.players.contains_key(&pid)
+                && !self.blaster.has_player(pid)
                 && gid.valid()
                 && check_meta(&player_meta)
                 && check_meta(&lobby_meta) =>
@@ -674,13 +676,13 @@ impl Connection {
                 };
 
                 // INFINITE SWARMS!!!
-                while blaster.lobby_full(&lid) {
+                while self.blaster.lobby_full(&lid) {
                     lid.lid += 1;
                 }
 
                 self.lid = Some(lid.clone());
 
-                if !blaster.lobbies.contains_key(&lid) {
+                if !self.blaster.has_lobby(&lid) {
                     info!("new swarm {lid:?}");
 
                     let lober = Lobby {
@@ -692,10 +694,10 @@ impl Connection {
                         death_timer: None,
                     };
 
-                    blaster.lobbies.insert(lid.clone(), lober);
+                    self.blaster.lock_lobbies().insert(lid.clone(), lober);
                 }
 
-                blaster.introduce_player(pid, &lid, player_meta);
+                self.blaster.introduce_player(pid, &lid, player_meta);
             }
             ClientMessage::PassCandidate {
                 ref to,
@@ -708,34 +710,40 @@ impl Connection {
                     mid,
                 };
 
-                blaster.send_to(to, &msg);
+                self.blaster.send_to(to, &msg);
             }
             ClientMessage::PassOffer { ref to, sdp } if let Some(from) = self.pid => {
-                blaster.send_to(to, &ServerMessage::Offer { from, sdp });
+                let msg = ServerMessage::Offer { from, sdp };
+                self.blaster.send_to(to, &msg);
             }
             ClientMessage::PassAnswer { ref to, sdp } if let Some(from) = self.pid => {
-                blaster.send_to(to, &ServerMessage::Answer { from, sdp });
+                let msg = ServerMessage::Answer { from, sdp };
+                self.blaster.send_to(to, &msg);
             }
             ClientMessage::SetListed { listed }
                 if let Some(pid) = self.pid
                     && let Some(ref lid) = self.lid =>
             {
-                if blaster.master_of(lid) == Some(pid)
-                    && let Some(lober) = blaster.lobbies.get_mut(lid)
+                if self.blaster.master_of(lid) == Some(pid)
+                    && let Some(lober) = self.blaster.lock_lobbies().get_mut(lid)
                 {
                     lober.listed = listed;
-                    blaster.send_to_lobby(lid, &ServerMessage::SetListed { listed });
+
+                    let msg = ServerMessage::SetListed { listed };
+                    self.blaster.send_to_lobby(lid, &msg);
                 }
             }
             ClientMessage::SetCapacity { capacity }
                 if let Some(pid) = self.pid
                     && let Some(ref lid) = self.lid =>
             {
-                if blaster.master_of(lid) == Some(pid)
-                    && let Some(lober) = blaster.lobbies.get_mut(lid)
+                if self.blaster.master_of(lid) == Some(pid)
+                    && let Some(lober) = self.blaster.lock_lobbies().get_mut(lid)
                 {
                     lober.capacity = capacity;
-                    blaster.send_to_lobby(lid, &ServerMessage::SetCapacity { capacity });
+
+                    let msg = ServerMessage::SetCapacity { capacity };
+                    self.blaster.send_to_lobby(lid, &msg);
                 }
             }
             // ok to boot since the size limits are enforced client-side
@@ -744,7 +752,7 @@ impl Connection {
                     && (0..=FIELD_VALUE_MAX).contains(&value.len())
                     && let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
-                    && let Some(player) = blaster.players.get_mut(&pid) =>
+                    && let Some(player) = self.blaster.lock_players().get_mut(&pid) =>
             {
                 if player.meta.contains_key(&key) || player.meta.len() < MAX_FIELDS {
                     player.meta.insert(key.to_string(), value.to_string());
@@ -755,18 +763,20 @@ impl Connection {
                         value: value.to_string(),
                     };
 
-                    blaster.send_to_lobby(lid, &msg);
+                    self.blaster.send_to_lobby(lid, &msg);
                 }
             }
             ClientMessage::ErasePlayerMeta { key }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
-                    && let Some(player) = blaster.players.get_mut(&pid) =>
+                    && let Some(player) = self.blaster.lock_players().get_mut(&pid) =>
             {
                 if player.meta.contains_key(&key) {
                     player.meta.remove(&key);
-                    blaster.send_to_lobby(lid, &ServerMessage::ErasePlayerMeta { pid, key });
+
+                    let msg = ServerMessage::ErasePlayerMeta { pid, key };
+                    self.blaster.send_to_lobby(lid, &msg);
                 }
             }
             // ok to boot since the size limits are enforced client-side
@@ -774,8 +784,8 @@ impl Connection {
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && (0..=FIELD_VALUE_MAX).contains(&value.len())
                     && let Some(ref lid) = self.lid
-                    && let master = blaster.master_of(&lid)
-                    && let Some(lober) = blaster.lobbies.get_mut(&lid) =>
+                    && let master = self.blaster.master_of(&lid)
+                    && let Some(lober) = self.blaster.lock_lobbies().get_mut(&lid) =>
             {
                 if master == self.pid
                     && (lober.meta.contains_key(&key) || lober.meta.len() < MAX_FIELDS)
@@ -787,28 +797,30 @@ impl Connection {
                         value: value.to_string(),
                     };
 
-                    blaster.send_to_lobby(lid, &msg);
+                    self.blaster.send_to_lobby(lid, &msg);
                 }
             }
             ClientMessage::EraseLobbyMeta { key }
                 if (1..=FIELD_NAME_MAX).contains(&key.len())
                     && let Some(ref lid) = self.lid
-                    && let master = blaster.master_of(&lid)
-                    && let Some(lober) = blaster.lobbies.get_mut(&lid) =>
+                    && let master = self.blaster.master_of(&lid)
+                    && let Some(lober) = self.blaster.lock_lobbies().get_mut(&lid) =>
             {
                 if master == self.pid && lober.meta.contains_key(&key) {
                     lober.meta.remove(&key);
-                    blaster.send_to_lobby(lid, &ServerMessage::EraseLobbyMeta { key });
+
+                    let msg = ServerMessage::EraseLobbyMeta { key };
+                    self.blaster.send_to_lobby(lid, &msg);
                 }
             }
             ClientMessage::Kick { pid: id }
                 if let Some(lid) = self.lid.clone()
                     && let Some(pid) = self.pid
-                    && let Some(mastah) = blaster.master_of(&lid) =>
+                    && let Some(mastah) = self.blaster.master_of(&lid) =>
             {
                 if pid == mastah
                     && id != pid
-                    && let Some(guy) = blaster.players.get_mut(&id)
+                    && let Some(guy) = self.blaster.lock_players().get_mut(&id)
                     && guy.lid == lid
                 {
                     guy.send(&ServerMessage::Disconnected {
@@ -819,15 +831,17 @@ impl Connection {
             ClientMessage::SetMaster { pid: id }
                 if let Some(ref lid) = self.lid
                     && let Some(pid) = self.pid
-                    && let Some(mastah) = blaster.master_of(&lid) =>
+                    && let Some(mastah) = self.blaster.master_of(&lid) =>
             {
                 if pid == mastah
                     && id != pid
-                    && blaster.players.get(&id).map(|x| &x.lid) == Some(lid)
-                    && let Some(lobby) = blaster.lobbies.get_mut(lid)
+                    && self.blaster.lock_players().get(&id).map(|x| &x.lid) == Some(lid)
+                    && let Some(lobby) = self.blaster.lock_lobbies().get_mut(lid)
                 {
                     lobby.master = id;
-                    blaster.send_to_lobby(lid, &ServerMessage::SetMaster { pid: id });
+
+                    let msg = ServerMessage::SetMaster { pid: id };
+                    self.blaster.send_to_lobby(lid, &msg);
                 }
             }
             other => {
@@ -845,11 +859,9 @@ impl Connection {
 
         // #27. single-player lobby timeouts
         if let Some(lid) = self.lid.clone() {
-            let mut blaster = self.blaster.lock().await;
+            let chud = self.blaster.players_in(&lid) == 1;
 
-            let chud = blaster.players_in(&lid) == 1;
-
-            if let Some(lober) = blaster.lobbies.get_mut(&lid) {
+            if let Some(lober) = self.blaster.lock_lobbies().get_mut(&lid) {
                 if chud && let Some(start) = lober.death_timer {
                     if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
                         return Err(Kick::natural("inactive_lobby", "Inactive lobby"));
@@ -891,16 +903,11 @@ impl Connection {
             return;
         };
 
-        let queue = {
-            let blaster = self.blaster.clone();
-            let mut blaster = blaster.lock().await;
-
-            blaster.players.get_mut(&pid).map(|p| {
-                let queue = p.queue.clone();
-                p.queue.clear();
-                queue
-            })
-        };
+        let queue = self.blaster.lock_players().get_mut(&pid).map(|p| {
+            let queue = p.queue.clone();
+            p.queue.clear();
+            queue
+        });
 
         for msg in queue.unwrap_or_default() {
             self.send(&msg).await;
@@ -930,23 +937,21 @@ impl Connection {
             }
         }
 
-        let blaster = self.blaster.clone();
-        let mut blaster = blaster.lock().await;
-
         if let Some(pid) = self.pid
             && let Some(ref lid) = self.lid
         {
-            blaster.players.shift_remove(&pid);
+            self.blaster.lock_players().shift_remove(&pid);
 
             let left = ServerMessage::Left {
                 pid,
                 reason: self.bye_reason,
             };
 
-            blaster.send_to_lobby(lid, &left);
+            self.blaster.send_to_lobby(lid, &left);
 
-            if let Some(mastah) = blaster.master_of(lid) {
-                blaster.send_to_lobby(lid, &ServerMessage::SetMaster { pid: mastah });
+            if let Some(mastah) = self.blaster.master_of(lid) {
+                let msg = ServerMessage::SetMaster { pid: mastah };
+                self.blaster.send_to_lobby(lid, &msg);
             }
         }
 
@@ -958,11 +963,11 @@ impl Connection {
 
         let mut nonempty = HashSet::new();
 
-        for player in blaster.players.values() {
+        for player in self.blaster.lock_players().values() {
             nonempty.insert(player.lid.clone());
         }
 
-        blaster.lobbies.retain(move |k, l| {
+        self.blaster.lock_lobbies().retain(move |k, l| {
             if nonempty.contains(k) {
                 return true;
             } else {
