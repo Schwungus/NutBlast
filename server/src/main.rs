@@ -917,9 +917,11 @@ async fn handle(
             let mut state = state.freaking_lock();
 
             let chud = state.players_in(&lid) == 1;
-            let lober = state.lobbies.get_mut(&lid);
 
-            if let Some(lober) = lober {
+            if let Some(lober) = state.lobbies.get_mut(&lid)
+                // swarm lobbies can hang indefinitely i suppose
+                && !lober.swarm
+            {
                 if chud && let Some(start) = lober.death_timer {
                     if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
                         die = Some(Reason::ok("inactive_lobby", "Inactive lobby"));
