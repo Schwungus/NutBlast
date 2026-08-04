@@ -560,7 +560,7 @@ impl Connection {
             _ => return Ok(true),
         };
 
-        let request = match serde_json::from_str(&json) {
+        let msg = match serde_json::from_str(&json) {
             Ok(ok) => ok,
             Err(err) => {
                 error!("parse msg from {}: {}", self.addr, err);
@@ -571,7 +571,7 @@ impl Connection {
         let blaster = self.blaster.clone();
         let mut blaster = blaster.lock().await;
 
-        match request {
+        match msg {
             ClientMessage::Ping => {
                 if let Some(ref pid) = self.pid {
                     blaster.send_to(pid, &ServerMessage::Pong);
@@ -848,10 +848,7 @@ impl Connection {
 
             let chud = blaster.players_in(&lid) == 1;
 
-            if let Some(lober) = blaster.lobbies.get_mut(&lid)
-                // swarm lobbies can hang indefinitely i suppose
-                && !lober.swarm
-            {
+            if let Some(lober) = blaster.lobbies.get_mut(&lid) {
                 if chud && let Some(start) = lober.death_timer {
                     if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
                         return Err(Error::natural("inactive_lobby", "Inactive lobby"));
