@@ -308,7 +308,7 @@ impl Connection {
                     && let Some(mastah) = self.blaster.master_of(&lid).await =>
             {
                 if pid == mastah && kick_id != pid {
-                    self.blaster.kick_player(&lid, pid).await;
+                    self.blaster.kick_player(&lid, kick_id).await;
                 }
             }
             ClientMessage::SetMaster {
