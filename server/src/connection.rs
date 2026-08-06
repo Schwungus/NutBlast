@@ -163,15 +163,7 @@ impl Connection {
 
                 info!("new lobby max={capacity} {lid:?}");
 
-                let lober = Lobby {
-                    master: pid,
-                    meta: lobby_meta,
-                    capacity,
-                    listed,
-                    swarm: false,
-                    death_timer: None,
-                };
-
+                let lober = Lobby::ugly_new(pid, lobby_meta, capacity, listed);
                 self.blaster.insert_lobby(&lid, lober).await;
                 self.blaster.introduce_player(pid, &lid, player_meta).await;
             }
@@ -231,15 +223,7 @@ impl Connection {
                 if !self.blaster.has_lobby(&lid).await {
                     info!("new swarm {lid:?}");
 
-                    let lober = Lobby {
-                        master: pid,
-                        meta: lobby_meta,
-                        capacity: MAX_PLAYERS,
-                        listed: false,
-                        swarm: true,
-                        death_timer: None,
-                    };
-
+                    let lober = Lobby::new_swarm(pid, lobby_meta);
                     self.blaster.insert_lobby(&lid, lober).await;
                 }
 

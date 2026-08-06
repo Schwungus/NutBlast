@@ -9,7 +9,7 @@ use serde::Deserialize;
 use tokio::sync::oneshot;
 
 use crate::{
-    MAX_FIELDS,
+    MAX_FIELDS, MAX_PLAYERS,
     id::{BasicId, GameId, LobbyId},
     protocol::{Kick, LobbyListing, ServerMessage},
 };
@@ -19,19 +19,43 @@ const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(10);
 
 #[derive(Clone)]
 pub struct Lobby {
-    pub master: BasicId,
-    pub meta: HashMap<String, String>,
-    pub capacity: usize,
-    pub listed: bool,
-    pub swarm: bool,
-    pub death_timer: Option<Instant>,
+    master: BasicId,
+    meta: HashMap<String, String>,
+    capacity: usize,
+    listed: bool,
+    swarm: bool,
+    death_timer: Option<Instant>,
+}
+
+impl Lobby {
+    pub fn ugly_new(
+        master: BasicId,
+        meta: HashMap<String, String>,
+        capacity: usize,
+        listed: bool,
+    ) -> Self {
+        Self {
+            master,
+            meta,
+            capacity,
+            listed,
+            swarm: false,
+            death_timer: None,
+        }
+    }
+
+    pub fn new_swarm(master: BasicId, meta: HashMap<String, String>) -> Self {
+        let mut lober = Self::ugly_new(master, meta, MAX_PLAYERS, false);
+        lober.swarm = true;
+        lober
+    }
 }
 
 #[derive(Clone)]
 pub struct Player {
-    pub lid: LobbyId,
-    pub meta: HashMap<String, String>,
-    pub queue: Vec<ServerMessage>,
+    lid: LobbyId,
+    meta: HashMap<String, String>,
+    queue: Vec<ServerMessage>,
 }
 
 impl Player {
