@@ -287,8 +287,10 @@ impl BlasterImpl {
                     self.send_to(&kick_id, msg);
                 }
             }
-            BlasterOperation::RemovePlayer { lid, pid, reason } => {
-                self.players.shift_remove(&pid);
+            BlasterOperation::RemovePlayer { pid, reason } => {
+                let Some(Player { lid, .. }) = self.players.shift_remove(&pid) else {
+                    return;
+                };
 
                 let left = ServerMessage::Left { pid, reason };
                 self.send_to_lobby(&lid, &left);
@@ -494,7 +496,6 @@ enum BlasterOperation {
         pid: BasicId,
     },
     RemovePlayer {
-        lid: LobbyId,
         pid: BasicId,
         reason: Option<Kick>,
     },
@@ -697,12 +698,9 @@ impl Blaster {
         rx.await.unwrap_or_default()
     }
 
-    pub async fn remove_player(&self, lid: &LobbyId, pid: BasicId, reason: Option<Kick>) {
-        let _ = self.channel.send(BlasterOperation::RemovePlayer {
-            lid: lid.clone(),
-            pid,
-            reason,
-        });
+    pub async fn remove_player(&self, pid: BasicId, reason: Option<Kick>) {
+        let msg = BlasterOperation::RemovePlayer { pid, reason };
+        let _ = self.channel.send(msg);
     }
 
     pub async fn cleanup_lobbies(&self) {

@@ -334,7 +334,7 @@ impl Connection {
         Ok(Loop::Continue)
     }
 
-    async fn send(&mut self, value: &ServerMessage) -> bool {
+    async fn send(&mut self, value: &ServerMessage) {
         if let ServerMessage::Disconnected { reason } = value {
             self.bye_reason = Some(reason.clone());
         }
@@ -343,16 +343,13 @@ impl Connection {
             Ok(ok) => ok,
             Err(err) => {
                 error!("serialize {}: {}", self.addr, err);
-                return false;
+                return;
             }
         };
 
         if let Err(err) = self.sender.send(Message::text(s)).await {
             error!("send to {}: {}", self.addr, err);
-            return false;
         }
-
-        true
     }
 
     async fn flush(&mut self) {
@@ -390,10 +387,8 @@ impl Connection {
             }
         }
 
-        if let Some(pid) = self.pid
-            && let Some(ref lid) = self.lid
-        {
-            self.blaster.remove_player(lid, pid, self.bye_reason).await;
+        if let Some(pid) = self.pid {
+            self.blaster.remove_player(pid, self.bye_reason).await;
         }
 
         info!("bye {}", self.addr);
