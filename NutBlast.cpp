@@ -147,7 +147,7 @@ struct ByeReason {
     std::string code = NUTBLAST_ERROR_OK, msg = "Graceful disconnection";
 
     ByeReason() {}
-    ByeReason(const nlohmann::json& obj) : err(obj["err"]), code(obj["code"]), msg(obj["msg"]) {}
+    ByeReason(const nlohmann::json& obj) : err(obj["type"] == "violation"), code(obj["code"]), msg(obj["msg"]) {}
 
     operator NutBlast_Reason() const {
         return {.err = err, .code = code.c_str(), .msg = msg.c_str()};
@@ -682,8 +682,11 @@ extern "C" void NutBlast_Disconnect() {
     ::fire_ready.reset();
 
     log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
+
     // TODO: maybe NOT fire this in the lobby-listing mode?
     fire(::on_disconnected, ::disconnection_reason);
+
+    ::disconnection_reason = ByeReason();
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
