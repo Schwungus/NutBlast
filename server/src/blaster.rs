@@ -354,10 +354,11 @@ impl BlasterImpl {
                     return;
                 };
 
+                let mut result = Ok(());
+
                 if chud && let Some(start) = lobby.death_timer {
                     if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
-                        let _ = tx.send(Err(Kick::natural("inactive_lobby", "Inactive lobby")));
-                        return;
+                        result = Err(Kick::natural("inactive_lobby", "Inactive lobby"));
                     }
                 } else if chud {
                     lobby.death_timer = Some(Instant::now());
@@ -365,28 +366,7 @@ impl BlasterImpl {
                     lobby.death_timer = None;
                 }
 
-                let _ = tx.send(Ok(()));
-            }
-            BlasterOperation::MasterOf { lid, tx } => {
-                let _ = tx.send(self.master_of(&lid));
-            }
-            BlasterOperation::LobbyFull { lid, tx } => {
-                let _ = tx.send(self.lobby_full(&lid));
-            }
-            BlasterOperation::SendTo { pid, msg } => {
-                self.send_to(&pid, msg);
-            }
-            BlasterOperation::InsertLobby { lid, lobby } => {
-                self.lobbies.insert(lid, lobby);
-            }
-            BlasterOperation::HasLobby { lid, tx } => {
-                let _ = tx.send(self.lobbies.contains_key(&lid));
-            }
-            BlasterOperation::HasPlayer { pid, tx } => {
-                let _ = tx.send(self.players.contains_key(&pid));
-            }
-            BlasterOperation::LobbyIsSwarm { lid, tx } => {
-                let _ = tx.send(self.lobbies.get(&lid).map(|x| x.swarm).unwrap_or(false));
+                let _ = tx.send(result);
             }
             BlasterOperation::FlushPlayerQueue { pid, tx } => {
                 let _ = if let Some(player) = self.players.get_mut(&pid) {
@@ -413,6 +393,27 @@ impl BlasterImpl {
                         return false;
                     }
                 });
+            }
+            BlasterOperation::MasterOf { lid, tx } => {
+                let _ = tx.send(self.master_of(&lid));
+            }
+            BlasterOperation::LobbyFull { lid, tx } => {
+                let _ = tx.send(self.lobby_full(&lid));
+            }
+            BlasterOperation::SendTo { pid, msg } => {
+                self.send_to(&pid, msg);
+            }
+            BlasterOperation::InsertLobby { lid, lobby } => {
+                self.lobbies.insert(lid, lobby);
+            }
+            BlasterOperation::HasLobby { lid, tx } => {
+                let _ = tx.send(self.lobbies.contains_key(&lid));
+            }
+            BlasterOperation::HasPlayer { pid, tx } => {
+                let _ = tx.send(self.players.contains_key(&pid));
+            }
+            BlasterOperation::LobbyIsSwarm { lid, tx } => {
+                let _ = tx.send(self.lobbies.get(&lid).map(|x| x.swarm).unwrap_or(false));
             }
         }
     }

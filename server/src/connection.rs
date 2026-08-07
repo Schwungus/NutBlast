@@ -62,17 +62,24 @@ impl Connection {
 
         let result = tokio::select! {
             msg = self.receiver.next() => {
-                self.handle_websock_msg(msg).await?
+                self.handle_websock_msg(msg).await
             }
             _ = tokio::time::sleep(TICK_DELAY) => {
-                Loop::Continue
+                Ok(Loop::Continue)
             }
         };
 
-        self.flush().await;
-        self.advance(start).await?;
+        let reimburse = Instant::now().duration_since(start).as_secs_f32();
+        self.load = (self.load - reimburse).max(0.0);
 
-        Ok(result)
+        // #27. single-player lobby timeouts
+        if let Some(ref lid) = self.lid {
+            self.blaster.advance_lobby_timer(lid).await?;
+        }
+
+        self.flush().await;
+
+        result
     }
 
     async fn handle_websock_msg(
@@ -325,18 +332,6 @@ impl Connection {
         };
 
         Ok(Loop::Continue)
-    }
-
-    async fn advance(&mut self, start: Instant) -> Result<(), Kick> {
-        let reimburse = Instant::now().duration_since(start).as_secs_f32();
-        self.load = (self.load - reimburse).max(0.0);
-
-        // #27. single-player lobby timeouts
-        if let Some(ref lid) = self.lid {
-            self.blaster.advance_lobby_timer(lid).await?;
-        }
-
-        Ok(())
     }
 
     async fn send(&mut self, value: &ServerMessage) -> bool {
