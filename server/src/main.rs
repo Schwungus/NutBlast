@@ -18,9 +18,6 @@ mod id;
 mod protocol;
 
 pub const MAX_PLAYERS: usize = 16;
-pub const MAX_FIELDS: usize = 16;
-pub const FIELD_NAME_MAX: usize = 255;
-pub const FIELD_VALUE_MAX: usize = 8191;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {

@@ -9,9 +9,9 @@ use serde::Deserialize;
 use tokio::sync::oneshot;
 
 use crate::{
-    MAX_FIELDS, MAX_PLAYERS,
+    MAX_PLAYERS,
     id::{BasicId, GameId, LobbyId},
-    protocol::{Kick, LobbyListing, ServerMessage},
+    protocol::{Kick, LobbyListing, MAX_FIELDS, Metadata, ServerMessage},
 };
 
 const MAX_LOBBIES_IN_LIST: usize = 100;
@@ -20,7 +20,7 @@ const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(10);
 #[derive(Clone)]
 pub struct Lobby {
     master: BasicId,
-    meta: HashMap<String, String>,
+    meta: Metadata,
     capacity: usize,
     listed: bool,
     swarm: bool,
@@ -28,12 +28,7 @@ pub struct Lobby {
 }
 
 impl Lobby {
-    pub fn ugly_new(
-        master: BasicId,
-        meta: HashMap<String, String>,
-        capacity: usize,
-        listed: bool,
-    ) -> Self {
+    pub fn ugly_new(master: BasicId, meta: Metadata, capacity: usize, listed: bool) -> Self {
         Self {
             master,
             meta,
@@ -44,7 +39,7 @@ impl Lobby {
         }
     }
 
-    pub fn new_swarm(master: BasicId, meta: HashMap<String, String>) -> Self {
+    pub fn new_swarm(master: BasicId, meta: Metadata) -> Self {
         let mut lober = Self::ugly_new(master, meta, MAX_PLAYERS, false);
         lober.swarm = true;
         lober
@@ -54,7 +49,7 @@ impl Lobby {
 #[derive(Clone)]
 pub struct Player {
     lid: LobbyId,
-    meta: HashMap<String, String>,
+    meta: Metadata,
     queue: Vec<ServerMessage>,
 }
 
@@ -145,9 +140,9 @@ impl BlasterImpl {
             }
             BlasterOperation::SetPlayerMeta { pid, key, value } => {
                 let lid = if let Some(player) = self.players.get_mut(&pid)
-                    && (player.meta.contains_key(&key) || player.meta.len() < MAX_FIELDS)
+                    && (player.meta.0.contains_key(&key) || player.meta.0.len() < MAX_FIELDS)
                 {
-                    player.meta.insert(key.to_string(), value.to_string());
+                    player.meta.0.insert(key.to_string(), value.to_string());
                     player.lid.clone()
                 } else {
                     return;
@@ -163,9 +158,9 @@ impl BlasterImpl {
             }
             BlasterOperation::ErasePlayerMeta { pid, key } => {
                 let lid = if let Some(player) = self.players.get_mut(&pid)
-                    && player.meta.contains_key(&key)
+                    && player.meta.0.contains_key(&key)
                 {
-                    player.meta.remove(&key);
+                    player.meta.0.remove(&key);
                     player.lid.clone()
                 } else {
                     return;
@@ -179,8 +174,8 @@ impl BlasterImpl {
                     return;
                 };
 
-                if lober.meta.contains_key(&key) || lober.meta.len() < MAX_FIELDS {
-                    lober.meta.insert(key.to_string(), value.to_string());
+                if lober.meta.0.contains_key(&key) || lober.meta.0.len() < MAX_FIELDS {
+                    lober.meta.0.insert(key.to_string(), value.to_string());
 
                     let msg = ServerMessage::SetLobbyMeta {
                         key: key.to_string(),
@@ -195,8 +190,8 @@ impl BlasterImpl {
                     return;
                 };
 
-                if lober.meta.contains_key(&key) {
-                    lober.meta.remove(&key);
+                if lober.meta.0.contains_key(&key) {
+                    lober.meta.0.remove(&key);
 
                     let msg = ServerMessage::EraseLobbyMeta {
                         key: key.to_string(),
@@ -247,7 +242,7 @@ impl BlasterImpl {
                     player.send(ServerMessage::SetListed { listed });
                     player.send(ServerMessage::SetCapacity { capacity });
 
-                    for (key, value) in lobby_meta {
+                    for (key, value) in lobby_meta.0 {
                         player.send(ServerMessage::SetLobbyMeta { key, value });
                     }
 
@@ -472,7 +467,7 @@ enum BlasterOperation {
     IntroducePlayer {
         pid: BasicId,
         lid: LobbyId,
-        player_meta: HashMap<String, String>,
+        player_meta: Metadata,
     },
     SendTo {
         pid: BasicId,
@@ -584,12 +579,7 @@ impl Blaster {
         });
     }
 
-    pub async fn introduce_player(
-        &self,
-        pid: BasicId,
-        lid: &LobbyId,
-        player_meta: HashMap<String, String>,
-    ) {
+    pub async fn introduce_player(&self, pid: BasicId, lid: &LobbyId, player_meta: Metadata) {
         let _ = self.channel.send(BlasterOperation::IntroducePlayer {
             pid,
             lid: lid.clone(),

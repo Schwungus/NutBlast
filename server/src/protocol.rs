@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 
 use crate::id::{BasicId, GameId, LobbyId};
+
+pub const MAX_FIELDS: usize = 16;
+pub const FIELD_NAME_MAX: usize = 255;
+pub const FIELD_VALUE_MAX: usize = 8191;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -18,20 +22,20 @@ pub enum ClientMessage {
         lid: LobbyId,
         capacity: usize,
         listed: bool,
-        player_meta: HashMap<String, String>,
-        lobby_meta: HashMap<String, String>,
+        player_meta: Metadata,
+        lobby_meta: Metadata,
     },
     Join {
         pid: BasicId,
         #[serde(flatten)]
         lid: LobbyId,
-        player_meta: HashMap<String, String>,
+        player_meta: Metadata,
     },
     Swarm {
         pid: BasicId,
         gid: GameId,
-        player_meta: HashMap<String, String>,
-        lobby_meta: HashMap<String, String>,
+        player_meta: Metadata,
+        lobby_meta: Metadata,
     },
     SetListed {
         listed: bool,
@@ -111,7 +115,7 @@ pub enum ServerMessage {
     },
     Joined {
         pid: BasicId,
-        meta: HashMap<String, String>,
+        meta: Metadata,
     },
     Left {
         pid: BasicId,
@@ -158,10 +162,33 @@ impl Kick {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LobbyListing {
     pub lid: BasicId,
     pub players: usize,
     pub max: usize,
-    pub meta: HashMap<String, String>,
+    pub meta: Metadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Metadata(
+    #[serde(deserialize_with = "deserialize_metadata")] pub HashMap<String, String>,
+);
+
+fn deserialize_metadata<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let meta = HashMap::<String, String>::deserialize(deserializer)?;
+
+    if meta.len() < MAX_FIELDS
+        && meta.iter().all(|(key, value)| {
+            (1..=FIELD_NAME_MAX).contains(&key.len())
+                && (0..=FIELD_VALUE_MAX).contains(&value.len())
+        })
+    {
+        return Ok(meta);
+    }
+
+    Err(de::Error::custom("RTFM"))
 }

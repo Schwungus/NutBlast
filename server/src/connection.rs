@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     hash::Hasher as _,
     net::SocketAddr,
     time::{Duration, Instant},
@@ -17,10 +16,10 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    FIELD_NAME_MAX, FIELD_VALUE_MAX, MAX_FIELDS, MAX_PLAYERS,
+    MAX_PLAYERS,
     blaster::{Blaster, Lobby},
     id::{BasicId, LobbyId},
-    protocol::{ClientMessage, Kick, ServerMessage},
+    protocol::{ClientMessage, FIELD_NAME_MAX, FIELD_VALUE_MAX, Kick, ServerMessage},
 };
 
 pub const PAYLOADS_PER_SEC: f32 = 30.0;
@@ -156,10 +155,7 @@ impl Connection {
             } if (1..=MAX_PLAYERS).contains(&capacity)
                 && self.pid.is_none()
                 && self.lid.is_none()
-                && !self.blaster.has_player(pid).await
-                && lid.valid()
-                && check_meta(&player_meta)
-                && check_meta(&lobby_meta) =>
+                && !self.blaster.has_player(pid).await =>
             {
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
@@ -180,9 +176,7 @@ impl Connection {
                 player_meta,
             } if self.pid.is_none()
                 && self.lid.is_none()
-                && !self.blaster.has_player(pid).await
-                && lid.valid()
-                && check_meta(&player_meta) =>
+                && !self.blaster.has_player(pid).await =>
             {
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
@@ -205,10 +199,7 @@ impl Connection {
                 lobby_meta,
             } if self.pid.is_none()
                 && self.lid.is_none()
-                && !self.blaster.has_player(pid).await
-                && gid.valid()
-                && check_meta(&player_meta)
-                && check_meta(&lobby_meta) =>
+                && !self.blaster.has_player(pid).await =>
             {
                 self.pid = Some(pid);
 
@@ -266,7 +257,8 @@ impl Connection {
                 }
             }
             ClientMessage::SetCapacity { capacity }
-                if let Some(pid) = self.pid
+                if (1..=MAX_PLAYERS).contains(&capacity)
+                    && let Some(pid) = self.pid
                     && let Some(ref lid) = self.lid =>
             {
                 if self.blaster.master_of(lid).await == Some(pid) {
@@ -399,14 +391,6 @@ impl Connection {
 
         self.blaster.cleanup_lobbies().await;
     }
-}
-
-fn check_meta(meta: &HashMap<String, String>) -> bool {
-    meta.len() < MAX_FIELDS
-        && meta.iter().all(|(key, value)| {
-            (1..=FIELD_NAME_MAX).contains(&key.len())
-                && (0..=FIELD_VALUE_MAX).contains(&value.len())
-        })
 }
 
 enum Loop {
