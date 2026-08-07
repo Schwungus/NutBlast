@@ -139,13 +139,20 @@ impl BlasterImpl {
                 }
             }
             BlasterOperation::SetPlayerMeta { pid, key, value } => {
-                let lid = if let Some(player) = self.players.get_mut(&pid)
-                    && (player.meta.0.contains_key(&key) || player.meta.0.len() < MAX_FIELDS)
-                {
-                    player.meta.0.insert(key.to_string(), value.to_string());
+                let lid = {
+                    let Some(player) = self.players.get_mut(&pid) else {
+                        return;
+                    };
+
+                    let fields = player.meta.fields_mut();
+
+                    if !fields.contains_key(&key) && fields.len() >= MAX_FIELDS {
+                        return;
+                    };
+
+                    fields.insert(key.to_string(), value.to_string());
+
                     player.lid.clone()
-                } else {
-                    return;
                 };
 
                 let msg = ServerMessage::SetPlayerMeta {
@@ -157,13 +164,20 @@ impl BlasterImpl {
                 self.send_to_lobby(&lid, &msg);
             }
             BlasterOperation::ErasePlayerMeta { pid, key } => {
-                let lid = if let Some(player) = self.players.get_mut(&pid)
-                    && player.meta.0.contains_key(&key)
-                {
-                    player.meta.0.remove(&key);
+                let lid = {
+                    let Some(player) = self.players.get_mut(&pid) else {
+                        return;
+                    };
+
+                    let fields = player.meta.fields_mut();
+
+                    if !fields.contains_key(&key) {
+                        return;
+                    }
+
+                    fields.remove(&key);
+
                     player.lid.clone()
-                } else {
-                    return;
                 };
 
                 let msg = ServerMessage::ErasePlayerMeta { pid, key };
@@ -174,8 +188,10 @@ impl BlasterImpl {
                     return;
                 };
 
-                if lober.meta.0.contains_key(&key) || lober.meta.0.len() < MAX_FIELDS {
-                    lober.meta.0.insert(key.to_string(), value.to_string());
+                let fields = lober.meta.fields_mut();
+
+                if fields.contains_key(&key) || fields.len() < MAX_FIELDS {
+                    fields.insert(key.to_string(), value.to_string());
 
                     let msg = ServerMessage::SetLobbyMeta {
                         key: key.to_string(),
@@ -190,8 +206,10 @@ impl BlasterImpl {
                     return;
                 };
 
-                if lober.meta.0.contains_key(&key) {
-                    lober.meta.0.remove(&key);
+                let fields = lober.meta.fields_mut();
+
+                if fields.contains_key(&key) {
+                    fields.remove(&key);
 
                     let msg = ServerMessage::EraseLobbyMeta {
                         key: key.to_string(),
@@ -242,8 +260,11 @@ impl BlasterImpl {
                     player.send(ServerMessage::SetListed { listed });
                     player.send(ServerMessage::SetCapacity { capacity });
 
-                    for (key, value) in lobby_meta.0 {
-                        player.send(ServerMessage::SetLobbyMeta { key, value });
+                    for (key, value) in lobby_meta.fields() {
+                        player.send(ServerMessage::SetLobbyMeta {
+                            key: key.to_string(),
+                            value: value.to_string(),
+                        });
                     }
 
                     for (&other, meta) in &pmeta {

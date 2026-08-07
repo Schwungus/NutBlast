@@ -171,9 +171,7 @@ pub struct LobbyListing {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Metadata(
-    #[serde(deserialize_with = "deserialize_metadata")] pub HashMap<String, String>,
-);
+pub struct Metadata(#[serde(deserialize_with = "deserialize_metadata")] HashMap<String, String>);
 
 fn deserialize_metadata<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
 where
@@ -191,4 +189,14 @@ where
     }
 
     Err(de::Error::custom("RTFM"))
+}
+
+impl Metadata {
+    pub fn fields(&self) -> &HashMap<String, String> {
+        &self.0
+    }
+
+    pub fn fields_mut(&mut self) -> &mut HashMap<String, String> {
+        &mut self.0
+    }
 }
