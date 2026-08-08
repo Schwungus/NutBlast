@@ -22,8 +22,8 @@ if(PROJECT_IS_TOP_LEVEL)
     set(FETCHCONTENT_QUIET OFF)
 endif()
 
-add_library(NutBlast ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast.cpp ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast.h)
-target_include_directories(NutBlast PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_library(NutBlast ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast.cpp ${CMAKE_CURRENT_SOURCE_DIR}/include/NutBlast.h)
+target_include_directories(NutBlast PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(NutBlast PRIVATE c_std_11 cxx_std_23)
 target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST=$<BOOL:${NUTBLAST_DEV_LOCALHOST}>)
 
@@ -47,8 +47,11 @@ set(USE_MBEDTLS ON CACHE INTERNAL "")
 set(ENABLE_PROGRAMS OFF CACHE INTERNAL "")
 set(ENABLE_TESTING OFF CACHE INTERNAL "")
 set(INSTALL_DEPS_LIBS OFF CACHE INTERNAL "")
-set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/mbedtls.h CACHE INTERNAL "")
 set(DATACHANNEL_POLLUTE_EXPORTED_RUNTIME_METHODS OFF CACHE INTERNAL "")
+set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE INTERNAL "")
+
+set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/mbedtls.h CACHE INTERNAL "")
+set(TF_PSA_CRYPTO_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto.h CACHE INTERNAL "")
 
 if(EMSCRIPTEN)
     #FetchContent_Declare(datachannel-wasm
@@ -67,14 +70,14 @@ if(EMSCRIPTEN)
     target_link_options(NutBlast PUBLIC -sASYNCIFY)
 else()
     FetchContent_Declare(MbedTLS
-        GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
-        GIT_TAG v3.6.6
+        URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.2.0/mbedtls-4.2.0.tar.bz2
+        URL_HASH SHA256=2bed9d713b4668f76553b097e72b8aa30bc8f112a940d7ae228d524bbde6ffea
         OVERRIDE_FIND_PACKAGE
         EXCLUDE_FROM_ALL)
 
     FetchContent_Declare(datachannel
         GIT_REPOSITORY https://github.com/Schwungus/libdatachannel.git
-        GIT_TAG 01ceb8466478449571e22c5356f344950b94732d
+        GIT_TAG 1e1882cf08f433fdb4c35024be112ecc797813de
         EXCLUDE_FROM_ALL)
 
     list(APPEND NB_LIBS datachannel-static)
@@ -98,10 +101,10 @@ if(NUTBLAST_BUILD_TEST)
 
     FetchContent_MakeAvailable(raylib S_tructures)
 
-    add_executable(NutBlast-test ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast-test.c)
+    add_executable(NutBlast-test ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-test.c)
     target_link_libraries(NutBlast-test PRIVATE NutBlast raylib S_tructures)
 
-    add_executable(NutBlast-lobbyist ${CMAKE_CURRENT_SOURCE_DIR}/NutBlast-lobbyist.c)
+    add_executable(NutBlast-lobbyist ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-lobbyist.c)
     target_link_libraries(NutBlast-lobbyist PRIVATE NutBlast)
 
     if(EMSCRIPTEN)
