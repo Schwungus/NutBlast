@@ -7,6 +7,14 @@ project(NutBlast
 option(NUTBLAST_BUILD_TEST "Build a NutBlast test binary?" ${PROJECT_IS_TOP_LEVEL})
 option(NUTBLAST_DEV_LOCALHOST "Connect to ws://localhost:36900 by default?" OFF)
 
+if(MSVC)
+    if(BUILD_SHARED_LIBS)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    else()
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    endif()
+endif()
+
 set(NB_BUILD_SHARED_LIBS_ORIGINAL_VALUE ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 
