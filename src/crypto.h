@@ -2,6 +2,6 @@
 #define MBEDTLS_THREADING_C
 #endif
 
-#if !defined(MBEDTLS_THREADING_PTHREAD) && !defined(_WIN32)
+#ifndef MBEDTLS_THREADING_PTHREAD
 #define MBEDTLS_THREADING_PTHREAD
 #endif
