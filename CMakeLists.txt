@@ -55,7 +55,6 @@ set(DATACHANNEL_POLLUTE_EXPORTED_RUNTIME_METHODS OFF CACHE INTERNAL "")
 set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE INTERNAL "")
 
 set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/mbedtls.h CACHE INTERNAL "")
-set(TF_PSA_CRYPTO_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto.h CACHE INTERNAL "")
 
 if(EMSCRIPTEN)
     #FetchContent_Declare(datachannel-wasm
@@ -74,14 +73,14 @@ if(EMSCRIPTEN)
     target_link_options(NutBlast PUBLIC -sASYNCIFY)
 else()
     FetchContent_Declare(MbedTLS
-        URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.2.0/mbedtls-4.2.0.tar.bz2
-        URL_HASH SHA256=2bed9d713b4668f76553b097e72b8aa30bc8f112a940d7ae228d524bbde6ffea
+        URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
+        URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
         OVERRIDE_FIND_PACKAGE
         EXCLUDE_FROM_ALL)
 
     FetchContent_Declare(datachannel
         GIT_REPOSITORY https://github.com/Schwungus/libdatachannel.git
-        GIT_TAG 1e1882cf08f433fdb4c35024be112ecc797813de
+        GIT_TAG e7e1dd80480749243577660a1a68d4d3b976d13f
         EXCLUDE_FROM_ALL)
 
     list(APPEND NB_LIBS datachannel-static)
