@@ -38,7 +38,7 @@ jobs:
             name: HTML5
 
     env:
-      CACHE_BUST: 0
+      CACHE_BUST: 1
       SCCACHE_GHA_ENABLED: true
 
     steps:
@@ -66,6 +66,12 @@ jobs:
           version: latest
           actions-cache-folder: emsdk-cache
 
+      - name: Set up MSVC (${{ matrix.name }})
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.name == 'Win32' && 'x86' || 'x64' }}
+
       - name: Cache build artifacts
         uses: mozilla-actions/sccache-action@v0.0.11
 
@@ -85,9 +91,7 @@ jobs:
             source "${{ github.workspace }}/emsdk-cache/emsdk-main/emsdk_env.sh"
 
           ${{ matrix.name == 'HTML5' && 'emcmake ' || '' }} cmake \
-            -G ${{ matrix.os == 'windows-latest' && '"Visual Studio 18 2026"' || 'Ninja' }} \
-            ${{ matrix.name == 'Win32' && '-A Win32' || (matrix.name == 'Win64' && '-A x64' || '') }} \
-            -S . -B build \
+            -G Ninja -S . -B build \
             -D CMAKE_BUILD_TYPE=Release \
             -D CMAKE_C_COMPILER_LAUNCHER=sccache \
             -D CMAKE_CXX_COMPILER_LAUNCHER=sccache \
