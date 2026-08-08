@@ -27,10 +27,6 @@ target_include_directories(NutBlast PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(NutBlast PRIVATE c_std_11 cxx_std_23)
 target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST=$<BOOL:${NUTBLAST_DEV_LOCALHOST}>)
 
-if(WIN32)
-    target_sources(NutBlast PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/mbedtls-glue.cpp)
-endif()
-
 FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG v3.12.0
