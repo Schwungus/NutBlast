@@ -2,6 +2,16 @@
 #define MBEDTLS_THREADING_C
 #endif
 
+#ifdef _WIN32
+
+#ifndef MBEDTLS_THREADING_ALT
+#define MBEDTLS_THREADING_ALT
+#endif
+
+#else
+
 #ifndef MBEDTLS_THREADING_PTHREAD
 #define MBEDTLS_THREADING_PTHREAD
+#endif
+
 #endif

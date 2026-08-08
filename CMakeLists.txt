@@ -27,6 +27,10 @@ target_include_directories(NutBlast PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(NutBlast PRIVATE c_std_11 cxx_std_23)
 target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST=$<BOOL:${NUTBLAST_DEV_LOCALHOST}>)
 
+if(WIN32)
+    target_sources(NutBlast PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/mbedtls-glue.cpp)
+endif()
+
 FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG v3.12.0
@@ -101,7 +105,7 @@ if(NUTBLAST_BUILD_TEST)
 
     FetchContent_MakeAvailable(raylib S_tructures)
 
-    add_executable(NutBlast-test ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-test.c)
+    add_executable(NutBlast-test WIN32 ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-test.c)
     target_link_libraries(NutBlast-test PRIVATE NutBlast raylib S_tructures)
 
     add_executable(NutBlast-lobbyist ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-lobbyist.c)

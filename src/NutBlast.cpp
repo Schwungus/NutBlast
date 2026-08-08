@@ -560,6 +560,15 @@ extern "C" void NutBlast_PurgeMetadata() {
 }
 
 static void join_pro() {
+#ifdef _WIN32
+    static Once init_alt;
+
+    if (init_alt) {
+        extern void NutBlast_InitMbedTlsAlt();
+        NutBlast_InitMbedTlsAlt();
+    }
+#endif
+
     rtc::Preload();
 
     {
@@ -1234,5 +1243,11 @@ extern "C" void NutBlast_SleepMS(int _ms) {
 
 extern "C" void NutBlast_Cleanup() {
     NutBlast_Disconnect();
+
+#ifdef _WIN32
+    extern void NutBlast_CleanupMbedTlsAlt();
+    NutBlast_CleanupMbedTlsAlt();
+#endif
+
     rtc::Cleanup().wait();
 }
