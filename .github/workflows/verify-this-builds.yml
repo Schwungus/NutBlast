@@ -20,12 +20,26 @@ env:
     libdecor-0-dev liburing-dev libxinerama-dev
 
 jobs:
-  release-linux:
-    name: Build for Linux
-    runs-on: ubuntu-latest
+  build:
+    name: Build for ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux
+          - os: windows-latest
+            name: Win32
+          - os: windows-latest
+            name: Win64
+          - os: ubuntu-latest
+            name: HTML5
 
     env:
       CACHE_BUST: 0
+      SCCACHE_GHA_ENABLED: true
 
     steps:
       - name: Checkout
@@ -34,110 +48,50 @@ jobs:
       - name: Restore source timestamps for crazy CMake caching benefits
         uses: chetan/git-restore-mtime-action@v2
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
         uses: awalsh128/cache-apt-pkgs-action@latest
+        if: matrix.os == 'ubuntu-latest'
         with:
           version: 1.1
           packages: ${{ env.CRAZY_AHH_DEPS }}
 
-      - name: Cache build dir
-        id: cache-build
-        uses: actions/cache@v6
-        with:
-          path: build
-          key: ${{ env.CACHE_BUST }}-Linux-${{ github.ref_name }}-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: |
-            ${{ env.CACHE_BUST }}-Linux-${{ github.ref_name }}-
-            ${{ env.CACHE_BUST }}-Linux-
-
-      - name: Configure
-        run: |
-          cmake -G Ninja -S . -B build -D CMAKE_BUILD_TYPE=Release -D NUTBLAST_BUILD_TEST=ON
-
-      - name: Build
-        run: |
-          cmake --build build --target NutBlast-test
-
-  windose:
-    name: Build for Win${{ matrix.bits }}
-    runs-on: windows-latest
-
-    strategy:
-      matrix:
-        bits: [32, 64]
-
-    env:
-      CACHE_BUST: 0
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Restore source timestamps for crazy CMake caching benefits
-        uses: chetan/git-restore-mtime-action@v2
-
-      - name: Install dependencies
+      - name: Install dependencies (Windows)
+        if: matrix.os == 'windows-latest'
         run: py -m pip install jinja2
-
-      - name: Cache build dir
-        id: cache-build
-        uses: actions/cache@v6
-        with:
-          path: build
-          key: ${{ env.CACHE_BUST }}-Win${{ matrix.bits }}-${{ github.ref_name }}-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: |
-            ${{ env.CACHE_BUST }}-Win${{ matrix.bits }}-${{ github.ref_name }}-
-            ${{ env.CACHE_BUST }}-Win${{ matrix.bits }}-
-
-      - name: Configure
-        shell: bash
-        run: |
-          cmake -G "Visual Studio 18 2026" -A ${{ matrix.bits == 32 && 'Win32' || 'x64' }} \
-            -S . -B build -D NUTBLAST_BUILD_TEST=ON
-
-      - name: Build
-        run: cmake --build build --target NutBlast-test --config Release
-
-  html5:
-    name: Build for HTML5
-    runs-on: ubuntu-latest
-
-    env:
-      CACHE_BUST: 0
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Restore source timestamps for crazy CMake caching benefits
-        uses: chetan/git-restore-mtime-action@v2
-
-      - name: Install dependencies
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          version: 1.0
-          packages: ${{ env.CRAZY_AHH_DEPS }} nodejs
 
       - name: Source pasture-raised gluten-free emsdk
         uses: emscripten-core/setup-emsdk@main
+        if: matrix.name == 'HTML5'
         with:
           version: latest
           actions-cache-folder: emsdk-cache
 
-      - name: Cache build dir
-        id: cache-build
+      - name: Cache build artifacts
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Cache deps
         uses: actions/cache@v6
         with:
           path: build
-          key: ${{ env.CACHE_BUST }}-Web-${{ github.ref_name }}-${{ hashFiles('CMakeLists.txt') }}
+          key: ${{ env.CACHE_BUST }}-${{ matrix.name }}-${{ github.ref_name }}-${{ hashFiles('CMakeLists.txt') }}
           restore-keys: |
-            ${{ env.CACHE_BUST }}-Web-${{ github.ref_name }}-
-            ${{ env.CACHE_BUST }}-Web-
+            ${{ env.CACHE_BUST }}-${{ matrix.name }}-${{ github.ref_name }}-
+            ${{ env.CACHE_BUST }}-${{ matrix.name }}-
 
       - name: Configure
+        shell: bash
         run: |
-          source "${{ github.workspace }}/emsdk-cache/emsdk-main/emsdk_env.sh"
-          emcmake cmake -G Ninja -S . -B build -D CMAKE_BUILD_TYPE=Release -D NUTBLAST_BUILD_TEST=ON
+          [[ "${{ matrix.name == 'HTML5' && '1' || '0' }}" == "1" ]] && \
+            source "${{ github.workspace }}/emsdk-cache/emsdk-main/emsdk_env.sh"
+
+          ${{ matrix.name == 'HTML5' && 'emcmake ' || '' }} cmake \
+            -G ${{ matrix.os == 'windows-latest' && '"Visual Studio 18 2026"' || 'Ninja' }} \
+            ${{ matrix.name == 'Win32' && '-A Win32' || (matrix.name == 'Win64' && '-A x64' || '') }} \
+            -S . -B build \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D CMAKE_C_COMPILER_LAUNCHER=sccache \
+            -D CMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -D NUTBLAST_BUILD_TEST=ON
 
       - name: Build
         run: |
