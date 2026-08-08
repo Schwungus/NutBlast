@@ -6,7 +6,6 @@
 
 #include "mbedtls/threading.h"
 
-// Define the context structure using standard C++ types
 struct mbedtls_threading_mutex_t {
     std::mutex* mut;
     int is_valid;
