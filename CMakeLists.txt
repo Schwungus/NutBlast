@@ -87,7 +87,10 @@ FetchContent_MakeAvailable(${NB_DEPS})
 target_link_libraries(NutBlast PRIVATE ${NB_LIBS})
 
 if(NUTBLAST_BUILD_TEST)
-    # personal raylib fork that skips `-sEXPORTED_RUNTIME_METHODS=...` entirely for emscripten builds; multiple `-sEXPORTED_RUNTIME_METHODS=...` declarations don't get squashed together for some bizzare reason
+    # a personal raylib fork that skips `-sEXPORTED_RUNTIME_METHODS=...` entirely for emscripten
+    # builds; multiple `-sEXPORTED_RUNTIME_METHODS=...` declarations don't get squashed together for
+    # some bizzare reason.
+
     FetchContent_Declare(raylib
         GIT_REPOSITORY https://github.com/nonk123/raylib.git
         GIT_TAG 58ae9b2961cb7f14b57b70d1e40b802cb7fba0bf
