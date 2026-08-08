@@ -45,9 +45,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Restore source timestamps for crazy CMake caching benefits
-        uses: chetan/git-restore-mtime-action@v2
-
       - name: Install dependencies (Linux)
         uses: awalsh128/cache-apt-pkgs-action@latest
         if: matrix.os == 'ubuntu-latest'
