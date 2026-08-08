@@ -100,7 +100,7 @@ if(NUTBLAST_BUILD_TEST)
 
     FetchContent_MakeAvailable(raylib S_tructures)
 
-    add_executable(NutBlast-test WIN32 ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-test.c)
+    add_executable(NutBlast-test ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-test.c)
     target_link_libraries(NutBlast-test PRIVATE NutBlast raylib S_tructures)
 
     add_executable(NutBlast-lobbyist ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-lobbyist.c)
