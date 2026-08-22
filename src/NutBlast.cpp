@@ -180,33 +180,26 @@ struct Player : std::enable_shared_from_this<Player> {
     }
 
     void drain_incoming_offers_and_candidates() {
-        std::vector<rtc::Description> incoming_offers_copy;
-        std::vector<rtc::Candidate> incoming_candidates_copy;
+        if (::incoming_offers.contains(id)) {
+            auto copy = ::incoming_offers.at(id);
+            ::incoming_offers.at(id).clear();
 
-        {
-            std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
-
-            if (::incoming_offers.contains(id)) {
-                incoming_offers_copy = ::incoming_offers.at(id);
-                ::incoming_offers.erase(id);
-            }
-
-            if (::incoming_candidates.contains(id)) {
-                incoming_candidates_copy = ::incoming_candidates.at(id);
-                ::incoming_candidates.erase(id);
+            for (const auto& offer : copy) {
+                try {
+                    pc->setRemoteDescription(offer);
+                } catch (const std::invalid_argument&) { continue; }
             }
         }
 
-        for (const auto& offer : incoming_offers_copy) {
-            try {
-                pc->setRemoteDescription(offer);
-            } catch (const std::invalid_argument&) { continue; }
-        }
+        if (::incoming_candidates.contains(id)) {
+            auto copy = ::incoming_candidates.at(id);
+            ::incoming_candidates.at(id).clear();
 
-        for (const auto& candidate : incoming_candidates_copy) {
-            try {
-                pc->addRemoteCandidate(candidate);
-            } catch (const std::logic_error&) { return; }
+            for (const auto& candidate : copy) {
+                try {
+                    pc->addRemoteCandidate(candidate);
+                } catch (const std::logic_error&) { return; }
+            }
         }
     }
 };
@@ -798,6 +791,8 @@ static void handle_offer_or_answer(const nlohmann::json& obj) {
 static void handle_candidate(const nlohmann::json& obj) {
     const NutBlast_ID& id = obj["from"];
 
+    std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
+
     if (!::incoming_candidates.contains(id))
         ::incoming_candidates.insert({id, {}});
 
@@ -1008,6 +1003,8 @@ static void recv_stuff() {
         if (restype != response_types.end())
             restype->second(obj);
     }
+
+    std::lock_guard<std::mutex> lock(::candidates_and_offers_mutex);
 
     for (auto& [id, player] : ::players)
         player->drain_incoming_offers_and_candidates();
