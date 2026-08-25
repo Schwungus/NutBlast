@@ -185,16 +185,13 @@ struct Player : std::enable_shared_from_this<Player> {
     }
 
     void drain_incoming_offers_and_candidates() {
-        if (!pc)
-            return;
+        init();
 
-        if (is_offerer()) {
-            if (::incoming_answers.contains(id)) {
-                for (const auto& answer : copy_and_clear(::incoming_answers.at(id))) {
-                    try {
-                        pc->setRemoteDescription(answer);
-                    } catch (...) { continue; }
-                }
+        if (is_offerer() && ::incoming_answers.contains(id)) {
+            for (const auto& answer : copy_and_clear(::incoming_answers.at(id))) {
+                try {
+                    pc->setRemoteDescription(answer);
+                } catch (...) { continue; }
             }
         } else if (::incoming_offers.contains(id)) {
             for (const auto& offer : copy_and_clear(::incoming_offers.at(id))) {
