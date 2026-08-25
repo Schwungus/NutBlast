@@ -101,7 +101,7 @@ extern "C" uint64_t NutBlast_TimeNS() {
 
 static rtc::Configuration rtc_config;
 static std::unordered_map<NutBlast_ID, std::vector<rtc::Candidate>> incoming_candidates;
-static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers, incoming_answers;
+static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers;
 
 class Pinger {
     std::uint64_t last_ping = 0, last_roundtrip = 0;
@@ -160,7 +160,7 @@ struct ByeReason {
 };
 
 struct Player : std::enable_shared_from_this<Player> {
-    const NutBlast_ID id;
+    const NutBlast_ID pid;
     Once fire_join, init_once;
 
     Pinger pinger;
@@ -172,12 +172,20 @@ struct Player : std::enable_shared_from_this<Player> {
     std::vector<rtc::Candidate> outgoing_candidates;
     std::mutex outgoing_candidates_mutex;
 
-    Player(NutBlast_ID id, const Metadata& meta) : id(id), meta(meta) {}
+    Player(NutBlast_ID pid, const Metadata& meta) : pid(pid), meta(meta) {}
+
+    ~Player() {
+        if (::incoming_offers.contains(pid))
+            ::incoming_offers.erase(pid);
+
+        if (::incoming_candidates.contains(pid))
+            ::incoming_candidates.erase(pid);
+    }
 
     void init();
 
     bool is_offerer() const {
-        return NutBlast_GetOurID() > id;
+        return NutBlast_GetOurID() > pid;
     }
 
     bool is_online() const {
@@ -187,22 +195,16 @@ struct Player : std::enable_shared_from_this<Player> {
     void drain_incoming_offers_and_candidates() {
         init();
 
-        if (is_offerer() && ::incoming_answers.contains(id)) {
-            for (const auto& answer : copy_and_clear(::incoming_answers.at(id))) {
-                try {
-                    pc->setRemoteDescription(answer);
-                } catch (...) { continue; }
-            }
-        } else if (::incoming_offers.contains(id)) {
-            for (const auto& offer : copy_and_clear(::incoming_offers.at(id))) {
+        if (::incoming_offers.contains(pid)) {
+            for (const auto& offer : copy_and_clear(::incoming_offers.at(pid))) {
                 try {
                     pc->setRemoteDescription(offer);
                 } catch (...) { continue; }
             }
         }
 
-        if (pc->remoteDescription().has_value() && ::incoming_candidates.contains(id)) {
-            for (const auto& candidate : copy_and_clear(::incoming_candidates.at(id))) {
+        if (pc->remoteDescription().has_value() && ::incoming_candidates.contains(pid)) {
+            for (const auto& candidate : copy_and_clear(::incoming_candidates.at(pid))) {
                 try {
                     pc->addRemoteCandidate(candidate);
                 } catch (...) { continue; }
@@ -302,7 +304,7 @@ void Player::init() {
     if (!init_once)
         return;
 
-    const auto id = this->id;
+    const auto id = this->pid;
 
     pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
 
@@ -562,7 +564,7 @@ static void join_pro() {
 
     rtc::Preload();
     ::ws_in.clear(), ::ws_out.clear();
-    ::incoming_candidates.clear(), ::incoming_offers.clear(), ::incoming_answers.clear();
+    ::incoming_candidates.clear(), ::incoming_offers.clear();
 
     get_blaster();
     ::master = 0, ::disconnection_reason = ByeReason(), ::permission_to_cook = false;
@@ -576,7 +578,7 @@ static void join_pro() {
 #ifndef __EMSCRIPTEN__
     rtc::WebSocketConfiguration conf;
 
-    if (!WINDOSE)
+    if constexpr (!WINDOSE)
         conf.caCertificatePemFile = "/etc/ssl/certs/ca-certificates.crt";
 #endif
 
@@ -661,7 +663,7 @@ extern "C" void NutBlast_Disconnect() {
         std::lock_guard<std::mutex> lock(::globals_mutex);
 
         ::ws_in.clear(), ::ws_out.clear(), ::players.clear();
-        ::incoming_candidates.clear(), ::incoming_offers.clear(), ::incoming_answers.clear();
+        ::incoming_candidates.clear(), ::incoming_offers.clear();
         ::blaster_ws = nullptr, ::lid = 0;
         ::fire_ready.reset();
     }
@@ -758,43 +760,36 @@ extern "C" NutBlast_ID NutBlast_GetMasterID() {
     return NutBlast_IsOnline() ? ::master : 0;
 }
 
-extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
-    if (!id || !NutBlast_IsOnline())
+extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID pid) {
+    if (!pid || !NutBlast_IsOnline())
         return false;
 
-    if (id == NutBlast_GetOurID())
+    if (pid == NutBlast_GetOurID())
         return true;
 
-    return ::players.contains(id);
+    return ::players.contains(pid);
 }
 
 static void handle_offer_or_answer(const nlohmann::json& obj) {
-    const NutBlast_ID id = obj["from"];
-    const auto& type = obj["type"];
+    const NutBlast_ID pid = obj["from"];
+    const auto& type = obj["type"] == "Offer" ? "offer" : "answer";
 
-    if (type == "Offer") {
-        if (!::incoming_offers.contains(id))
-            ::incoming_offers.insert({id, {}});
+    if (!::incoming_offers.contains(pid))
+        ::incoming_offers.insert({pid, {}});
 
-        ::incoming_offers.at(id).emplace_back(obj["sdp"], "offer");
-    } else if (type == "Answer") {
-        if (!::incoming_answers.contains(id))
-            ::incoming_answers.insert({id, {}});
-
-        ::incoming_answers.at(id).emplace_back(obj["sdp"], "answer");
-    }
+    ::incoming_offers.at(pid).emplace_back(obj["sdp"], type);
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
-    const NutBlast_ID& id = obj["from"];
+    const NutBlast_ID& pid = obj["from"];
 
-    if (!::incoming_candidates.contains(id))
-        ::incoming_candidates.insert({id, {}});
+    if (!::incoming_candidates.contains(pid))
+        ::incoming_candidates.insert({pid, {}});
 
     try {
-        auto& queue = ::incoming_candidates.at(id);
+        auto& queue = ::incoming_candidates.at(pid);
         queue.emplace_back(obj["candidate"], obj["mid"]);
-    } catch (const std::invalid_argument&) { ::incoming_candidates.erase(id); }
+    } catch (const std::invalid_argument&) { ::incoming_candidates.erase(pid); }
 }
 
 struct LobbyInfo {
@@ -970,10 +965,6 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
                 fire(::on_player_left, pid, got_reason ? obj["reason"] : ByeReason());
                 ::players.erase(pid);
             }
-
-            ::incoming_offers.erase(pid);
-            ::incoming_answers.erase(pid);
-            ::incoming_candidates.erase(pid);
         }},
     {"Offer", handle_offer_or_answer},
     {"Answer", handle_offer_or_answer},
@@ -1095,8 +1086,8 @@ extern "C" void NutBlast_SetMaster(NutBlast_ID guy) {
 }
 
 static void greatest_technician_thats_ever_lived(
-    NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size, bool reliable) {
-    if (!::players.contains(id))
+    NutBlast_ChannelID chan, NutBlast_ID pid, const char* msg, int size, bool reliable) {
+    if (!::players.contains(pid))
         return;
 
     if (!msg) {
@@ -1104,7 +1095,7 @@ static void greatest_technician_thats_ever_lived(
         return;
     }
 
-    const auto& player = ::players.at(id);
+    const auto& player = ::players.at(pid);
 
     if (size < 0)
         size = (int)std::strlen(msg) + 1;
@@ -1193,11 +1184,11 @@ extern "C" int NutBlast_ServerPing() {
     return NutBlast_IsOnline() ? ::ws_pinger.millis() : 0;
 }
 
-extern "C" int NutBlast_PlayerPing(NutBlast_ID id) {
-    if (!::players.contains(id))
+extern "C" int NutBlast_PlayerPing(NutBlast_ID pid) {
+    if (!::players.contains(pid))
         return 0;
 
-    const auto& player = ::players.at(id);
+    const auto& player = ::players.at(pid);
     return player->is_online() ? player->pinger.millis() : 0;
 }
 
