@@ -413,10 +413,11 @@ void Player::init() {
 static NutBlast_ID generate_id() {
     static constexpr const char characters[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-    std::mt19937 mt(NutBlast_TimeNS());
+    static std::mt19937 mt{std::random_device()()};
     std::uniform_int_distribution<size_t> dist(0, sizeof(characters) - 2);
 
     char id[sizeof(NutBlast_ID)];
+
     for (char& c : id)
         c = characters[dist(mt)];
 
