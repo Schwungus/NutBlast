@@ -193,7 +193,8 @@ struct Player : std::enable_shared_from_this<Player> {
     }
 
     void drain_incoming_offers_and_candidates() {
-        init();
+        if (!pc)
+            return;
 
         if (::incoming_offers.contains(pid)) {
             for (const auto& offer : copy_and_clear(::incoming_offers.at(pid))) {
