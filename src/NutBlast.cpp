@@ -185,11 +185,14 @@ struct Player : std::enable_shared_from_this<Player> {
     }
 
     void drain_incoming_offers_and_candidates() {
+        if (!pc)
+            return;
+
         if (::incoming_offers.contains(id)) {
             for (const auto& offer : copy_and_clear(::incoming_offers.at(id))) {
                 try {
                     pc->setRemoteDescription(offer);
-                } catch (const std::invalid_argument&) { continue; }
+                } catch (...) { continue; }
             }
         }
 
@@ -197,7 +200,7 @@ struct Player : std::enable_shared_from_this<Player> {
             for (const auto& candidate : copy_and_clear(::incoming_candidates.at(id))) {
                 try {
                     pc->addRemoteCandidate(candidate);
-                } catch (const std::logic_error&) { return; }
+                } catch (...) { return; }
             }
         }
     }
