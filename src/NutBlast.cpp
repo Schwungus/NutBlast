@@ -565,7 +565,7 @@ static void join_pro() {
 
     rtc::Preload();
     ::ws_in.clear(), ::ws_out.clear();
-    ::incoming_candidates.clear(), ::incoming_offers.clear();
+    ::incoming_candidates.clear(), ::incoming_offers.clear(), ::incoming_answers.clear();
 
     get_blaster();
     ::master = 0, ::disconnection_reason = ByeReason(), ::permission_to_cook = false;
@@ -664,7 +664,7 @@ extern "C" void NutBlast_Disconnect() {
         std::lock_guard<std::mutex> lock(::globals_mutex);
 
         ::ws_in.clear(), ::ws_out.clear(), ::players.clear();
-        ::incoming_candidates.clear(), ::incoming_offers.clear();
+        ::incoming_candidates.clear(), ::incoming_offers.clear(), ::incoming_answers.clear();
         ::blaster_ws = nullptr, ::lid = 0;
         ::fire_ready.reset();
     }
