@@ -101,7 +101,7 @@ extern "C" uint64_t NutBlast_TimeNS() {
 
 static rtc::Configuration rtc_config;
 static std::unordered_map<NutBlast_ID, std::vector<rtc::Candidate>> incoming_candidates;
-static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers;
+static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers, incoming_answers;
 
 class Pinger {
     std::uint64_t last_ping = 0, last_roundtrip = 0;
@@ -188,7 +188,15 @@ struct Player : std::enable_shared_from_this<Player> {
         if (!pc)
             return;
 
-        if (::incoming_offers.contains(id)) {
+        if (is_offerer()) {
+            if (::incoming_answers.contains(id)) {
+                for (const auto& answer : copy_and_clear(::incoming_answers.at(id))) {
+                    try {
+                        pc->setRemoteDescription(answer);
+                    } catch (...) { continue; }
+                }
+            }
+        } else if (::incoming_offers.contains(id)) {
             for (const auto& offer : copy_and_clear(::incoming_offers.at(id))) {
                 try {
                     pc->setRemoteDescription(offer);
@@ -196,11 +204,11 @@ struct Player : std::enable_shared_from_this<Player> {
             }
         }
 
-        if (::incoming_candidates.contains(id)) {
+        if (pc->remoteDescription().has_value() && ::incoming_candidates.contains(id)) {
             for (const auto& candidate : copy_and_clear(::incoming_candidates.at(id))) {
                 try {
                     pc->addRemoteCandidate(candidate);
-                } catch (...) { return; }
+                } catch (...) { continue; }
             }
         }
     }
@@ -764,13 +772,20 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID id) {
 }
 
 static void handle_offer_or_answer(const nlohmann::json& obj) {
-    const NutBlast_ID& id = obj["from"];
-    const auto type = obj["type"] == "Offer" ? "offer" : "answer";
+    const NutBlast_ID id = obj["from"];
+    const auto& type = obj["type"];
 
-    if (!::incoming_offers.contains(id))
-        ::incoming_offers.insert({id, {}});
+    if (type == "Offer") {
+        if (!::incoming_offers.contains(id))
+            ::incoming_offers.insert({id, {}});
 
-    incoming_offers.at(id).emplace_back(obj["sdp"], type);
+        ::incoming_offers.at(id).emplace_back(obj["sdp"], "offer");
+    } else if (type == "Answer") {
+        if (!::incoming_answers.contains(id))
+            ::incoming_answers.insert({id, {}});
+
+        ::incoming_answers.at(id).emplace_back(obj["sdp"], "answer");
+    }
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
@@ -958,6 +973,10 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
                 fire(::on_player_left, pid, got_reason ? obj["reason"] : ByeReason());
                 ::players.erase(pid);
             }
+
+            ::incoming_offers.erase(pid);
+            ::incoming_answers.erase(pid);
+            ::incoming_candidates.erase(pid);
         }},
     {"Offer", handle_offer_or_answer},
     {"Answer", handle_offer_or_answer},
