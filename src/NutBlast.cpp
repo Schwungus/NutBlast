@@ -27,6 +27,7 @@
 #include <cstring>
 #include <deque>
 #include <format>
+#include <functional>
 #include <optional>
 #include <random>
 #include <string>
@@ -255,17 +256,37 @@ static std::vector<nlohmann::json> ws_in, ws_out;
 
 static Metadata player_meta, lobby_meta;
 
-// TODO: refactor each of these into a struct.
-static void (*on_ready)() = nullptr, (*on_disconnected)(NutBlast_Reason) = nullptr,
-            (*on_player_joined)(NutBlast_ID) = nullptr, (*on_player_left)(NutBlast_ID, NutBlast_Reason) = nullptr,
-            (*on_lobbies_found)(const NutBlast_Lobby*, size_t) = nullptr, (*on_master_changed)(NutBlast_ID) = nullptr,
-            (*on_player_meta_changed)(NutBlast_ID, NutBlast_FieldDiff) = nullptr,
-            (*on_lobby_meta_changed)(NutBlast_FieldDiff) = nullptr;
+template <typename... Args> class Callback {
+    std::function<void(Args...)> fn;
 
-template <typename... Args> static void fire(void (*cb)(Args...), const std::decay_t<Args>&... args) {
-    if (cb != nullptr)
-        cb(args...);
-}
+  public:
+    Callback() : fn([](Args...) {}) {}
+
+    Callback& operator=(const std::function<void(Args...)>& fn) {
+        this->fn = fn;
+        return *this;
+    }
+
+    void operator()(const std::decay_t<Args>&... args) {
+        fn(args...);
+    }
+};
+
+#define MakeCb(name, ident, ...)                                                                                       \
+    static Callback<__VA_ARGS__> ident;                                                                                \
+                                                                                                                       \
+    extern "C" void NutBlast_##name(void (*cb)(__VA_ARGS__)) {                                                         \
+        ::ident = cb;                                                                                                  \
+    }
+
+MakeCb(OnReady, on_ready);
+MakeCb(OnDisconnected, on_disconnected, NutBlast_Reason);
+MakeCb(OnPlayerJoined, on_player_joined, NutBlast_ID);
+MakeCb(OnPlayerLeft, on_player_left, NutBlast_ID, NutBlast_Reason);
+MakeCb(OnLobbiesFound, on_lobbies_found, const NutBlast_Lobby*, size_t);
+MakeCb(OnMasterChanged, on_master_changed, NutBlast_ID);
+MakeCb(OnPlayerMetadataChanged, on_player_meta_changed, NutBlast_ID, NutBlast_FieldDiff);
+MakeCb(OnLobbyMetadataChanged, on_lobby_meta_changed, NutBlast_FieldDiff);
 
 static void ws_send(const nlohmann::json& obj) {
     ::ws_out.emplace_back(obj);
@@ -673,7 +694,7 @@ extern "C" void NutBlast_Disconnect() {
     log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
 
     // TODO: maybe NOT fire this in the lobby-listing mode?
-    fire(::on_disconnected, ::disconnection_reason);
+    ::on_disconnected(::disconnection_reason);
 
     ::disconnection_reason = ByeReason();
 }
@@ -832,7 +853,7 @@ static void handle_list(const nlohmann::json& obj) {
         });
     }
 
-    fire(::on_lobbies_found, lobbies.data(), lobbies.size());
+    ::on_lobbies_found(lobbies.data(), lobbies.size());
 }
 
 static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> response_types{
@@ -887,7 +908,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
                 diff.new_value = new_value.c_str();
 
                 if (player->fire_join.fired())
-                    fire(::on_player_meta_changed, pid, diff);
+                    ::on_player_meta_changed(pid, diff);
             }
         }},
     {"ErasePlayerMeta",
@@ -908,7 +929,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
             diff.old_value = meta.at(key).c_str();
             diff.new_value = nullptr;
 
-            fire(::on_player_meta_changed, pid, diff);
+            ::on_player_meta_changed(pid, diff);
             meta.erase(key);
         }},
     {"SetLobbyMeta",
@@ -927,7 +948,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
                 diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
                 diff.new_value = new_value.c_str();
 
-                fire(::on_lobby_meta_changed, diff);
+                ::on_lobby_meta_changed(diff);
             }
         }},
     {"EraseLobbyMeta",
@@ -942,7 +963,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
             diff.old_value = ::lobby_meta.at(key).c_str();
             diff.new_value = nullptr;
 
-            fire(::on_lobby_meta_changed, diff);
+            ::on_lobby_meta_changed(diff);
             ::lobby_meta.erase(key);
         }},
     {"SetMaster",
@@ -951,7 +972,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
             ::master = obj["pid"];
 
             if (old_master != ::master)
-                fire(::on_master_changed, old_master);
+                ::on_master_changed(old_master);
         }},
     {"Joined",
         [](const auto& obj) {
@@ -964,7 +985,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
 
             if (::players.contains(pid)) {
                 const bool got_reason = obj.contains("reason") && !obj["reason"].is_null();
-                fire(::on_player_left, pid, got_reason ? obj["reason"] : ByeReason());
+                ::on_player_left(pid, got_reason ? obj["reason"] : ByeReason());
                 ::players.erase(pid);
             }
         }},
@@ -1037,19 +1058,19 @@ extern "C" void NutBlast_Flush() {
 static void init_players_after_ready() {
     if (::fire_ready && ::mode != Mode::List) {
         log(NB_LogInfo, "NutBlast connected and ready!");
-        fire(::on_ready);
+        ::on_ready();
     }
 
     for (const auto& [id, player] : ::players) {
         if (player->fire_join) {
-            fire(::on_player_joined, id);
+            ::on_player_joined(id);
 
             for (const auto& [key, value] : player->meta) {
                 NutBlast_FieldDiff diff = {0};
                 diff.name = key.c_str();
                 diff.old_value = nullptr;
                 diff.new_value = value.c_str();
-                fire(::on_player_meta_changed, pid, diff);
+                ::on_player_meta_changed(pid, diff);
             }
         }
     }
@@ -1167,20 +1188,6 @@ extern "C" bool NutBlast_IsReady() {
 
     return true;
 }
-
-#define MakeCb(name, var, ...)                                                                                         \
-    extern "C" void NutBlast_##name(void (*cb)(__VA_ARGS__)) {                                                         \
-        (var) = cb;                                                                                                    \
-    }
-
-MakeCb(OnReady, ::on_ready);
-MakeCb(OnDisconnected, ::on_disconnected, NutBlast_Reason);
-MakeCb(OnPlayerJoined, ::on_player_joined, NutBlast_ID);
-MakeCb(OnPlayerLeft, ::on_player_left, NutBlast_ID, NutBlast_Reason);
-MakeCb(OnLobbiesFound, ::on_lobbies_found, const NutBlast_Lobby*, size_t);
-MakeCb(OnMasterChanged, ::on_master_changed, NutBlast_ID);
-MakeCb(OnPlayerMetadataChanged, ::on_player_meta_changed, NutBlast_ID, NutBlast_FieldDiff);
-MakeCb(OnLobbyMetadataChanged, ::on_lobby_meta_changed, NutBlast_FieldDiff);
 
 extern "C" int NutBlast_ServerPing() {
     return NutBlast_IsOnline() ? ::ws_pinger.millis() : 0;
