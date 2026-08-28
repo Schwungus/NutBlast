@@ -2,8 +2,8 @@
 
 # NutBlast
 
-[header]: NutBlast.h
-[example]: NutBlast-test.c
+[header]: include/NutBlast.h
+[example]: src/NutBlast-test.c
 
 <img align="right" alt="An explosive peanut sign." src=".github/assets/nutblast256.png">
 
