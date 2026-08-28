@@ -1,4 +1,4 @@
-name: Build and release distributions
+name: Verify this builds across several OSes and compilers
 
 on:
   push:
