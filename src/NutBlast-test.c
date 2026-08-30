@@ -263,7 +263,7 @@ int main(int argc, char* argv[]) {
 
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H))
-            NutBlast_Host(lid, 4, true);
+            NutBlast_Host((NutBlast_HostOptions){.lobby_id = lid, .max_players = 4});
         else if (IsKeyPressed(KEY_J))
             NutBlast_Join(lid);
         else if (IsKeyPressed(KEY_U))

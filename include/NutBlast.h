@@ -130,6 +130,19 @@ typedef struct {
     const char *code, *msg;
 } NutBlast_Reason;
 
+typedef struct {
+    /// Pass 0 if you want NutBlast to generate the ID for you, or set it manually here.
+    NutBlast_ID lobby_id;
+
+    /// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
+    int max_players;
+
+    /// Call `NutBlast_SetListed()` if you need to change the lobby's visibility later.
+    /* TODO: i used an "inverse" boolean option since i think listing lobbies publicly should be the
+     default behavior unless specified otherwise. discuss it later? */
+    bool unlisted;
+} NutBlast_HostOptions;
+
 /// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.
 void NutBlast_Cleanup();
 
@@ -216,14 +229,8 @@ void NutBlast_SetMaxPlayers(int);
 /// Joins a lobby by its ID. Note that different games have different sets of lobbies.
 void NutBlast_Join(NutBlast_ID id);
 
-/// Hosts a lobby with a given ID, name, maximum player count and visibility.
-///
-/// Pass 0 for `id` if you want NutBlast to generate one for you.
-///
-/// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
-///
-/// Call `NutBlast_SetListed()` if you need to change the visibility later.
-void NutBlast_Host(NutBlast_ID id, int players, bool listed);
+/// Hosts a lobby with a given set options.
+void NutBlast_Host(NutBlast_HostOptions opts);
 
 /// Joins whatever "swarm" lobby is available for your game ID.
 ///

@@ -472,7 +472,9 @@ extern "C" void NutBlast_SetMaxChannels(NutBlast_ChannelID max) {
 }
 
 extern "C" void NutBlast_SetMaxPlayers(int max) {
-    if (max > 1 && max <= NUTBLAST_MAX_PLAYERS)
+    if (!max) // the "unspecified" value inside `NutBlast_HostOptions`
+        ::max_players = NUTBLAST_MAX_PLAYERS;
+    else if (max > 1 && max <= NUTBLAST_MAX_PLAYERS)
         ::max_players = max;
     else
         return;
@@ -721,13 +723,13 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
     }
 }
 
-extern "C" void NutBlast_Host(NutBlast_ID id, int max, bool listed) {
+extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
     if (::blaster_ws) {
         log(NB_LogError, "You're already connected!");
     } else {
-        NutBlast_SetMaxPlayers(max);
-        ::mode = Mode::Host, ::hosting_a_listed_lobby = listed;
-        ::lid = id ? id : generate_id();
+        NutBlast_SetMaxPlayers(opts.max_players);
+        ::mode = Mode::Host, ::hosting_a_listed_lobby = !opts.unlisted;
+        ::lid = opts.lobby_id ? opts.lobby_id : generate_id();
 
         log(NB_LogInfo, "Trying to host '{}' at: {}", lid, get_blaster());
         join_pro();

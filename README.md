@@ -86,7 +86,7 @@ int main(int argc, char* argv[]) {
     NutBlast_SetGameID("My Cool Game");
 
     if (/* hosting */)
-        NutBlast_Host(1337, 8, true);
+        NutBlast_Host((NutBlast_HostOptions){.lobby_id = 1337});
     else
         NutBlast_Join(1337);
 
@@ -96,6 +96,7 @@ int main(int argc, char* argv[]) {
     }
 
     NutBlast_Cleanup();
+
     return EXIT_SUCCESS;
 }
 ```
