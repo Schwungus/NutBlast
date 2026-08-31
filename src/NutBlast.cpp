@@ -260,7 +260,7 @@ template <typename... Args> class Callback {
     std::function<void(Args...)> fn;
 
   public:
-    Callback() : fn([](Args...) {}) {}
+    Callback() = default;
 
     Callback& operator=(const std::function<void(Args...)>& fn) {
         this->fn = fn;
@@ -268,7 +268,9 @@ template <typename... Args> class Callback {
     }
 
     void operator()(const std::decay_t<Args>&... args) {
-        fn(args...);
+        try {
+            fn(args...);
+        } catch (const std::bad_function_call& ex) {}
     }
 };
 
