@@ -195,7 +195,7 @@ struct Player : std::enable_shared_from_this<Player> {
     void init();
 
     bool is_offerer() const {
-        return NutBlast_GetOurID() > pid;
+        return NutBlast_GetPlayerID() > pid;
     }
 
     bool is_online() const {
@@ -524,14 +524,14 @@ extern "C" bool NutBlast_IsListed() {
     return ::hosting_a_listed_lobby;
 }
 
-static bool check_field(const char* type, const char* key, const char* value) {
+static bool check_field(const char* type_title, const char* key, const char* value) {
     if (!key || !key[0] || std::strlen(key) > NUTBLAST_FIELD_NAME_MAX) {
-        ::log(NB_LogError, "{} metadata: invalid key size", type);
+        ::log(NB_LogError, "{} metadata: invalid key size", type_title);
         return false;
     }
 
     if (value && std::strlen(value) > NUTBLAST_FIELD_VALUE_MAX) {
-        ::log(NB_LogError, "{} metadata: invalid value size", type);
+        ::log(NB_LogError, "{} metadata: invalid value size", type_title);
         return false;
     }
 
@@ -539,12 +539,12 @@ static bool check_field(const char* type, const char* key, const char* value) {
 }
 
 static void
-freak_metadata(const char* type, const char* type_lower, Metadata& meta, const char* key, const char* value) {
+freak_metadata(const char* type_title, const char* type_lower, Metadata& meta, const char* key, const char* value) {
     if (value == nullptr) {
         meta.erase(key);
 
         ::ws_send({
-            {"type", std::string("Erase") + type + "Meta"},
+            {"type", std::string("Erase") + type_title + "Meta"},
             {"key", key},
         });
     } else if (meta.size() >= NUTBLAST_MAX_FIELDS && !meta.contains(key)) {
@@ -553,7 +553,7 @@ freak_metadata(const char* type, const char* type_lower, Metadata& meta, const c
         meta.insert_or_assign(key, value);
 
         ::ws_send({
-            {"type", std::string("Set") + type + "Meta"},
+            {"type", std::string("Set") + type_title + "Meta"},
             {"key", key},
             {"value", value},
         });
@@ -564,7 +564,7 @@ extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name
     if (!pid || !name)
         return nullptr;
 
-    if (pid == NutBlast_GetOurID())
+    if (pid == NutBlast_GetPlayerID())
         return ::player_meta.contains(name) ? ::player_meta.at(name).c_str() : nullptr;
 
     if (!NutBlast_IsOnline())
@@ -599,7 +599,7 @@ extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
     if (NutBlast_IsOnline()) {
         const auto master = NutBlast_GetMasterID();
 
-        if (!master || master != NutBlast_GetOurID())
+        if (!master || master != NutBlast_GetPlayerID())
             return;
     }
 
@@ -650,7 +650,7 @@ static void join_pro() {
             ::ws_send({
                 {"type", "Swarm"},
                 {"gid", ::gid},
-                {"pid", NutBlast_GetOurID()},
+                {"pid", NutBlast_GetPlayerID()},
                 {"player_meta", ::player_meta},
                 {"lobby_meta", ::lobby_meta},
             });
@@ -658,7 +658,7 @@ static void join_pro() {
             ::ws_send({
                 {"type", "Host"},
                 {"gid", ::gid},
-                {"pid", NutBlast_GetOurID()},
+                {"pid", NutBlast_GetPlayerID()},
                 {"lid", ::lid},
                 {"capacity", ::max_players},
                 {"listed", ::hosting_a_listed_lobby},
@@ -669,7 +669,7 @@ static void join_pro() {
             ::ws_send({
                 {"type", "Join"},
                 {"gid", ::gid},
-                {"pid", NutBlast_GetOurID()},
+                {"pid", NutBlast_GetPlayerID()},
                 {"lid", ::lid},
                 {"player_meta", ::player_meta},
             });
@@ -780,11 +780,11 @@ extern "C" int NutBlast_GetMaxPlayers() {
     return NutBlast_IsOnline() ? ::max_players : 0;
 }
 
-extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
+extern "C" const NutBlast_ID* NutBlast_ListPlayers() {
     static NutBlast_ID buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
     size_t i = 0;
 
-    buf[i++] = NutBlast_GetOurID();
+    buf[i++] = NutBlast_GetPlayerID();
 
     for (const auto& [id, player] : players)
         buf[i++] = id;
@@ -794,7 +794,7 @@ extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
     return buf;
 }
 
-extern "C" NutBlast_ID NutBlast_GetOurID() {
+extern "C" NutBlast_ID NutBlast_GetPlayerID() {
     if (!pid) {
         pid = generate_id();
         ::log(NB_LogInfo, "You are {}", pid);
@@ -815,7 +815,7 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID pid) {
     if (!pid || !NutBlast_IsOnline())
         return false;
 
-    if (pid == NutBlast_GetOurID())
+    if (pid == NutBlast_GetPlayerID())
         return true;
 
     return ::players.contains(pid);
@@ -1083,27 +1083,6 @@ extern "C" void NutBlast_Flush() {
     }
 }
 
-static void init_players_after_ready() {
-    if (::fire_ready && ::mode != Mode::List) {
-        ::log(NB_LogInfo, "NutBlast connected and ready!");
-        ::on_ready();
-    }
-
-    for (const auto& [id, player] : ::players) {
-        if (player->fire_join) {
-            ::on_player_joined(id);
-
-            for (const auto& [key, value] : player->meta) {
-                NutBlast_FieldDiff diff = {0};
-                diff.name = key.c_str();
-                diff.old_value = nullptr;
-                diff.new_value = value.c_str();
-                ::on_player_meta_changed(pid, diff);
-            }
-        }
-    }
-}
-
 extern "C" void NutBlast_Update() {
     recv_stuff();
 
@@ -1116,17 +1095,37 @@ extern "C" void NutBlast_Update() {
         for (auto& [id, player] : ::players)
             player->init();
 
-    if (NutBlast_IsReady())
-        init_players_after_ready();
+    if (NutBlast_IsReady()) {
+        if (::fire_ready && ::mode != Mode::List) {
+            ::log(NB_LogInfo, "NutBlast connected and ready!");
+            ::on_ready();
+        }
+
+        for (const auto& [id, player] : ::players) {
+            if (player->fire_join) {
+                ::on_player_joined(id);
+
+                for (const auto& [key, value] : player->meta) {
+                    NutBlast_FieldDiff diff = {0};
+                    diff.name = key.c_str();
+                    diff.old_value = nullptr;
+                    diff.new_value = value.c_str();
+                    ::on_player_meta_changed(pid, diff);
+                }
+            }
+        }
+    }
 
     NutBlast_Flush();
 }
 
 extern "C" void NutBlast_Kick(NutBlast_ID guy) {
-    ::ws_send({
-        {"type", "Kick"},
-        {"pid", guy},
-    });
+    if (guy != NutBlast_GetPlayerID()) {
+        ::ws_send({
+            {"type", "Kick"},
+            {"pid", guy},
+        });
+    }
 }
 
 extern "C" void NutBlast_SetMaster(NutBlast_ID guy) {

@@ -78,7 +78,7 @@ static void restart() {
         .color = RED,
     };
 
-    TinyMapPut(&players, NutBlast_GetOurID(), &us, sizeof(us));
+    TinyMapPut(&players, NutBlast_GetPlayerID(), &us, sizeof(us));
 }
 
 static void on_player_joined(NutBlast_ID id) {
@@ -104,7 +104,7 @@ static void draw_gui() {
     const int fs = 28;
     int i = 0;
 
-    for (const NutBlast_ID* ptr = NutBlast_GetPlayerIDs(); *ptr; ptr++) {
+    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
         const NutBlast_ID id = *ptr;
         const char* name = NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME);
 
@@ -121,7 +121,7 @@ static void draw_gui() {
 }
 
 static void move_our_rect() {
-    Player* p = (Player*)TinyMapGet(&players, NutBlast_GetOurID());
+    Player* p = (Player*)TinyMapGet(&players, NutBlast_GetPlayerID());
 
     if (!p)
         return;
@@ -132,25 +132,19 @@ static void move_our_rect() {
 }
 
 static void send_our_position() {
-    const Player* p = (const Player*)TinyMapGet(&players, NutBlast_GetOurID());
+    const Player* p = (const Player*)TinyMapGet(&players, NutBlast_GetPlayerID());
 
     if (!p)
         return;
 
-    const NutBlast_ID* pids = NutBlast_GetPlayerIDs();
+    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
+        const NutBlast_ID id = *ptr;
 
-    for (;;) {
-        const NutBlast_ID id = *pids++;
-
-        if (!id)
-            break;
-
-        if (id == NutBlast_GetOurID())
-            continue;
-
-        static char buf[32] = "";
-        snprintf(buf, sizeof(buf), "%d:%d", p->x, p->y);
-        NutBlast_SendTo(CHAN_POS, id, buf, -1);
+        if (id != NutBlast_GetPlayerID()) {
+            static char buf[32] = "";
+            snprintf(buf, sizeof(buf), "%d:%d", p->x, p->y);
+            NutBlast_SendTo(CHAN_POS, id, buf, -1);
+        }
     }
 }
 
@@ -158,18 +152,11 @@ static void maybe_chat() {
     if (!IsKeyPressed(KEY_T))
         return;
 
-    const NutBlast_ID* pids = NutBlast_GetPlayerIDs();
+    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
+        const NutBlast_ID id = *ptr;
 
-    for (;;) {
-        const NutBlast_ID id = *pids++;
-
-        if (!id)
-            break;
-
-        if (id == NutBlast_GetOurID())
-            continue;
-
-        NutBlast_SendReliablyTo(CHAN_CHAT, id, "Hello!", -1);
+        if (id != NutBlast_GetPlayerID())
+            NutBlast_SendReliablyTo(CHAN_CHAT, id, "Hello!", -1);
     }
 }
 
@@ -177,15 +164,10 @@ static void maybe_kick() {
     if (!IsKeyPressed(KEY_L))
         return;
 
-    const NutBlast_ID* pids = NutBlast_GetPlayerIDs();
+    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
+        const NutBlast_ID id = *ptr;
 
-    for (;;) {
-        const NutBlast_ID id = *pids++;
-
-        if (!id)
-            break;
-
-        if (id != NutBlast_GetOurID())
+        if (id != NutBlast_GetPlayerID())
             NutBlast_Kick(id);
     }
 }

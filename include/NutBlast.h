@@ -263,7 +263,7 @@ int NutBlast_GetPlayerCount();
 int NutBlast_GetMaxPlayers();
 
 /// Returns your player's ID.
-NutBlast_ID NutBlast_GetOurID();
+NutBlast_ID NutBlast_GetPlayerID();
 
 /// Returns the lobby's ID.
 NutBlast_ID NutBlast_GetLobbyID();
@@ -272,7 +272,7 @@ NutBlast_ID NutBlast_GetLobbyID();
 NutBlast_ID NutBlast_GetMasterID();
 
 /// Returns a 0-terminated array of IDs of every reachable player in the lobby, including yourself.
-const NutBlast_ID* NutBlast_GetPlayerIDs();
+const NutBlast_ID* NutBlast_ListPlayers();
 
 /// Returns true if the specified player is in the lobby AND can be reached over the network, and false otherwise.
 bool NutBlast_IsPlayerAlive(NutBlast_ID);
