@@ -464,6 +464,15 @@ static NutBlast_ID generate_id() {
 }
 
 static std::string get_blaster() {
+    static Once print_banner;
+
+    if (print_banner) {
+        ::log(NB_LogInfo, ".-------------------------------------------------------------.");
+        ::log(NB_LogInfo, "| For troubleshooting multiplayer connectivity, please visit: |");
+        ::log(NB_LogInfo, "|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
+        ::log(NB_LogInfo, "'-------------------------------------------------------------'");
+    }
+
     if (blaster == std::nullopt) {
         ::log(NB_LogInfo, "Using the default NutBlaster server as none was explicitly specified: {}",
             NUTBLAST_DEFAULT_SERVER);
