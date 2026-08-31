@@ -730,6 +730,8 @@ extern "C" void NutBlast_Disconnect() {
 extern "C" void NutBlast_FindLobbies(size_t limit) {
     if (::blaster_ws) {
         ::log(NB_LogError, "You're already connected!");
+    } else if (::gid.empty()) {
+        ::log(NB_LogError, "You must set a game ID before listing lobbies!");
     } else {
         ::mode = Mode::List, ::listing_limit = limit;
         ::log(NB_LogInfo, "Connecting to {}", get_blaster());
@@ -740,8 +742,10 @@ extern "C" void NutBlast_FindLobbies(size_t limit) {
 extern "C" void NutBlast_Join(NutBlast_ID id) {
     if (::blaster_ws) {
         ::log(NB_LogError, "You're already connected!");
+    } else if (::gid.empty()) {
+        ::log(NB_LogError, "You must set a game ID before joining a lobby!");
     } else if (!id) {
-        ::log(NB_LogError, "No ID specified!");
+        ::log(NB_LogError, "No lobby ID specified!");
     } else {
         ::mode = Mode::Join, ::lid = id;
         ::log(NB_LogInfo, "Trying to join '{}' at: {}", id, get_blaster());
@@ -752,6 +756,8 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
 extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
     if (::blaster_ws) {
         ::log(NB_LogError, "You're already connected!");
+    } else if (::gid.empty()) {
+        ::log(NB_LogError, "You must set a game ID before hosting a lobby!");
     } else {
         NutBlast_SetMaxPlayers(opts.max_players);
         ::mode = Mode::Host, ::hosting_a_listed_lobby = !opts.unlisted;
@@ -765,6 +771,8 @@ extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
 extern "C" void NutBlast_JoinSwarm() {
     if (::blaster_ws) {
         ::log(NB_LogError, "You're already connected!");
+    } else if (::gid.empty()) {
+        ::log(NB_LogError, "You must set a game ID before joining a swarm lobby!");
     } else {
         ::mode = Mode::Swarm;
         ::log(NB_LogInfo, "Trying to join a swarm for '{}'", ::gid);
