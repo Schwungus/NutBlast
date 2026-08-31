@@ -500,23 +500,6 @@ extern "C" bool NutBlast_IsListed() {
     return ::hosting_a_listed_lobby;
 }
 
-extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name) {
-    if (!pid || !name)
-        return nullptr;
-
-    if (pid == NutBlast_GetOurID())
-        return ::player_meta.contains(name) ? ::player_meta.at(name).c_str() : nullptr;
-
-    if (!NutBlast_IsOnline())
-        return nullptr;
-
-    if (!::players.contains(pid))
-        return nullptr;
-
-    const auto& player = ::players.at(pid);
-    return player->meta.contains(name) ? player->meta.at(name).c_str() : nullptr;
-}
-
 static bool check_field(const char* type, const char* key, const char* value) {
     if (!key || !key[0] || std::strlen(key) > NUTBLAST_FIELD_NAME_MAX) {
         log(NB_LogError, "{} metadata: invalid key size", type);
@@ -551,6 +534,23 @@ freak_metadata(const char* type, const char* type_lower, Metadata& meta, const c
             {"value", value},
         });
     }
+}
+
+extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name) {
+    if (!pid || !name)
+        return nullptr;
+
+    if (pid == NutBlast_GetOurID())
+        return ::player_meta.contains(name) ? ::player_meta.at(name).c_str() : nullptr;
+
+    if (!NutBlast_IsOnline())
+        return nullptr;
+
+    if (!::players.contains(pid))
+        return nullptr;
+
+    const auto& player = ::players.at(pid);
+    return player->meta.contains(name) ? player->meta.at(name).c_str() : nullptr;
 }
 
 extern "C" void NutBlast_SetPlayerField(const char* key, const char* value) {
