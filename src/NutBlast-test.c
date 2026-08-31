@@ -217,6 +217,8 @@ static void on_disconnected(NutBlast_Reason reason) {
 
 static int nb_to_rl(NutBlast_LogLevel level) {
     switch (level) {
+    case NB_LogTrace:
+        return LOG_TRACE;
     case NB_LogInfo:
         return LOG_INFO;
     case NB_LogError:

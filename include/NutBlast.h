@@ -89,6 +89,7 @@ typedef uint8_t NutBlast_ChannelID;
 
 /// A log-level passed to custom loggers (see `NutBlast_SetLogger`).
 typedef enum {
+    NB_LogTrace,
     NB_LogInfo,
     NB_LogError,
 } NutBlast_LogLevel;
@@ -98,6 +99,9 @@ const char* NutBlast_LogLevelToString(NutBlast_LogLevel);
 
 /// Sets a logging callback to use by NutBlast. Set to null to reset it to the built-in default handler.
 void NutBlast_SetLogger(void (*)(NutBlast_LogLevel, const char*));
+
+/// Cuts off further logs below the specified level. The default is to log messages of `NB_LogInfo` and above.
+void NutBlast_SetLogLevel(NutBlast_LogLevel);
 
 /// A message from another peer.
 typedef struct {

@@ -69,6 +69,8 @@ template <typename T> static T copy_and_clear(T& obj) {
 
 extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
     switch (level) {
+    case NB_LogTrace:
+        return "TRACE";
     case NB_LogInfo:
         return "INFO";
     case NB_LogError:
@@ -79,9 +81,14 @@ extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
 }
 
 static void (*logger)(NutBlast_LogLevel, const char*) = nullptr;
+static NutBlast_LogLevel log_level = NB_LogInfo;
 
-void NutBlast_SetLogger(void (*cb)(NutBlast_LogLevel, const char*)) {
+extern "C" void NutBlast_SetLogger(void (*cb)(NutBlast_LogLevel, const char*)) {
     ::logger = cb;
+}
+
+extern "C" void NutBlast_SetLogLevel(NutBlast_LogLevel level) {
+    ::log_level = level;
 }
 
 static void log_to_stdout(NutBlast_LogLevel level, const char* line) {
@@ -91,8 +98,10 @@ static void log_to_stdout(NutBlast_LogLevel level, const char* line) {
 
 template <typename... Args>
 static inline void log(NutBlast_LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
-    const auto logger = ::logger == nullptr ? log_to_stdout : ::logger;
-    logger(level, std::vformat(fmt.get(), std::make_format_args(args...)).c_str());
+    if (level >= ::log_level) {
+        const auto logger = ::logger == nullptr ? log_to_stdout : ::logger;
+        logger(level, std::vformat(fmt.get(), std::make_format_args(args...)).c_str());
+    }
 }
 
 extern "C" uint64_t NutBlast_TimeNS() {
@@ -199,16 +208,22 @@ struct Player : std::enable_shared_from_this<Player> {
 
         if (::incoming_offers.contains(pid)) {
             for (const auto& offer : copy_and_clear(::incoming_offers.at(pid))) {
+                ::log(NB_LogTrace, "offer/answer from {}: {}", pid, static_cast<std::string>(offer));
+
                 try {
                     pc->setRemoteDescription(offer);
+                    ::log(NB_LogTrace, "offer/answer accepted!");
                 } catch (...) { continue; }
             }
         }
 
         if (pc->remoteDescription().has_value() && ::incoming_candidates.contains(pid)) {
             for (const auto& candidate : copy_and_clear(::incoming_candidates.at(pid))) {
+                ::log(NB_LogTrace, "candidate from {}: {}", pid, static_cast<std::string>(candidate));
+
                 try {
                     pc->addRemoteCandidate(candidate);
+                    ::log(NB_LogTrace, "candidate accepted!");
                 } catch (...) { continue; }
             }
         }
@@ -450,7 +465,7 @@ static NutBlast_ID generate_id() {
 
 static std::string get_blaster() {
     if (blaster == std::nullopt) {
-        log(NB_LogInfo, "Using the default NutBlaster server as none was explicitly specified: {}",
+        ::log(NB_LogInfo, "Using the default NutBlaster server as none was explicitly specified: {}",
             NUTBLAST_DEFAULT_SERVER);
         blaster = NUTBLAST_DEFAULT_SERVER;
     }
@@ -502,12 +517,12 @@ extern "C" bool NutBlast_IsListed() {
 
 static bool check_field(const char* type, const char* key, const char* value) {
     if (!key || !key[0] || std::strlen(key) > NUTBLAST_FIELD_NAME_MAX) {
-        log(NB_LogError, "{} metadata: invalid key size", type);
+        ::log(NB_LogError, "{} metadata: invalid key size", type);
         return false;
     }
 
     if (value && std::strlen(value) > NUTBLAST_FIELD_VALUE_MAX) {
-        log(NB_LogError, "{} metadata: invalid value size", type);
+        ::log(NB_LogError, "{} metadata: invalid value size", type);
         return false;
     }
 
@@ -524,7 +539,7 @@ freak_metadata(const char* type, const char* type_lower, Metadata& meta, const c
             {"key", key},
         });
     } else if (meta.size() >= NUTBLAST_MAX_FIELDS && !meta.contains(key)) {
-        log(NB_LogError, "Reached {} {} fields limit", NUTBLAST_MAX_FIELDS, type_lower);
+        ::log(NB_LogError, "Reached {} {} fields limit", NUTBLAST_MAX_FIELDS, type_lower);
     } else {
         meta.insert_or_assign(key, value);
 
@@ -695,7 +710,7 @@ extern "C" void NutBlast_Disconnect() {
         ::fire_ready.reset();
     }
 
-    log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
+    ::log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
 
     // TODO: maybe NOT fire this in the lobby-listing mode?
     ::on_disconnected(::disconnection_reason);
@@ -705,45 +720,45 @@ extern "C" void NutBlast_Disconnect() {
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
     if (::blaster_ws) {
-        log(NB_LogError, "You're already connected!");
+        ::log(NB_LogError, "You're already connected!");
     } else {
         ::mode = Mode::List, ::listing_limit = limit;
-        log(NB_LogInfo, "Connecting to {}", get_blaster());
+        ::log(NB_LogInfo, "Connecting to {}", get_blaster());
         join_pro();
     }
 }
 
 extern "C" void NutBlast_Join(NutBlast_ID id) {
     if (::blaster_ws) {
-        log(NB_LogError, "You're already connected!");
+        ::log(NB_LogError, "You're already connected!");
     } else if (!id) {
-        log(NB_LogError, "No ID specified!");
+        ::log(NB_LogError, "No ID specified!");
     } else {
         ::mode = Mode::Join, ::lid = id;
-        log(NB_LogInfo, "Trying to join '{}' at: {}", id, get_blaster());
+        ::log(NB_LogInfo, "Trying to join '{}' at: {}", id, get_blaster());
         join_pro();
     }
 }
 
 extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
     if (::blaster_ws) {
-        log(NB_LogError, "You're already connected!");
+        ::log(NB_LogError, "You're already connected!");
     } else {
         NutBlast_SetMaxPlayers(opts.max_players);
         ::mode = Mode::Host, ::hosting_a_listed_lobby = !opts.unlisted;
         ::lid = opts.lobby_id ? opts.lobby_id : generate_id();
 
-        log(NB_LogInfo, "Trying to host '{}' at: {}", lid, get_blaster());
+        ::log(NB_LogInfo, "Trying to host '{}' at: {}", lid, get_blaster());
         join_pro();
     }
 }
 
 extern "C" void NutBlast_JoinSwarm() {
     if (::blaster_ws) {
-        log(NB_LogError, "You're already connected!");
+        ::log(NB_LogError, "You're already connected!");
     } else {
         ::mode = Mode::Swarm;
-        log(NB_LogInfo, "Trying to join a swarm for '{}'", ::gid);
+        ::log(NB_LogInfo, "Trying to join a swarm for '{}'", ::gid);
         join_pro();
     }
 }
@@ -773,7 +788,7 @@ extern "C" const NutBlast_ID* NutBlast_GetPlayerIDs() {
 extern "C" NutBlast_ID NutBlast_GetOurID() {
     if (!pid) {
         pid = generate_id();
-        log(NB_LogInfo, "You are {}", pid);
+        ::log(NB_LogInfo, "You are {}", pid);
     }
 
     return pid;
@@ -865,11 +880,11 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         [](const auto& obj) {
             ::rtc_config.iceServers.clear();
 
-            log(NB_LogInfo, "ICE servers from NutBlaster:");
+            ::log(NB_LogInfo, "ICE servers from NutBlaster:");
 
             for (const auto& server : obj["ice_servers"]) {
                 ::rtc_config.iceServers.emplace_back(server);
-                log(NB_LogInfo, "  {}", (std::string)server);
+                ::log(NB_LogInfo, "  {}", (std::string)server);
             }
 
             ::permission_to_cook = true;
@@ -1061,7 +1076,7 @@ extern "C" void NutBlast_Flush() {
 
 static void init_players_after_ready() {
     if (::fire_ready && ::mode != Mode::List) {
-        log(NB_LogInfo, "NutBlast connected and ready!");
+        ::log(NB_LogInfo, "NutBlast connected and ready!");
         ::on_ready();
     }
 
@@ -1118,7 +1133,7 @@ static void greatest_technician_thats_ever_lived(
         return;
 
     if (!msg) {
-        log(NB_LogError, "Cannot send a null message");
+        ::log(NB_LogError, "Cannot send a null message");
         return;
     }
 
@@ -1152,12 +1167,12 @@ extern "C" void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID id,
 
 extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
     if (!out) {
-        log(NB_LogError, "NutBlast_NextMessage called with null pointer");
+        ::log(NB_LogError, "NutBlast_NextMessage called with null pointer");
         return false;
     }
 
     if (chan >= ::max_chan) {
-        log(NB_LogError, "NutBlast_NextMessage called with channel {} out of {} max channels", chan, ::max_chan);
+        ::log(NB_LogError, "NutBlast_NextMessage called with channel {} out of {} max channels", chan, ::max_chan);
         return false;
     }
 
