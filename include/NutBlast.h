@@ -147,6 +147,21 @@ typedef struct {
     bool unlisted;
 } NutBlast_HostOptions;
 
+typedef struct {
+    /// Omit to use the default public instance.
+    const char* nutblaster_address;
+
+    /// A required identifier used to differentiate between lobbies from different games. Should be something readable
+    /// along the lines of "MyCoolGame v1.0.5".
+    const char* game_id;
+
+    /// Sets the maximum amount of channels NutBlast receives messages on. Defaults to 1 channel max if unspecified.
+    NutBlast_ChannelID max_channels;
+} NutBlast_InitOptions;
+
+/// NutBlast needs to be initialized before you can use it. This is what you call to do the initialization.
+void NutBlast_Init(NutBlast_InitOptions);
+
 /// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.
 void NutBlast_Cleanup();
 
@@ -163,14 +178,6 @@ int NutBlast_ServerPing();
 
 /// Returns the average round-trip time (in milliseconds) to the specified player.
 int NutBlast_PlayerPing(NutBlast_ID);
-
-/// Sets the NutBlaster address.
-///
-/// Pass NULL to reset the address to its default value.
-void NutBlast_SetNutBlaster(const char*);
-
-/// Sets the maximum amount of channels to receive messages on. Defaults to 1 channel if unspecified.
-void NutBlast_SetMaxChannels(NutBlast_ChannelID);
 
 /// Registers a callback to fire as soon as `NutBlast_Ready()` signals you are ready for the first time.
 void NutBlast_OnReady(void (*)());
@@ -223,9 +230,6 @@ void NutBlast_Update();
 /// players) and send out a response immediately after. Without `NutBlast_Flush()`, you would have to wait a whole extra
 /// tick for the next `NutBlast_Update()` call to flush those packets.
 void NutBlast_Flush();
-
-/// Sets a game-id which is used to differentiate the lobbies between different games.
-void NutBlast_SetGameID(const char*);
 
 /// Sets a maximum player-count accepted by the lobby. No effect if you aren't the lobby's master.
 void NutBlast_SetMaxPlayers(int);

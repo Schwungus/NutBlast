@@ -23,9 +23,10 @@ static void on_lobbies_found(const NutBlast_Lobby* list, size_t count) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc > 1)
-        NutBlast_SetNutBlaster(argv[1]);
-    NutBlast_SetGameID(argc > 2 ? argv[2] : "NutBlast Test");
+    NutBlast_Init((NutBlast_InitOptions){
+        .nutblaster_address = argc > 1 ? argv[1] : NULL,
+        .game_id = argc > 2 ? argv[2] : "NutBlast Test",
+    });
 
     static const size_t LIMOZ = 10;
     NutBlast_OnLobbiesFound(on_lobbies_found);

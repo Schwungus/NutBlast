@@ -171,7 +171,7 @@ struct ByeReason {
 
 struct Player : std::enable_shared_from_this<Player> {
     const NutBlast_ID pid;
-    Once fire_join, init_once;
+    Once fire_join, init;
 
     Pinger pinger;
     Metadata meta;
@@ -192,7 +192,7 @@ struct Player : std::enable_shared_from_this<Player> {
             ::incoming_candidates.erase(pid);
     }
 
-    void init();
+    void engage();
 
     bool is_offerer() const {
         return NutBlast_GetPlayerID() > pid;
@@ -240,8 +240,9 @@ struct Message {
 
 static std::string gid = "";
 static NutBlast_ID pid = 0, lid = 0;
-static std::optional<std::string> blaster;
+static std::string nutblaster_address;
 static ByeReason disconnection_reason;
+static int max_players = NUTBLAST_MAX_PLAYERS;
 
 static std::mutex globals_mutex;
 
@@ -339,8 +340,8 @@ class Ticker {
     }
 };
 
-void Player::init() {
-    if (!init_once)
+void Player::engage() {
+    if (!init)
         return;
 
     const auto id = this->pid;
@@ -463,38 +464,41 @@ static NutBlast_ID generate_id() {
     return *reinterpret_cast<NutBlast_ID*>(id);
 }
 
-static std::string get_blaster() {
-    static Once print_banner;
+static bool init = false;
 
-    if (print_banner) {
-        ::log(NB_LogInfo, ".-------------------------------------------------------------.");
-        ::log(NB_LogInfo, "| For troubleshooting multiplayer connectivity, please visit: |");
-        ::log(NB_LogInfo, "|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
-        ::log(NB_LogInfo, "'-------------------------------------------------------------'");
+extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
+    if (::init) {
+        ::log(NB_LogError, "Don't call `NutBlast_Init()` twice!");
+        return;
     }
 
-    if (blaster == std::nullopt) {
+    if (!opts.game_id) {
+        ::log(NB_LogError, "`NutBlast_Init()` requires `game_id` to be set!");
+        return;
+    }
+
+    ::init = true;
+
+    ::log(NB_LogInfo, ".-------------------------------------------------------------.");
+    ::log(NB_LogInfo, "| For troubleshooting multiplayer connectivity, please visit: |");
+    ::log(NB_LogInfo, "|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
+    ::log(NB_LogInfo, "'-------------------------------------------------------------'");
+
+    if (opts.nutblaster_address) {
+        ::nutblaster_address = opts.nutblaster_address;
+    } else {
         ::log(NB_LogInfo, "Using the default NutBlaster server as none was explicitly specified: {}",
             NUTBLAST_DEFAULT_SERVER);
-        blaster = NUTBLAST_DEFAULT_SERVER;
+        ::nutblaster_address = NUTBLAST_DEFAULT_SERVER;
     }
 
-    return *blaster;
-}
+    ::gid = opts.game_id;
+    ::log(NB_LogInfo, "Playing \"{}\"", ::gid);
 
-static int max_players = NUTBLAST_MAX_PLAYERS;
+    ::pid = generate_id();
+    ::log(NB_LogInfo, "You are ID={}", ::pid);
 
-extern "C" void NutBlast_SetNutBlaster(const char* blaster) {
-    ::blaster = (blaster == nullptr ? NUTBLAST_DEFAULT_SERVER : blaster);
-}
-
-extern "C" void NutBlast_SetGameID(const char* gid) {
-    ::gid = (gid == nullptr ? "" : gid);
-}
-
-extern "C" void NutBlast_SetMaxChannels(NutBlast_ChannelID max) {
-    if (max > 0 && max <= MAX_CHANNELS)
-        ::max_chan = max;
+    ::max_chan = opts.max_channels ? opts.max_channels : 1;
 }
 
 extern "C" void NutBlast_SetMaxPlayers(int max) {
@@ -617,7 +621,6 @@ static void join_pro() {
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
 
-    get_blaster();
     ::master = 0, ::disconnection_reason = ByeReason(), ::permission_to_cook = false;
     ::ws_pinger.reset();
 
@@ -691,7 +694,7 @@ static void join_pro() {
         ::time_to_die = true;
     });
 
-    ::blaster_ws->open(get_blaster());
+    ::blaster_ws->open(::nutblaster_address);
 }
 
 extern "C" void NutBlast_Disconnect() {
@@ -730,11 +733,11 @@ extern "C" void NutBlast_Disconnect() {
 extern "C" void NutBlast_FindLobbies(size_t limit) {
     if (::blaster_ws) {
         ::log(NB_LogError, "You're already connected!");
-    } else if (::gid.empty()) {
-        ::log(NB_LogError, "You must set a game ID before listing lobbies!");
+    } else if (!::init) {
+        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
     } else {
         ::mode = Mode::List, ::listing_limit = limit;
-        ::log(NB_LogInfo, "Connecting to {}", get_blaster());
+        ::log(NB_LogInfo, "Connecting to {}", ::nutblaster_address);
         join_pro();
     }
 }
@@ -742,13 +745,13 @@ extern "C" void NutBlast_FindLobbies(size_t limit) {
 extern "C" void NutBlast_Join(NutBlast_ID id) {
     if (::blaster_ws) {
         ::log(NB_LogError, "You're already connected!");
-    } else if (::gid.empty()) {
-        ::log(NB_LogError, "You must set a game ID before joining a lobby!");
+    } else if (!::init) {
+        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
     } else if (!id) {
         ::log(NB_LogError, "No lobby ID specified!");
     } else {
         ::mode = Mode::Join, ::lid = id;
-        ::log(NB_LogInfo, "Trying to join '{}' at: {}", id, get_blaster());
+        ::log(NB_LogInfo, "Trying to join '{}' at: {}", id, ::nutblaster_address);
         join_pro();
     }
 }
@@ -756,14 +759,14 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
 extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
     if (::blaster_ws) {
         ::log(NB_LogError, "You're already connected!");
-    } else if (::gid.empty()) {
-        ::log(NB_LogError, "You must set a game ID before hosting a lobby!");
+    } else if (!::init) {
+        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
     } else {
         NutBlast_SetMaxPlayers(opts.max_players);
         ::mode = Mode::Host, ::hosting_a_listed_lobby = !opts.unlisted;
         ::lid = opts.lobby_id ? opts.lobby_id : generate_id();
 
-        ::log(NB_LogInfo, "Trying to host '{}' at: {}", lid, get_blaster());
+        ::log(NB_LogInfo, "Trying to host '{}' at: {}", lid, ::nutblaster_address);
         join_pro();
     }
 }
@@ -771,8 +774,8 @@ extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
 extern "C" void NutBlast_JoinSwarm() {
     if (::blaster_ws) {
         ::log(NB_LogError, "You're already connected!");
-    } else if (::gid.empty()) {
-        ::log(NB_LogError, "You must set a game ID before joining a swarm lobby!");
+    } else if (!::init) {
+        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
     } else {
         ::mode = Mode::Swarm;
         ::log(NB_LogInfo, "Trying to join a swarm for '{}'", ::gid);
@@ -803,12 +806,12 @@ extern "C" const NutBlast_ID* NutBlast_ListPlayers() {
 }
 
 extern "C" NutBlast_ID NutBlast_GetPlayerID() {
-    if (!pid) {
-        pid = generate_id();
-        ::log(NB_LogInfo, "You are {}", pid);
+    if (::init) {
+        return ::pid;
+    } else {
+        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
+        return 0;
     }
-
-    return pid;
 }
 
 extern "C" NutBlast_ID NutBlast_GetLobbyID() {
@@ -1101,7 +1104,7 @@ extern "C" void NutBlast_Update() {
 
     if (::permission_to_cook)
         for (auto& [id, player] : ::players)
-            player->init();
+            player->engage();
 
     if (NutBlast_IsReady()) {
         if (::fire_ready && ::mode != Mode::List) {

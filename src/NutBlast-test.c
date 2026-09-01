@@ -217,11 +217,11 @@ static void rl_logger(NutBlast_LogLevel level, const char* line) {
 int main(int argc, char* argv[]) {
     NutBlast_SetLogger(rl_logger);
 
-    if (argc > 1)
-        NutBlast_SetNutBlaster(argv[1]);
-
-    NutBlast_SetGameID("NutBlast Test");
-    NutBlast_SetMaxChannels(CHAN_MAX);
+    NutBlast_Init((NutBlast_InitOptions){
+        .game_id = "NutBlast Test",
+        .nutblaster_address = argc > 1 ? argv[1] : NULL,
+        .max_channels = CHAN_MAX,
+    });
 
     InitWindow(800, 600, "NutBlast Test");
 
