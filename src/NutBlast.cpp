@@ -484,13 +484,7 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
     ::log(NB_LogInfo, "|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
     ::log(NB_LogInfo, "'-------------------------------------------------------------'");
 
-    if (opts.nutblaster_address) {
-        ::nutblaster_address = opts.nutblaster_address;
-    } else {
-        ::log(NB_LogInfo, "Using the default NutBlaster server as none was explicitly specified: {}",
-            NUTBLAST_DEFAULT_SERVER);
-        ::nutblaster_address = NUTBLAST_DEFAULT_SERVER;
-    }
+    ::nutblaster_address = NUTBLAST_DEFAULT_SERVER;
 
     ::gid = opts.game_id;
     ::log(NB_LogInfo, "Playing \"{}\"", ::gid);
@@ -499,6 +493,10 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
     ::log(NB_LogInfo, "You are ID={}", ::pid);
 
     ::max_chan = opts.max_channels ? opts.max_channels : 1;
+}
+
+extern "C" void NutBlast_SetNutBlasterAddress(const char* address) {
+    ::nutblaster_address = address ? address : NUTBLAST_DEFAULT_SERVER;
 }
 
 extern "C" void NutBlast_SetMaxPlayers(int max) {

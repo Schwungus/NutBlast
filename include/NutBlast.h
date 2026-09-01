@@ -148,9 +148,6 @@ typedef struct {
 } NutBlast_HostOptions;
 
 typedef struct {
-    /// Omit to use the default public instance.
-    const char* nutblaster_address;
-
     /// A required identifier used to differentiate between lobbies from different games. Should be something readable
     /// along the lines of "MyCoolGame v1.0.5".
     const char* game_id;
@@ -230,6 +227,9 @@ void NutBlast_Update();
 /// players) and send out a response immediately after. Without `NutBlast_Flush()`, you would have to wait a whole extra
 /// tick for the next `NutBlast_Update()` call to flush those packets.
 void NutBlast_Flush();
+
+/// Sets the NutBlaster server address. Pass a null pointer to use the default public instance.
+void NutBlast_SetNutBlasterAddress(const char*);
 
 /// Sets a maximum player-count accepted by the lobby. No effect if you aren't the lobby's master.
 void NutBlast_SetMaxPlayers(int);

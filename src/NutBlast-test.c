@@ -219,9 +219,11 @@ int main(int argc, char* argv[]) {
 
     NutBlast_Init((NutBlast_InitOptions){
         .game_id = "NutBlast Test",
-        .nutblaster_address = argc > 1 ? argv[1] : NULL,
         .max_channels = CHAN_MAX,
     });
+
+    if (argc > 1)
+        NutBlast_SetNutBlasterAddress(argv[1]);
 
     InitWindow(800, 600, "NutBlast Test");
 
