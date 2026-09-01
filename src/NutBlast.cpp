@@ -484,7 +484,8 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
     ::log(NB_LogInfo, "|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
     ::log(NB_LogInfo, "'-------------------------------------------------------------'");
 
-    ::nutblaster_address = NUTBLAST_DEFAULT_SERVER;
+    if (::nutblaster_address.empty())
+        ::nutblaster_address = NUTBLAST_DEFAULT_SERVER;
 
     ::gid = opts.game_id;
     ::log(NB_LogInfo, "Playing \"{}\"", ::gid);
