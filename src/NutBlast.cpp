@@ -479,6 +479,8 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
 
     ::init = true;
 
+    rtc::Preload();
+
     ::log(NB_LogInfo, ".-------------------------------------------------------------.");
     ::log(NB_LogInfo, "| For troubleshooting multiplayer connectivity, please visit: |");
     ::log(NB_LogInfo, "|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
@@ -616,7 +618,6 @@ extern "C" void NutBlast_PurgeMetadata() {
 static void join_pro() {
     std::lock_guard<std::mutex> lock(::globals_mutex);
 
-    rtc::Preload();
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
 
