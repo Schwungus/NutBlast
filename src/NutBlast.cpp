@@ -27,7 +27,6 @@
 #include <cstring>
 #include <deque>
 #include <format>
-#include <functional>
 #include <optional>
 #include <random>
 #include <string>
@@ -273,20 +272,19 @@ static std::vector<nlohmann::json> ws_in, ws_out;
 static Metadata player_meta, lobby_meta;
 
 template <typename... Args> class Callback {
-    std::function<void(Args...)> fn;
+    void (*fn)(Args...) = nullptr;
 
   public:
     Callback() = default;
 
-    Callback& operator=(const std::function<void(Args...)>& fn) {
+    Callback& operator=(void (*fn)(Args...)) {
         this->fn = fn;
         return *this;
     }
 
     void operator()(const std::decay_t<Args>&... args) {
-        try {
+        if (fn)
             fn(args...);
-        } catch (const std::bad_function_call& ex) {}
     }
 };
 

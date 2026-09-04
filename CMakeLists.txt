@@ -110,7 +110,7 @@ if(NUTBLAST_BUILD_TEST)
     target_link_libraries(NutBlast-lobbyist PRIVATE NutBlast)
 
     if(EMSCRIPTEN)
-        target_link_options(NutBlast-test PRIVATE -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
+        target_link_options(NutBlast-test PRIVATE -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8 -sNO_DISABLE_EXCEPTION_CATCHING)
         target_link_options(NutBlast-lobbyist PRIVATE -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
     endif()
 endif()
