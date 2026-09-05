@@ -66,6 +66,12 @@ template <typename T> static T copy_and_clear(T& obj) {
     return copy;
 }
 
+static std::optional<std::string> last_error = std::nullopt;
+
+extern "C" const char* NutBlast_GetLastError() {
+    return ::last_error.has_value() ? ::last_error->c_str() : nullptr;
+}
+
 extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
     switch (level) {
     case NB_LogTrace:
@@ -97,10 +103,13 @@ static void log_to_stdout(NutBlast_LogLevel level, const char* line) {
 
 template <typename... Args>
 static inline void log(NutBlast_LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
-    if (level >= ::log_level) {
-        const auto logger = ::logger == nullptr ? log_to_stdout : ::logger;
-        logger(level, std::vformat(fmt.get(), std::make_format_args(args...)).c_str());
-    }
+    const auto line = std::vformat(fmt.get(), std::make_format_args(args...));
+
+    if (level == NB_LogError)
+        ::last_error = line;
+
+    if (level >= ::log_level)
+        (::logger == nullptr ? log_to_stdout : ::logger)(level, line.c_str());
 }
 
 extern "C" uint64_t NutBlast_TimeNS() {
@@ -615,6 +624,7 @@ extern "C" void NutBlast_PurgeMetadata() {
 
 static void join_pro() {
     std::lock_guard<std::mutex> lock(::globals_mutex);
+    ::last_error = std::nullopt;
 
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
@@ -721,11 +731,10 @@ extern "C" void NutBlast_Disconnect() {
     }
 
     ::log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
-
-    // TODO: maybe NOT fire this in the lobby-listing mode?
-    ::on_disconnected(::disconnection_reason);
-
+    ::on_disconnected(::disconnection_reason); // TODO: maybe NOT fire this in the lobby-listing mode?
     ::disconnection_reason = ByeReason();
+
+    ::last_error = std::nullopt;
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
