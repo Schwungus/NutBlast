@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use crate::{
     MAX_PLAYERS,
     id::{BasicId, GameId, LobbyId},
-    protocol::{Kick, LobbyListing, MAX_FIELDS, Metadata, ServerMessage},
+    protocol::{Kick, LobbyListing, Metadata, ServerMessage},
 };
 
 const MAX_LOBBIES_IN_LIST: usize = 100;
@@ -140,7 +140,7 @@ impl BlasterImpl {
             }
             BlasterOperation::SetPlayerMeta { pid, key, value } => {
                 let lid = if let Some(player) = self.players.get_mut(&pid)
-                    && (player.meta.0.contains_key(&key) || player.meta.0.len() < MAX_FIELDS)
+                    && player.meta.can_add(&key)
                 {
                     player.meta.0.insert(key.to_string(), value.to_string());
                     player.lid.clone()
@@ -174,7 +174,7 @@ impl BlasterImpl {
                     return;
                 };
 
-                if lober.meta.0.contains_key(&key) || lober.meta.0.len() < MAX_FIELDS {
+                if lober.meta.can_add(&key) {
                     lober.meta.0.insert(key.to_string(), value.to_string());
 
                     let msg = ServerMessage::SetLobbyMeta {

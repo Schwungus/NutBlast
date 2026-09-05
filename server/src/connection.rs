@@ -19,12 +19,13 @@ use crate::{
     MAX_PLAYERS,
     blaster::{Blaster, Lobby},
     id::{BasicId, LobbyId},
-    protocol::{ClientMessage, FIELD_NAME_MAX, FIELD_VALUE_MAX, Kick, ServerMessage},
+    protocol::{BoundedString, ClientMessage, FieldKey, FieldValue, Kick, ServerMessage},
 };
 
-pub const PAYLOADS_PER_SEC: f32 = 30.0;
-
+pub const MAX_PAYLOADS_PER_SEC: f32 = 30.0;
 pub const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
+
+pub const MAX_SWARMS: usize = 10;
 
 pub struct Connection {
     blaster: Blaster,
@@ -86,7 +87,7 @@ impl Connection {
         msg: Option<Result<Message, TungError>>,
     ) -> Result<Loop, Kick> {
         // #28. rate-limiting
-        self.load += 1.0 / PAYLOADS_PER_SEC;
+        self.load += 1.0 / MAX_PAYLOADS_PER_SEC;
 
         if self.load >= 1.0 {
             warn!("CALM DOWN, {}", self.addr);
@@ -211,9 +212,19 @@ impl Connection {
                     LobbyId { gid, lid }
                 };
 
-                // INFINITE SWARMS!!!
-                while self.blaster.lobby_full(&lid).await {
-                    lid.lid += 1;
+                // (almost) INFINITE SWARMS!!!
+                let mut counter = 0;
+
+                while self.blaster.lobby_full(&lid).await && counter < MAX_SWARMS {
+                    lid.lid = lid.lid.wrapping_add(1);
+                    counter += 1;
+                }
+
+                if counter == MAX_SWARMS {
+                    return Err(Kick::violation(
+                        "lobby_full",
+                        "Swarm lobbies pool exhausted",
+                    ));
                 }
 
                 self.lid = Some(lid.clone());
@@ -229,8 +240,8 @@ impl Connection {
             }
             ClientMessage::PassCandidate {
                 ref to,
-                candidate,
-                mid,
+                candidate: BoundedString(candidate),
+                mid: BoundedString(mid),
             } if let Some(from) = self.pid => {
                 let msg = ServerMessage::Candidate {
                     from,
@@ -240,11 +251,17 @@ impl Connection {
 
                 self.blaster.send_to(to, msg).await;
             }
-            ClientMessage::PassOffer { ref to, sdp } if let Some(from) = self.pid => {
+            ClientMessage::PassOffer {
+                ref to,
+                sdp: BoundedString(sdp),
+            } if let Some(from) = self.pid => {
                 let msg = ServerMessage::Offer { from, sdp };
                 self.blaster.send_to(to, msg).await;
             }
-            ClientMessage::PassAnswer { ref to, sdp } if let Some(from) = self.pid => {
+            ClientMessage::PassAnswer {
+                ref to,
+                sdp: BoundedString(sdp),
+            } if let Some(from) = self.pid => {
                 let msg = ServerMessage::Answer { from, sdp };
                 self.blaster.send_to(to, msg).await;
             }
@@ -265,41 +282,35 @@ impl Connection {
                     self.blaster.set_lobby_capacity(lid, capacity).await;
                 }
             }
-            // ok to boot since the size limits are enforced client-side
-            ClientMessage::SetPlayerMeta { key, value }
-                if (1..=FIELD_NAME_MAX).contains(&key.len())
-                    && (0..=FIELD_VALUE_MAX).contains(&value.len())
-                    && self.lid.is_some()
-                    && let Some(pid) = self.pid =>
+            ClientMessage::SetPlayerMeta {
+                key: FieldKey(key),
+                value: FieldValue(value),
+            } if self.lid.is_some()
+                && let Some(pid) = self.pid =>
             {
                 self.blaster.set_player_meta(pid, &key, &value).await;
             }
-            ClientMessage::ErasePlayerMeta { key }
-                if (1..=FIELD_NAME_MAX).contains(&key.len())
-                    && self.lid.is_some()
+            ClientMessage::ErasePlayerMeta { key: FieldKey(key) }
+                if self.lid.is_some()
                     && let Some(pid) = self.pid =>
             {
                 self.blaster.erase_player_meta(pid, &key).await;
             }
-            // ok to boot since the size limits are enforced client-side
-            ClientMessage::SetLobbyMeta { key, value }
-                if (1..=FIELD_NAME_MAX).contains(&key.len())
-                    && (0..=FIELD_VALUE_MAX).contains(&value.len())
-                    && let Some(ref lid) = self.lid
-                    && let master = self.blaster.master_of(&lid).await =>
+            ClientMessage::SetLobbyMeta {
+                key: FieldKey(key),
+                value: FieldValue(value),
+            } if let Some(ref lid) = self.lid
+                && let master = self.blaster.master_of(&lid).await
+                && master == self.pid =>
             {
-                if master == self.pid {
-                    self.blaster.set_lobby_meta(lid, &key, &value).await;
-                }
+                self.blaster.set_lobby_meta(lid, &key, &value).await;
             }
-            ClientMessage::EraseLobbyMeta { key }
-                if (1..=FIELD_NAME_MAX).contains(&key.len())
-                    && let Some(ref lid) = self.lid
-                    && let master = self.blaster.master_of(&lid).await =>
+            ClientMessage::EraseLobbyMeta { key: FieldKey(key) }
+                if let Some(ref lid) = self.lid
+                    && let master = self.blaster.master_of(&lid).await
+                    && master == self.pid =>
             {
-                if master == self.pid {
-                    self.blaster.erase_lobby_meta(lid, &key).await;
-                }
+                self.blaster.erase_lobby_meta(lid, &key).await;
             }
             ClientMessage::Kick { pid: kick_id }
                 if let Some(lid) = self.lid.clone()

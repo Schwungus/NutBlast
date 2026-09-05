@@ -12,7 +12,7 @@ where
     let gid = String::deserialize(deserializer)?;
 
     if gid.len() < 1 || gid.len() > GameId::MAX_LEN {
-        let msg = format!("must be within 1..={} bytes", GameId::MAX_LEN);
+        let msg = format!("game ID must be within 1..={} bytes", GameId::MAX_LEN);
         return Err(de::Error::custom(msg));
     }
 
