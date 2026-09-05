@@ -110,3 +110,32 @@ where
 
     Ok(meta.into_iter().map(|(k, v)| (k.0, v.0)).collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::*;
+
+    fn unwrap_key(key: &str) {
+        serde_json::from_value::<FieldKey>(Value::String(key.to_string())).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn field_name_lower_bound() {
+        unwrap_key("");
+    }
+
+    #[test]
+    #[should_panic]
+    fn field_name_upper_bound() {
+        unwrap_key(&"*".repeat(FIELD_NAME_MAX + 1));
+    }
+
+    #[test]
+    fn field_name_deserializes() {
+        unwrap_key("NutBlast.lobby.name");
+        unwrap_key("0");
+    }
+}
