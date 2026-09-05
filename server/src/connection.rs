@@ -19,7 +19,10 @@ use crate::{
     MAX_PLAYERS,
     blaster::{Blaster, Lobby},
     id::{BasicId, LobbyId},
-    protocol::{BoundedString, ClientMessage, FieldKey, FieldValue, Kick, ServerMessage},
+    protocol::{
+        aux::{BoundedString, FieldKey, FieldValue},
+        payloads::{ClientMessage, Kick, ServerMessage},
+    },
 };
 
 pub const MAX_PAYLOADS_PER_SEC: f32 = 30.0;

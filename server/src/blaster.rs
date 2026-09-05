@@ -11,7 +11,10 @@ use tokio::sync::oneshot;
 use crate::{
     MAX_PLAYERS,
     id::{BasicId, GameId, LobbyId},
-    protocol::{Kick, LobbyListing, Metadata, ServerMessage},
+    protocol::{
+        aux::Metadata,
+        payloads::{Kick, LobbyListing, ServerMessage},
+    },
 };
 
 const MAX_LOBBIES_IN_LIST: usize = 100;
