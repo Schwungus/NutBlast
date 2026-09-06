@@ -1,6 +1,7 @@
 name: Verify this builds across several OSes and compilers
 
 on:
+  workflow_dispatch:
   push:
     branches: [master]
     paths-ignore:
