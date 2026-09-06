@@ -262,6 +262,7 @@ impl BlasterImpl {
 
                     player.send(ServerMessage::Connected {
                         ice_servers: self.config.ice_servers.clone(),
+                        pid,
                     });
                 }
 
@@ -409,9 +410,6 @@ impl BlasterImpl {
             BlasterOperation::HasLobby { lid, tx } => {
                 let _ = tx.send(self.lobbies.contains_key(&lid));
             }
-            BlasterOperation::HasPlayer { pid, tx } => {
-                let _ = tx.send(self.players.contains_key(&pid));
-            }
             BlasterOperation::LobbyIsSwarm { lid, tx } => {
                 let _ = tx.send(self.lobbies.get(&lid).map(|x| x.swarm).unwrap_or(false));
             }
@@ -453,10 +451,6 @@ enum BlasterOperation {
     },
     HasLobby {
         lid: LobbyId,
-        tx: oneshot::Sender<bool>,
-    },
-    HasPlayer {
-        pid: BasicId,
         tx: oneshot::Sender<bool>,
     },
     LobbyFull {
@@ -631,12 +625,6 @@ impl Blaster {
             tx,
         });
 
-        rx.await.unwrap_or(false)
-    }
-
-    pub async fn has_player(&self, pid: BasicId) -> bool {
-        let (tx, rx) = oneshot::channel();
-        let _ = self.channel.send(BlasterOperation::HasPlayer { pid, tx });
         rx.await.unwrap_or(false)
     }
 

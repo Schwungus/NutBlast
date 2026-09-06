@@ -14,7 +14,6 @@ pub enum ClientMessage {
         limit: usize,
     },
     Host {
-        pid: BasicId,
         #[serde(flatten)]
         lid: LobbyId,
         capacity: usize,
@@ -23,13 +22,11 @@ pub enum ClientMessage {
         lobby_meta: Metadata,
     },
     Join {
-        pid: BasicId,
         #[serde(flatten)]
         lid: LobbyId,
         player_meta: Metadata,
     },
     Swarm {
-        pid: BasicId,
         gid: GameId,
         player_meta: Metadata,
         lobby_meta: Metadata,
@@ -80,6 +77,7 @@ pub enum ClientMessage {
 pub enum ServerMessage {
     Pong,
     Connected {
+        pid: BasicId,
         ice_servers: Vec<String>,
     },
     Disconnected {

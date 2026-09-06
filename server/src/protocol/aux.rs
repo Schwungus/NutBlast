@@ -49,6 +49,11 @@ where
         return Err(de::Error::custom(msg));
     }
 
+    if s.chars().any(char::is_control) {
+        let msg = format!("field name cannot contain control characters");
+        return Err(de::Error::custom(msg));
+    }
+
     Ok(s)
 }
 

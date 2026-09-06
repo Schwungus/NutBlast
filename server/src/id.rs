@@ -16,6 +16,13 @@ where
         return Err(de::Error::custom(msg));
     }
 
+    let bad = |c: char| !c.is_ascii_alphanumeric() && !['-', '_', '.', ' '].contains(&c);
+
+    if gid.chars().any(bad) {
+        let msg = format!("game ID must be alphanumeric");
+        return Err(de::Error::custom(msg));
+    }
+
     Ok(gid)
 }
 

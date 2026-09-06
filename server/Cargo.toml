@@ -10,6 +10,7 @@ fnv = "1.0.7"
 futures-util = "0.3.32"
 indexmap = "2.14.0"
 log = "0.4.32"
+rand = { version = "0.10.2", features = ["log"] }
 serde = { version = "1.0.228", features = ["alloc", "derive"] }
 serde_json = { version = "1.0.150", features = ["alloc"] }
 tokio = { version = "1.52.3", features = ["full"] }

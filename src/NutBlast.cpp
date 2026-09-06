@@ -499,9 +499,6 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
     ::gid = opts.game_id;
     ::log(NB_LogInfo, "Playing \"{}\"", ::gid);
 
-    ::pid = generate_id();
-    ::log(NB_LogInfo, "You are ID={}", ::pid);
-
     ::max_chan = opts.max_channels ? opts.max_channels : 1;
 }
 
@@ -573,10 +570,10 @@ freak_metadata(const char* type_title, const char* type_lower, Metadata& meta, c
 }
 
 extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name) {
-    if (!pid || !name)
+    if (!name)
         return nullptr;
 
-    if (pid == NutBlast_GetPlayerID())
+    if (pid == NutBlast_GetPlayerID()) // could be 0 btw
         return ::player_meta.contains(name) ? ::player_meta.at(name).c_str() : nullptr;
 
     if (!NutBlast_IsOnline())
@@ -624,7 +621,7 @@ extern "C" void NutBlast_PurgeMetadata() {
 
 static void join_pro() {
     std::lock_guard<std::mutex> lock(::globals_mutex);
-    ::last_error = std::nullopt;
+    ::last_error = std::nullopt, ::pid = 0;
 
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
@@ -661,7 +658,6 @@ static void join_pro() {
             ::ws_send({
                 {"type", "Swarm"},
                 {"gid", ::gid},
-                {"pid", NutBlast_GetPlayerID()},
                 {"player_meta", ::player_meta},
                 {"lobby_meta", ::lobby_meta},
             });
@@ -669,7 +665,6 @@ static void join_pro() {
             ::ws_send({
                 {"type", "Host"},
                 {"gid", ::gid},
-                {"pid", NutBlast_GetPlayerID()},
                 {"lid", ::lid},
                 {"capacity", ::max_players},
                 {"listed", ::hosting_a_listed_lobby},
@@ -680,7 +675,6 @@ static void join_pro() {
             ::ws_send({
                 {"type", "Join"},
                 {"gid", ::gid},
-                {"pid", NutBlast_GetPlayerID()},
                 {"lid", ::lid},
                 {"player_meta", ::player_meta},
             });
@@ -734,7 +728,7 @@ extern "C" void NutBlast_Disconnect() {
     ::on_disconnected(::disconnection_reason); // TODO: maybe NOT fire this in the lobby-listing mode?
     ::disconnection_reason = ByeReason();
 
-    ::last_error = std::nullopt;
+    ::pid = 0, ::last_error = std::nullopt;
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
@@ -802,7 +796,8 @@ extern "C" const NutBlast_ID* NutBlast_ListPlayers() {
     static NutBlast_ID buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
     size_t i = 0;
 
-    buf[i++] = NutBlast_GetPlayerID();
+    if (NutBlast_GetPlayerID())
+        buf[i++] = NutBlast_GetPlayerID();
 
     for (const auto& [id, player] : players)
         buf[i++] = id;
@@ -813,12 +808,7 @@ extern "C" const NutBlast_ID* NutBlast_ListPlayers() {
 }
 
 extern "C" NutBlast_ID NutBlast_GetPlayerID() {
-    if (::init) {
-        return ::pid;
-    } else {
-        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
-        return 0;
-    }
+    return ::permission_to_cook ? ::pid : 0;
 }
 
 extern "C" NutBlast_ID NutBlast_GetLobbyID() {
@@ -906,6 +896,9 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
     {"Connected",
         [](const auto& obj) {
             ::rtc_config.iceServers.clear();
+
+            ::pid = obj["pid"];
+            ::log(NB_LogInfo, "You are ID={}", ::pid);
 
             ::log(NB_LogInfo, "ICE servers from NutBlaster:");
 
@@ -1138,7 +1131,7 @@ extern "C" void NutBlast_Update() {
 }
 
 extern "C" void NutBlast_Kick(NutBlast_ID guy) {
-    if (guy != NutBlast_GetPlayerID()) {
+    if (guy != 0 && guy != NutBlast_GetPlayerID()) {
         ::ws_send({
             {"type", "Kick"},
             {"pid", guy},

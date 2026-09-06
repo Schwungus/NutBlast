@@ -150,7 +150,6 @@ impl Connection {
                 return Ok(Loop::Stop);
             }
             ClientMessage::Host {
-                pid,
                 lid,
                 capacity,
                 listed,
@@ -158,9 +157,10 @@ impl Connection {
                 lobby_meta,
             } if (1..=MAX_PLAYERS).contains(&capacity)
                 && self.pid.is_none()
-                && self.lid.is_none()
-                && !self.blaster.has_player(pid).await =>
+                && self.lid.is_none() =>
             {
+                let pid = rand::random();
+
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
@@ -174,14 +174,11 @@ impl Connection {
                 self.blaster.insert_lobby(&lid, lober).await;
                 self.blaster.introduce_player(pid, &lid, player_meta).await;
             }
-            ClientMessage::Join {
-                pid,
-                lid,
-                player_meta,
-            } if self.pid.is_none()
-                && self.lid.is_none()
-                && !self.blaster.has_player(pid).await =>
+            ClientMessage::Join { lid, player_meta }
+                if self.pid.is_none() && self.lid.is_none() =>
             {
+                let pid = rand::random();
+
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
@@ -197,14 +194,11 @@ impl Connection {
                 self.blaster.introduce_player(pid, &lid, player_meta).await;
             }
             ClientMessage::Swarm {
-                pid,
                 gid,
                 player_meta,
                 lobby_meta,
-            } if self.pid.is_none()
-                && self.lid.is_none()
-                && !self.blaster.has_player(pid).await =>
-            {
+            } if self.pid.is_none() && self.lid.is_none() => {
+                let pid = rand::random();
                 self.pid = Some(pid);
 
                 let mut lid = {
