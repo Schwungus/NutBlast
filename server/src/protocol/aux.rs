@@ -5,32 +5,6 @@ use serde::{Deserialize, Serialize, de};
 pub const FIELD_NAME_MAX: usize = 255;
 pub const FIELD_VALUE_MAX: usize = 8191;
 
-pub const STRING_MAX_MAX_LEN: usize = 1024;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BoundedString(#[serde(deserialize_with = "deserialize_bounded_string")] pub String);
-
-fn deserialize_bounded_string<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: de::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-
-    if s.len() > STRING_MAX_MAX_LEN {
-        return Err(de::Error::custom(format!(
-            "String exceeds max length of {STRING_MAX_MAX_LEN} bytes"
-        )));
-    }
-
-    Ok(s)
-}
-
-impl ToString for BoundedString {
-    fn to_string(&self) -> String {
-        self.0.to_string()
-    }
-}
-
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct FieldKey(#[serde(deserialize_with = "deserialize_field_name")] pub String);
 

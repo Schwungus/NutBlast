@@ -20,7 +20,7 @@ use crate::{
     blaster::{Blaster, Lobby},
     id::{BasicId, LobbyId},
     protocol::{
-        aux::{BoundedString, FieldKey, FieldValue},
+        aux::{FieldKey, FieldValue},
         payloads::{ClientMessage, Kick, ServerMessage},
     },
 };
@@ -42,6 +42,8 @@ pub struct Connection {
 }
 
 impl Connection {
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
+
     pub fn new(
         blaster: Blaster,
         addr: SocketAddr,
@@ -82,7 +84,13 @@ impl Connection {
 
         self.flush().await;
 
-        result
+        if let Some(pid) = self.pid
+            && let Some(kick) = self.blaster.is_kicked(&pid).await
+        {
+            Err(kick)
+        } else {
+            result
+        }
     }
 
     async fn handle_websock_msg(
@@ -138,7 +146,7 @@ impl Connection {
         match msg {
             ClientMessage::Ping => {
                 if let Some(ref pid) = self.pid {
-                    self.blaster.send_to(pid, ServerMessage::Pong).await;
+                    self.blaster.relay(*pid, *pid, ServerMessage::Pong).await;
                 }
             }
             ClientMessage::List { gid, limit } => {
@@ -237,8 +245,8 @@ impl Connection {
             }
             ClientMessage::PassCandidate {
                 ref to,
-                candidate: BoundedString(candidate),
-                mid: BoundedString(mid),
+                candidate,
+                mid,
             } if let Some(from) = self.pid => {
                 let msg = ServerMessage::Candidate {
                     from,
@@ -246,21 +254,15 @@ impl Connection {
                     mid,
                 };
 
-                self.blaster.send_to(to, msg).await;
+                self.blaster.relay(from, *to, msg).await;
             }
-            ClientMessage::PassOffer {
-                ref to,
-                sdp: BoundedString(sdp),
-            } if let Some(from) = self.pid => {
+            ClientMessage::PassOffer { ref to, sdp } if let Some(from) = self.pid => {
                 let msg = ServerMessage::Offer { from, sdp };
-                self.blaster.send_to(to, msg).await;
+                self.blaster.relay(from, *to, msg).await;
             }
-            ClientMessage::PassAnswer {
-                ref to,
-                sdp: BoundedString(sdp),
-            } if let Some(from) = self.pid => {
+            ClientMessage::PassAnswer { ref to, sdp } if let Some(from) = self.pid => {
                 let msg = ServerMessage::Answer { from, sdp };
-                self.blaster.send_to(to, msg).await;
+                self.blaster.relay(from, *to, msg).await;
             }
             ClientMessage::SetListed { listed }
                 if let Some(pid) = self.pid
@@ -369,6 +371,8 @@ impl Connection {
     }
 
     pub async fn mainloop(mut self) {
+        let created_at = Instant::now();
+
         loop {
             match self.handle_next_websock_msg().await {
                 Ok(Loop::Continue) => {}
@@ -384,6 +388,11 @@ impl Connection {
 
                     break;
                 }
+            }
+
+            if self.pid.is_none() && Instant::now().duration_since(created_at) > Self::IDLE_TIMEOUT
+            {
+                break;
             }
         }
 

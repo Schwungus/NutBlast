@@ -6,6 +6,7 @@ use std::{fs::File, io::BufReader};
 use color_eyre::eyre::{self, eyre};
 use futures_util::StreamExt as _;
 use tokio::net::TcpListener;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::{
     blaster::{Blaster, Config},
@@ -43,19 +44,25 @@ async fn main() -> eyre::Result<()> {
     while let Ok((stream, addr)) = listener.accept().await {
         let blaster = blaster.clone();
 
+        let max = 32 * 1024;
+        let config = WebSocketConfig::default()
+            .max_frame_size(Some(max))
+            .max_message_size(Some(max));
+
         tokio::spawn(async move {
             info!("conn: {}", addr);
 
-            let (sender, receiver) = match tokio_tungstenite::accept_async(stream).await {
-                Ok(ws) => {
-                    info!("hi {}", addr);
-                    ws.split()
-                }
-                Err(e) => {
-                    error!("{}: {}", addr, e);
-                    return;
-                }
-            };
+            let (sender, receiver) =
+                match tokio_tungstenite::accept_async_with_config(stream, Some(config)).await {
+                    Ok(ws) => {
+                        info!("hi {}", addr);
+                        ws.split()
+                    }
+                    Err(e) => {
+                        error!("{}: {}", addr, e);
+                        return;
+                    }
+                };
 
             let conn = Connection::new(blaster, addr, sender, receiver);
             conn.mainloop().await;

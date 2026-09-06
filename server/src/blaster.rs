@@ -54,6 +54,7 @@ pub struct Player {
     lid: LobbyId,
     meta: Metadata,
     queue: Vec<ServerMessage>,
+    kick_me_now: Option<Kick>,
 }
 
 impl Player {
@@ -90,7 +91,9 @@ impl BlasterImpl {
         let empty = self.players_in(lid) == 0;
         let lobby = self.lobbies.get(lid)?.clone();
 
-        if self.players.contains_key(&lobby.master) {
+        if let Some(guy) = self.players.get(&lobby.master)
+            && guy.lid == *lid
+        {
             Some(lobby.master)
         } else if empty {
             None
@@ -224,6 +227,7 @@ impl BlasterImpl {
                         lid: lid.clone(),
                         meta: player_meta.clone(),
                         queue: Vec::new(),
+                        kick_me_now: None,
                     },
                 );
 
@@ -276,14 +280,10 @@ impl BlasterImpl {
                 }
             }
             BlasterOperation::KickPlayer { lid, pid: kick_id } => {
-                if let Some(guy) = self.players.get(&kick_id)
+                if let Some(guy) = self.players.get_mut(&kick_id)
                     && guy.lid == lid
                 {
-                    let msg = ServerMessage::Disconnected {
-                        reason: Kick::natural("kick", "Kicked by lobby's master"),
-                    };
-
-                    self.send_to(&kick_id, msg);
+                    guy.kick_me_now = Some(Kick::natural("kick", "Kicked by lobby's master"));
                 }
             }
             BlasterOperation::RemovePlayer { pid, reason } => {
@@ -401,8 +401,14 @@ impl BlasterImpl {
             BlasterOperation::LobbyFull { lid, tx } => {
                 let _ = tx.send(self.lobby_full(&lid));
             }
-            BlasterOperation::SendTo { pid, msg } => {
-                self.send_to(&pid, msg);
+            BlasterOperation::Relay { from, to, msg } => {
+                if let Some(p_from) = self.players.get(&from)
+                    && let Some(p_to) = self.players.get(&to)
+                {
+                    if p_from.lid == p_to.lid {
+                        self.send_to(&to, msg);
+                    }
+                }
             }
             BlasterOperation::InsertLobby { lid, lobby } => {
                 self.lobbies.insert(lid, lobby);
@@ -412,6 +418,9 @@ impl BlasterImpl {
             }
             BlasterOperation::LobbyIsSwarm { lid, tx } => {
                 let _ = tx.send(self.lobbies.get(&lid).map(|x| x.swarm).unwrap_or(false));
+            }
+            BlasterOperation::IsKicked { pid, tx } => {
+                let _ = tx.send(self.players.get(&pid).and_then(|x| x.kick_me_now.clone()));
             }
         }
     }
@@ -466,8 +475,9 @@ enum BlasterOperation {
         lid: LobbyId,
         player_meta: Metadata,
     },
-    SendTo {
-        pid: BasicId,
+    Relay {
+        from: BasicId,
+        to: BasicId,
         msg: ServerMessage,
     },
     SetLobbyMaster {
@@ -499,6 +509,10 @@ enum BlasterOperation {
         pid: BasicId,
         tx: oneshot::Sender<Vec<ServerMessage>>,
     },
+    IsKicked {
+        pid: BasicId,
+        tx: oneshot::Sender<Option<Kick>>,
+    },
 }
 
 #[derive(Clone)]
@@ -523,6 +537,16 @@ impl Blaster {
         });
 
         Self { channel: tx }
+    }
+
+    pub async fn is_kicked(&self, pid: &BasicId) -> Option<Kick> {
+        let (tx, rx) = oneshot::channel();
+
+        let _ = self
+            .channel
+            .send(BlasterOperation::IsKicked { pid: *pid, tx });
+
+        rx.await.ok().and_then(|x| x)
     }
 
     pub async fn set_player_meta(&self, pid: BasicId, key: &str, value: &str) {
@@ -628,8 +652,8 @@ impl Blaster {
         rx.await.unwrap_or(false)
     }
 
-    pub async fn send_to(&self, pid: &BasicId, msg: ServerMessage) {
-        let msg = BlasterOperation::SendTo { pid: *pid, msg };
+    pub async fn relay(&self, from: BasicId, to: BasicId, msg: ServerMessage) {
+        let msg = BlasterOperation::Relay { from, to, msg };
         let _ = self.channel.send(msg);
     }
 

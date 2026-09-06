@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     id::{BasicId, GameId, LobbyId},
-    protocol::aux::{BoundedString, FieldKey, FieldValue, Metadata},
+    protocol::aux::{FieldKey, FieldValue, Metadata},
 };
 
 #[derive(Debug, Deserialize)]
@@ -53,16 +53,16 @@ pub enum ClientMessage {
     },
     PassCandidate {
         to: BasicId,
-        candidate: BoundedString,
-        mid: BoundedString,
+        candidate: String,
+        mid: String,
     },
     PassOffer {
         to: BasicId,
-        sdp: BoundedString,
+        sdp: String,
     },
     PassAnswer {
         to: BasicId,
-        sdp: BoundedString,
+        sdp: String,
     },
     Kick {
         pid: BasicId,
