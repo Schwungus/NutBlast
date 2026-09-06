@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     id::{BasicId, GameId, LobbyId},
-    protocol::aux::{FieldKey, FieldValue, Metadata},
+    protocol::utils::{FieldKey, FieldValue, Metadata},
 };
 
 #[derive(Debug, Deserialize)]

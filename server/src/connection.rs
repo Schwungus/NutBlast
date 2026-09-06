@@ -20,8 +20,8 @@ use crate::{
     blaster::{Blaster, Lobby},
     id::{BasicId, LobbyId},
     protocol::{
-        aux::{FieldKey, FieldValue},
         payloads::{ClientMessage, Kick, ServerMessage},
+        utils::{FieldKey, FieldValue},
     },
 };
 

@@ -12,8 +12,8 @@ use crate::{
     MAX_PLAYERS,
     id::{BasicId, GameId, LobbyId},
     protocol::{
-        aux::Metadata,
         payloads::{Kick, LobbyListing, ServerMessage},
+        utils::Metadata,
     },
 };
 
