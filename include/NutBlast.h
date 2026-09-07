@@ -232,6 +232,9 @@ void NutBlast_Update();
 /// tick for the next `NutBlast_Update()` call to flush those packets.
 void NutBlast_Flush();
 
+/// Sets the NutBlaster game ID in case it's changed after the call to `NutBlast_Init`.
+void NutBlast_SetGameID(const char*);
+
 /// Sets the NutBlaster server address. Pass a null pointer to use the default public instance.
 void NutBlast_SetNutBlasterAddress(const char*);
 

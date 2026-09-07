@@ -502,6 +502,13 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
     ::max_chan = opts.max_channels ? opts.max_channels : 1;
 }
 
+extern "C" void NutBlast_SetGameID(const char* gid) {
+    if (gid)
+        ::gid = gid;
+    else
+        ::log(NB_LogError, "game ID cannot be null");
+}
+
 extern "C" void NutBlast_SetNutBlasterAddress(const char* address) {
     ::nutblaster_address = address ? address : NUTBLAST_DEFAULT_SERVER;
 }
