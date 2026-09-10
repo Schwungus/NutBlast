@@ -89,16 +89,25 @@ impl BlasterEventLoop {
 
     pub fn recv(&mut self, msg: BlasterOperation) {
         match msg {
-            BlasterOperation::SetLobbyCapacity { lid, capacity } => {
-                if let Some(lobby) = self.lobbies.get_mut(&lid) {
+            BlasterOperation::SetCapacity {
+                initiator,
+                capacity,
+            } => {
+                if let Some(Player { lid, .. }) = self.players.get(&initiator).cloned()
+                    && self.master_of(&lid) == Some(initiator)
+                    && let Some(lobby) = self.lobbies.get_mut(&lid)
+                {
                     lobby.capacity = capacity;
 
                     let msg = ServerMessage::SetCapacity { capacity };
                     self.send_to_lobby(&lid, &msg);
                 }
             }
-            BlasterOperation::SetLobbyListed { lid, listed } => {
-                if let Some(lobby) = self.lobbies.get_mut(&lid) {
+            BlasterOperation::SetListed { initiator, listed } => {
+                if let Some(Player { lid, .. }) = self.players.get(&initiator).cloned()
+                    && self.master_of(&lid) == Some(initiator)
+                    && let Some(lobby) = self.lobbies.get_mut(&lid)
+                {
                     lobby.listed = listed;
 
                     let msg = ServerMessage::SetListed { listed };
@@ -136,7 +145,19 @@ impl BlasterEventLoop {
                 let msg = ServerMessage::ErasePlayerMeta { pid, key };
                 self.send_to_lobby(&lid, &msg);
             }
-            BlasterOperation::SetLobbyMeta { lid, key, value } => {
+            BlasterOperation::SetLobbyMeta {
+                initiator,
+                key,
+                value,
+            } => {
+                let Some(Player { lid, .. }) = self.players.get(&initiator).cloned() else {
+                    return;
+                };
+
+                if self.master_of(&lid) != Some(initiator) {
+                    return;
+                }
+
                 let Some(lober) = self.lobbies.get_mut(&lid) else {
                     return;
                 };
@@ -152,7 +173,15 @@ impl BlasterEventLoop {
                     self.send_to_lobby(&lid, &msg);
                 }
             }
-            BlasterOperation::EraseLobbyMeta { lid, key } => {
+            BlasterOperation::EraseLobbyMeta { initiator, key } => {
+                let Some(Player { lid, .. }) = self.players.get(&initiator).cloned() else {
+                    return;
+                };
+
+                if self.master_of(&lid) != Some(initiator) {
+                    return;
+                }
+
                 let Some(lober) = self.lobbies.get_mut(&lid) else {
                     return;
                 };
@@ -250,8 +279,16 @@ impl BlasterEventLoop {
 
                 let _ = tx.send(Ok(()));
             }
-            BlasterOperation::KickPlayer { lid, pid: kick_id } => {
-                if let Some(guy) = self.players.get_mut(&kick_id)
+            BlasterOperation::KickPlayer {
+                initiator,
+                pid: kick_id,
+            } => {
+                let Some(Player { lid, .. }) = self.players.get(&initiator).cloned() else {
+                    return;
+                };
+
+                if self.master_of(&lid) == Some(initiator)
+                    && let Some(guy) = self.players.get_mut(&kick_id)
                     && guy.lid == lid
                 {
                     guy.kick_me_now = Some(Kick::natural("kick", "Kicked by lobby's master"));
@@ -270,23 +307,18 @@ impl BlasterEventLoop {
                     self.send_to_lobby(&lid, &msg);
                 }
             }
-            BlasterOperation::SetLobbyMaster {
-                initiator_pid,
-                new_master_pid,
+            BlasterOperation::SetMaster {
+                initiator,
+                new_master,
             } => {
-                let Some(lid) = self.players.get(&new_master_pid).map(|x| x.lid.clone()) else {
+                let Some(lid) = self.players.get(&new_master).map(|x| x.lid.clone()) else {
                     return;
                 };
 
-                if Some(initiator_pid) == self.master_of(&lid) && new_master_pid != initiator_pid {
-                    self.lobbies
-                        .get_mut(&lid)
-                        .map(|l| l.master = new_master_pid);
+                if Some(initiator) == self.master_of(&lid) && new_master != initiator {
+                    self.lobbies.get_mut(&lid).map(|l| l.master = new_master);
 
-                    let msg = ServerMessage::SetMaster {
-                        pid: new_master_pid,
-                    };
-
+                    let msg = ServerMessage::SetMaster { pid: new_master };
                     self.send_to_lobby(&lid, &msg);
                 }
             }
@@ -365,9 +397,6 @@ impl BlasterEventLoop {
                     }
                 });
             }
-            BlasterOperation::MasterOf { lid, tx } => {
-                let _ = tx.send(self.master_of(&lid));
-            }
             BlasterOperation::Relay { from, to, msg } => {
                 if let Some(p_from) = self.players.get(&from)
                     && let Some(p_to) = self.players.get(&to)
@@ -445,13 +474,17 @@ impl BlasterEventLoop {
 
 pub enum BlasterOperation {
     CleanupLobbies,
-    SetLobbyCapacity {
-        lid: LobbyId,
+    SetCapacity {
+        initiator: BasicId,
         capacity: usize,
     },
-    SetLobbyListed {
-        lid: LobbyId,
+    SetListed {
+        initiator: BasicId,
         listed: bool,
+    },
+    SetMaster {
+        initiator: BasicId,
+        new_master: BasicId,
     },
     SetPlayerMeta {
         pid: BasicId,
@@ -463,17 +496,13 @@ pub enum BlasterOperation {
         key: String,
     },
     SetLobbyMeta {
-        lid: LobbyId,
+        initiator: BasicId,
         key: String,
         value: String,
     },
     EraseLobbyMeta {
-        lid: LobbyId,
+        initiator: BasicId,
         key: String,
-    },
-    MasterOf {
-        lid: LobbyId,
-        tx: oneshot::Sender<Option<BasicId>>,
     },
     IntroducePlayer {
         pid: BasicId,
@@ -485,10 +514,6 @@ pub enum BlasterOperation {
         from: BasicId,
         to: BasicId,
         msg: ServerMessage,
-    },
-    SetLobbyMaster {
-        initiator_pid: BasicId,
-        new_master_pid: BasicId,
     },
     ListLobbies {
         gid: GameId,
@@ -504,7 +529,7 @@ pub enum BlasterOperation {
         tx: oneshot::Sender<Result<(), Kick>>,
     },
     KickPlayer {
-        lid: LobbyId,
+        initiator: BasicId,
         pid: BasicId,
     },
     RemovePlayer {

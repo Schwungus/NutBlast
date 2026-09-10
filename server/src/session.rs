@@ -206,20 +206,16 @@ impl Session {
             }
             ClientMessage::SetListed { listed }
                 if let Some(pid) = self.pid
-                    && let Some(ref lid) = self.lid =>
+                    && self.lid.is_some() =>
             {
-                if self.blaster.master_of(lid).await == Some(pid) {
-                    self.blaster.set_lobby_listed(lid, listed).await;
-                }
+                self.blaster.set_lobby_listed(pid, listed).await;
             }
             ClientMessage::SetCapacity { capacity }
                 if (1..=MAX_PLAYERS).contains(&capacity)
                     && let Some(pid) = self.pid
-                    && let Some(ref lid) = self.lid =>
+                    && self.lid.is_some() =>
             {
-                if self.blaster.master_of(lid).await == Some(pid) {
-                    self.blaster.set_lobby_capacity(lid, capacity).await;
-                }
+                self.blaster.set_lobby_capacity(pid, capacity).await;
             }
             ClientMessage::SetPlayerMeta {
                 key: FieldKey(key),
@@ -238,27 +234,22 @@ impl Session {
             ClientMessage::SetLobbyMeta {
                 key: FieldKey(key),
                 value: FieldValue(value),
-            } if let Some(ref lid) = self.lid
-                && let master = self.blaster.master_of(&lid).await
-                && master == self.pid =>
+            } if let Some(pid) = self.pid
+                && self.lid.is_some() =>
             {
-                self.blaster.set_lobby_meta(lid, &key, &value).await;
+                self.blaster.set_lobby_meta(pid, &key, &value).await;
             }
             ClientMessage::EraseLobbyMeta { key: FieldKey(key) }
-                if let Some(ref lid) = self.lid
-                    && let master = self.blaster.master_of(&lid).await
-                    && master == self.pid =>
+                if let Some(pid) = self.pid
+                    && self.lid.is_some() =>
             {
-                self.blaster.erase_lobby_meta(lid, &key).await;
+                self.blaster.erase_lobby_meta(pid, &key).await;
             }
-            ClientMessage::Kick { pid: kick_id }
-                if let Some(lid) = self.lid.clone()
-                    && let Some(pid) = self.pid
-                    && let Some(mastah) = self.blaster.master_of(&lid).await =>
+            ClientMessage::Kick { pid: kickee }
+                if let Some(pid) = self.pid
+                    && self.lid.is_some() =>
             {
-                if pid == mastah && kick_id != pid {
-                    self.blaster.kick_player(&lid, kick_id).await;
-                }
+                self.blaster.kick_player(pid, kickee).await;
             }
             ClientMessage::SetMaster {
                 pid: new_master_pid,

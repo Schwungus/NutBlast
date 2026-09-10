@@ -112,40 +112,38 @@ impl Blaster {
         });
     }
 
-    pub async fn set_lobby_capacity(&self, lid: &LobbyId, capacity: usize) {
-        let _ = self.channel.send(BlasterOperation::SetLobbyCapacity {
-            lid: lid.clone(),
+    pub async fn set_lobby_capacity(&self, initiator: BasicId, capacity: usize) {
+        let _ = self.channel.send(BlasterOperation::SetCapacity {
+            initiator,
             capacity,
         });
     }
 
-    pub async fn set_lobby_listed(&self, lid: &LobbyId, listed: bool) {
-        let _ = self.channel.send(BlasterOperation::SetLobbyListed {
-            lid: lid.clone(),
-            listed,
-        });
+    pub async fn set_lobby_listed(&self, initiator: BasicId, listed: bool) {
+        let _ = self
+            .channel
+            .send(BlasterOperation::SetListed { initiator, listed });
     }
 
-    pub async fn set_lobby_meta(&self, lid: &LobbyId, key: &str, value: &str) {
+    pub async fn set_lobby_meta(&self, initiator: BasicId, key: &str, value: &str) {
         let _ = self.channel.send(BlasterOperation::SetLobbyMeta {
-            lid: lid.clone(),
+            initiator,
             key: key.to_string(),
             value: value.to_string(),
         });
     }
 
-    pub async fn erase_lobby_meta(&self, lid: &LobbyId, key: &str) {
+    pub async fn erase_lobby_meta(&self, initiator: BasicId, key: &str) {
         let _ = self.channel.send(BlasterOperation::EraseLobbyMeta {
-            lid: lid.clone(),
+            initiator,
             key: key.to_string(),
         });
     }
 
-    pub async fn kick_player(&self, lid: &LobbyId, pid: BasicId) {
-        let _ = self.channel.send(BlasterOperation::KickPlayer {
-            lid: lid.clone(),
-            pid,
-        });
+    pub async fn kick_player(&self, initiator: BasicId, pid: BasicId) {
+        let _ = self
+            .channel
+            .send(BlasterOperation::KickPlayer { initiator, pid });
     }
 
     pub async fn introduce_player(
@@ -166,26 +164,15 @@ impl Blaster {
         rx.await.unwrap_or(Ok(()))
     }
 
-    pub async fn master_of(&self, lid: &LobbyId) -> Option<BasicId> {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::MasterOf {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(None)
-    }
-
     pub async fn relay(&self, from: BasicId, to: BasicId, msg: ServerMessage) {
         let msg = BlasterOperation::Relay { from, to, msg };
         let _ = self.channel.send(msg);
     }
 
-    pub async fn set_lobby_master(&self, initiator_pid: BasicId, new_master_pid: BasicId) {
-        let _ = self.channel.send(BlasterOperation::SetLobbyMaster {
-            initiator_pid,
-            new_master_pid,
+    pub async fn set_lobby_master(&self, initiator: BasicId, new_master: BasicId) {
+        let _ = self.channel.send(BlasterOperation::SetMaster {
+            initiator,
+            new_master,
         });
     }
 
