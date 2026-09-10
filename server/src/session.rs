@@ -7,7 +7,7 @@ use futures_util::{
     SinkExt as _, StreamExt as _,
     stream::{SplitSink, SplitStream},
 };
-use tokio::net::TcpStream;
+use tokio::{net::TcpStream, sync::oneshot};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Error as TungError, Message},
@@ -15,11 +15,11 @@ use tokio_tungstenite::{
 
 use crate::{
     MAX_PLAYERS,
-    blaster::Blaster,
+    blaster::{Blaster, BlasterOperation},
     id::{BasicId, LobbyId},
     protocol::{
         payloads::{ClientMessage, Kick, ServerMessage},
-        utils::{FieldKey, FieldValue},
+        utils::{FieldKey, FieldValue, Metadata},
     },
     tokens::TokenBucket,
 };
@@ -28,11 +28,10 @@ pub const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
 pub struct Session {
     blaster: Blaster,
-    addr: SocketAddr,
+    address: SocketAddr,
     receiver: SplitStream<WebSocketStream<TcpStream>>,
     sender: SplitSink<WebSocketStream<TcpStream>, Message>,
     pid: Option<BasicId>,
-    lid: Option<LobbyId>,
     bye_reason: Option<Kick>,
     ops: TokenBucket,
 }
@@ -45,20 +44,23 @@ impl Session {
 
     pub fn new(
         blaster: Blaster,
-        addr: SocketAddr,
+        address: SocketAddr,
         sender: SplitSink<WebSocketStream<TcpStream>, Message>,
         receiver: SplitStream<WebSocketStream<TcpStream>>,
     ) -> Self {
         Self {
             blaster,
-            addr,
+            address,
             sender,
             receiver,
             pid: None,
-            lid: None,
             bye_reason: None,
             ops: TokenBucket::new(Self::MAX_PAYLOADS_PER_SEC, Self::MAX_PAYLOADS_BURST),
         }
+    }
+
+    fn execute(&self, operation: BlasterOperation) {
+        self.blaster.execute(operation);
     }
 
     async fn handle_next_websocket_message(&mut self) -> Result<Loop, Kick> {
@@ -72,8 +74,10 @@ impl Session {
         };
 
         // #27. single-player lobby timeouts
-        if let Some(ref lid) = self.lid {
-            self.blaster.advance_lobby_timer(lid).await?;
+        if let Some(pid) = self.pid {
+            let (tx, rx) = oneshot::channel();
+            let _ = self.execute(BlasterOperation::AdvanceLobbyTimer { pid, tx });
+            rx.await.unwrap_or(Ok(()))?;
         }
 
         self.flush().await;
@@ -92,7 +96,7 @@ impl Session {
         msg: Option<Result<Message, TungError>>,
     ) -> Result<Loop, Kick> {
         if !self.ops.try_take() {
-            warn!("CALM DOWN, {}", self.addr);
+            warn!("CALM DOWN, {}", self.address);
             return Err(Kick::violation("rate_limited", "Too many payloads"));
         }
 
@@ -102,7 +106,7 @@ impl Session {
             }
             Some(Err(e)) => {
                 if !matches!(e, TungError::ConnectionClosed) {
-                    error!("{}: {}", self.addr, e);
+                    error!("{}: {}", self.address, e);
                 }
 
                 return Ok(Loop::Stop);
@@ -129,7 +133,7 @@ impl Session {
         let msg = match serde_json::from_str(&json) {
             Ok(ok) => ok,
             Err(err) => {
-                error!("parse msg from {}: {}", self.addr, err);
+                error!("parse msg from {}: {}", self.address, err);
                 return Err(Kick::violation("bad_json", "JSON parse error"));
             }
         };
@@ -137,14 +141,20 @@ impl Session {
         match msg {
             ClientMessage::Ping => {
                 if let Some(ref pid) = self.pid {
-                    self.blaster.relay(*pid, *pid, ServerMessage::Pong).await;
+                    self.relay(*pid, *pid, ServerMessage::Pong).await;
                 }
             }
             ClientMessage::List { gid, limit } => {
-                self.send(&ServerMessage::List {
-                    list: self.blaster.list_lobbies(&gid, limit).await,
-                })
-                .await;
+                let (tx, rx) = oneshot::channel();
+
+                self.execute(BlasterOperation::ListLobbies {
+                    gid: gid.clone(),
+                    limit,
+                    tx,
+                });
+
+                let list = rx.await.unwrap_or_default();
+                self.send(&ServerMessage::List { list }).await;
 
                 return Ok(Loop::Stop);
             }
@@ -156,32 +166,33 @@ impl Session {
                 lobby_meta,
             } if (1..=MAX_PLAYERS).contains(&capacity) && self.init_session().await => {
                 let pid = rand::random();
+                self.pid = Some(pid);
+
                 let lid = LobbyId {
                     gid,
                     lid: rand::random(),
                 };
 
-                self.pid = Some(pid);
-                self.lid = Some(lid.clone());
+                let (tx, rx) = oneshot::channel();
 
-                self.blaster
-                    .create_lobby(&lid, pid, lobby_meta, capacity, listed)
-                    .await?;
+                let _ = self.execute(BlasterOperation::InsertLobby {
+                    lid: lid.clone(),
+                    master: pid,
+                    meta: lobby_meta,
+                    capacity,
+                    listed,
+                    tx,
+                });
+
+                let _ = rx.await.unwrap_or(Ok(()))?;
                 info!("new lobby max={capacity} {lid:?}");
 
-                self.blaster
-                    .introduce_player(pid, &lid, player_meta)
-                    .await?;
+                self.introduce_player(pid, &lid, player_meta).await?;
             }
             ClientMessage::Join { lid, player_meta } if self.init_session().await => {
                 let pid = rand::random();
-
                 self.pid = Some(pid);
-                self.lid = Some(lid.clone());
-
-                self.blaster
-                    .introduce_player(pid, &lid, player_meta)
-                    .await?;
+                self.introduce_player(pid, &lid, player_meta).await?;
             }
             ClientMessage::PassCandidate {
                 ref to,
@@ -194,69 +205,74 @@ impl Session {
                     mid,
                 };
 
-                self.blaster.relay(from, *to, msg).await;
+                self.relay(from, *to, msg).await;
             }
             ClientMessage::PassOffer { ref to, sdp } if let Some(from) = self.pid => {
                 let msg = ServerMessage::Offer { from, sdp };
-                self.blaster.relay(from, *to, msg).await;
+                self.relay(from, *to, msg).await;
             }
             ClientMessage::PassAnswer { ref to, sdp } if let Some(from) = self.pid => {
                 let msg = ServerMessage::Answer { from, sdp };
-                self.blaster.relay(from, *to, msg).await;
+                self.relay(from, *to, msg).await;
             }
-            ClientMessage::SetListed { listed }
-                if let Some(pid) = self.pid
-                    && self.lid.is_some() =>
-            {
-                self.blaster.set_lobby_listed(pid, listed).await;
+            ClientMessage::SetListed { listed } if let Some(pid) = self.pid => {
+                self.execute(BlasterOperation::SetListed {
+                    initiator: pid,
+                    listed,
+                });
             }
             ClientMessage::SetCapacity { capacity }
                 if (1..=MAX_PLAYERS).contains(&capacity)
-                    && let Some(pid) = self.pid
-                    && self.lid.is_some() =>
+                    && let Some(pid) = self.pid =>
             {
-                self.blaster.set_lobby_capacity(pid, capacity).await;
+                self.execute(BlasterOperation::SetCapacity {
+                    initiator: pid,
+                    capacity,
+                });
             }
             ClientMessage::SetPlayerMeta {
                 key: FieldKey(key),
                 value: FieldValue(value),
-            } if self.lid.is_some()
-                && let Some(pid) = self.pid =>
-            {
-                self.blaster.set_player_meta(pid, &key, &value).await;
+            } if let Some(pid) = self.pid => {
+                self.execute(BlasterOperation::SetPlayerMeta {
+                    pid,
+                    key: key.to_string(),
+                    value: value.to_string(),
+                });
             }
-            ClientMessage::ErasePlayerMeta { key: FieldKey(key) }
-                if self.lid.is_some()
-                    && let Some(pid) = self.pid =>
-            {
-                self.blaster.erase_player_meta(pid, &key).await;
+            ClientMessage::ErasePlayerMeta { key: FieldKey(key) } if let Some(pid) = self.pid => {
+                self.execute(BlasterOperation::ErasePlayerMeta {
+                    pid,
+                    key: key.to_string(),
+                });
             }
             ClientMessage::SetLobbyMeta {
                 key: FieldKey(key),
                 value: FieldValue(value),
-            } if let Some(pid) = self.pid
-                && self.lid.is_some() =>
-            {
-                self.blaster.set_lobby_meta(pid, &key, &value).await;
+            } if let Some(pid) = self.pid => {
+                self.execute(BlasterOperation::SetLobbyMeta {
+                    initiator: pid,
+                    key: key.to_string(),
+                    value: value.to_string(),
+                });
             }
-            ClientMessage::EraseLobbyMeta { key: FieldKey(key) }
-                if let Some(pid) = self.pid
-                    && self.lid.is_some() =>
-            {
-                self.blaster.erase_lobby_meta(pid, &key).await;
+            ClientMessage::EraseLobbyMeta { key: FieldKey(key) } if let Some(pid) = self.pid => {
+                self.execute(BlasterOperation::EraseLobbyMeta {
+                    initiator: pid,
+                    key: key.to_string(),
+                });
             }
-            ClientMessage::Kick { pid: kickee }
-                if let Some(pid) = self.pid
-                    && self.lid.is_some() =>
-            {
-                self.blaster.kick_player(pid, kickee).await;
+            ClientMessage::Kick { pid: kickee } if let Some(pid) = self.pid => {
+                self.execute(BlasterOperation::KickPlayer {
+                    initiator: pid,
+                    pid: kickee,
+                });
             }
-            ClientMessage::SetMaster {
-                pid: new_master_pid,
-            } if self.lid.is_some()
-                && let Some(pid) = self.pid =>
-            {
-                self.blaster.set_lobby_master(pid, new_master_pid).await;
+            ClientMessage::SetMaster { pid: new_master } if let Some(pid) = self.pid => {
+                self.execute(BlasterOperation::SetMaster {
+                    initiator: pid,
+                    new_master,
+                });
             }
             other => {
                 warn!("bad: {:?}", other);
@@ -267,12 +283,42 @@ impl Session {
         Ok(Loop::Continue)
     }
 
+    async fn relay(&self, from: BasicId, to: BasicId, msg: ServerMessage) {
+        let op = BlasterOperation::Relay { from, to, msg };
+        let _ = self.execute(op);
+    }
+
+    async fn introduce_player(
+        &self,
+        pid: BasicId,
+        lid: &LobbyId,
+        player_meta: Metadata,
+    ) -> Result<(), Kick> {
+        let (tx, rx) = oneshot::channel();
+
+        self.execute(BlasterOperation::IntroducePlayer {
+            pid,
+            lid: lid.clone(),
+            player_meta,
+            tx,
+        });
+
+        rx.await.unwrap_or(Ok(()))
+    }
+
     async fn init_session(&mut self) -> bool {
-        self.pid.is_none() && self.lid.is_none() && self.signal_peer_op().await
+        self.pid.is_none() && self.signal_peer_op().await
     }
 
     async fn signal_peer_op(&mut self) -> bool {
-        self.blaster.signal_peer_op(&self.addr).await
+        let (tx, rx) = oneshot::channel();
+
+        let _ = self.execute(BlasterOperation::SignalPeerOperation {
+            ip: self.address.ip(),
+            tx,
+        });
+
+        rx.await.unwrap_or(false)
     }
 
     async fn send(&mut self, value: &ServerMessage) {
@@ -283,13 +329,13 @@ impl Session {
         let s = match serde_json::to_string(value) {
             Ok(ok) => ok,
             Err(err) => {
-                error!("serialize {}: {}", self.addr, err);
+                error!("serialize {}: {}", self.address, err);
                 return;
             }
         };
 
         if let Err(err) = self.sender.send(Message::text(s)).await {
-            error!("send to {}: {}", self.addr, err);
+            error!("send to {}: {}", self.address, err);
         }
     }
 
@@ -298,9 +344,10 @@ impl Session {
             return;
         };
 
-        let queue = self.blaster.flush_player_queue(pid).await;
+        let (tx, rx) = oneshot::channel();
+        self.execute(BlasterOperation::FlushPlayerQueue { pid, tx });
 
-        for msg in queue {
+        for msg in rx.await.unwrap_or_default() {
             self.send(&msg).await;
 
             if let ServerMessage::Disconnected { .. } = msg {
@@ -318,7 +365,7 @@ impl Session {
                 Ok(Loop::Stop) => break,
                 Err(reason) => {
                     if let Kick::Violation { ref code, .. } = reason {
-                        warn!("boot to the face for {}: {}", self.addr, code);
+                        warn!("boot to the face for {}: {}", self.address, code);
                     }
 
                     let bye = ServerMessage::Disconnected { reason };
@@ -336,16 +383,19 @@ impl Session {
         }
 
         if let Some(pid) = self.pid {
-            self.blaster.remove_player(pid, self.bye_reason).await;
+            self.execute(BlasterOperation::RemovePlayer {
+                reason: self.bye_reason.clone(),
+                pid,
+            });
         }
 
-        info!("bye {}", self.addr);
+        info!("bye {}", self.address);
 
         if let Ok(mut ws) = self.receiver.reunite(self.sender) {
             let _ = ws.close(None).await;
         }
 
-        self.blaster.cleanup_lobbies().await;
+        self.blaster.execute(BlasterOperation::CleanupLobbies);
     }
 }
 

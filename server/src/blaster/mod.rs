@@ -1,10 +1,10 @@
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::mpsc,
     time::{Duration, Instant},
 };
 
-use eventloop::{BlasterEventLoop, BlasterOperation};
+use eventloop::BlasterEventLoop;
 use serde::Deserialize;
 use tokio::sync::oneshot;
 
@@ -87,6 +87,21 @@ impl Blaster {
         Self { channel: tx }
     }
 
+    pub fn execute(&self, operation: BlasterOperation) {
+        let _ = self.channel.send(operation);
+    }
+
+    pub async fn introduce_session(&self, addr: &SocketAddr) -> bool {
+        let (tx, rx) = oneshot::channel();
+        self.execute(BlasterOperation::IntroduceSession { ip: addr.ip(), tx });
+        rx.await.unwrap_or(false)
+    }
+
+    pub async fn close_session(&self, addr: &SocketAddr) {
+        let msg = BlasterOperation::CloseSession { ip: addr.ip() };
+        let _ = self.channel.send(msg);
+    }
+
     pub async fn is_kicked(&self, pid: &BasicId) -> Option<Kick> {
         let (tx, rx) = oneshot::channel();
 
@@ -96,169 +111,93 @@ impl Blaster {
 
         rx.await.ok().and_then(|x| x)
     }
+}
 
-    pub async fn set_player_meta(&self, pid: BasicId, key: &str, value: &str) {
-        let _ = self.channel.send(BlasterOperation::SetPlayerMeta {
-            pid,
-            key: key.to_string(),
-            value: value.to_string(),
-        });
-    }
-
-    pub async fn erase_player_meta(&self, pid: BasicId, key: &str) {
-        let _ = self.channel.send(BlasterOperation::ErasePlayerMeta {
-            pid,
-            key: key.to_string(),
-        });
-    }
-
-    pub async fn set_lobby_capacity(&self, initiator: BasicId, capacity: usize) {
-        let _ = self.channel.send(BlasterOperation::SetCapacity {
-            initiator,
-            capacity,
-        });
-    }
-
-    pub async fn set_lobby_listed(&self, initiator: BasicId, listed: bool) {
-        let _ = self
-            .channel
-            .send(BlasterOperation::SetListed { initiator, listed });
-    }
-
-    pub async fn set_lobby_meta(&self, initiator: BasicId, key: &str, value: &str) {
-        let _ = self.channel.send(BlasterOperation::SetLobbyMeta {
-            initiator,
-            key: key.to_string(),
-            value: value.to_string(),
-        });
-    }
-
-    pub async fn erase_lobby_meta(&self, initiator: BasicId, key: &str) {
-        let _ = self.channel.send(BlasterOperation::EraseLobbyMeta {
-            initiator,
-            key: key.to_string(),
-        });
-    }
-
-    pub async fn kick_player(&self, initiator: BasicId, pid: BasicId) {
-        let _ = self
-            .channel
-            .send(BlasterOperation::KickPlayer { initiator, pid });
-    }
-
-    pub async fn introduce_player(
-        &self,
+pub enum BlasterOperation {
+    CleanupLobbies,
+    SetCapacity {
+        initiator: BasicId,
+        capacity: usize,
+    },
+    SetListed {
+        initiator: BasicId,
+        listed: bool,
+    },
+    SetMaster {
+        initiator: BasicId,
+        new_master: BasicId,
+    },
+    SetPlayerMeta {
         pid: BasicId,
-        lid: &LobbyId,
+        key: String,
+        value: String,
+    },
+    ErasePlayerMeta {
+        pid: BasicId,
+        key: String,
+    },
+    SetLobbyMeta {
+        initiator: BasicId,
+        key: String,
+        value: String,
+    },
+    EraseLobbyMeta {
+        initiator: BasicId,
+        key: String,
+    },
+    IntroducePlayer {
+        pid: BasicId,
+        lid: LobbyId,
         player_meta: Metadata,
-    ) -> Result<(), Kick> {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::IntroducePlayer {
-            pid,
-            lid: lid.clone(),
-            player_meta,
-            tx,
-        });
-
-        rx.await.unwrap_or(Ok(()))
-    }
-
-    pub async fn relay(&self, from: BasicId, to: BasicId, msg: ServerMessage) {
-        let msg = BlasterOperation::Relay { from, to, msg };
-        let _ = self.channel.send(msg);
-    }
-
-    pub async fn set_lobby_master(&self, initiator: BasicId, new_master: BasicId) {
-        let _ = self.channel.send(BlasterOperation::SetMaster {
-            initiator,
-            new_master,
-        });
-    }
-
-    pub async fn list_lobbies(&self, gid: &GameId, limit: usize) -> Vec<LobbyListing> {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::ListLobbies {
-            gid: gid.clone(),
-            limit,
-            tx,
-        });
-
-        rx.await.unwrap_or_default()
-    }
-
-    pub async fn create_lobby(
-        &self,
-        lid: &LobbyId,
+        tx: oneshot::Sender<Result<(), Kick>>,
+    },
+    Relay {
+        from: BasicId,
+        to: BasicId,
+        msg: ServerMessage,
+    },
+    ListLobbies {
+        gid: GameId,
+        limit: usize,
+        tx: oneshot::Sender<Vec<LobbyListing>>,
+    },
+    InsertLobby {
+        lid: LobbyId,
         master: BasicId,
         meta: Metadata,
         capacity: usize,
         listed: bool,
-    ) -> Result<(), Kick> {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::InsertLobby {
-            lid: lid.clone(),
-            master,
-            meta,
-            capacity,
-            listed,
-            tx,
-        });
-
-        rx.await.unwrap_or(Ok(()))
-    }
-
-    pub async fn advance_lobby_timer(&self, lid: &LobbyId) -> Result<(), Kick> {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::AdvanceLobbyTimer {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(Ok(()))
-    }
-
-    pub async fn flush_player_queue(&self, pid: BasicId) -> Vec<ServerMessage> {
-        let (tx, rx) = oneshot::channel();
-
-        let msg = BlasterOperation::FlushPlayerQueue { pid, tx };
-        let _ = self.channel.send(msg);
-
-        rx.await.unwrap_or_default()
-    }
-
-    pub async fn remove_player(&self, pid: BasicId, reason: Option<Kick>) {
-        let msg = BlasterOperation::RemovePlayer { pid, reason };
-        let _ = self.channel.send(msg);
-    }
-
-    pub async fn cleanup_lobbies(&self) {
-        let _ = self.channel.send(BlasterOperation::CleanupLobbies);
-    }
-
-    pub async fn introduce_session(&self, addr: &SocketAddr) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let msg = BlasterOperation::IntroduceSession { ip: addr.ip(), tx };
-        let _ = self.channel.send(msg);
-
-        rx.await.unwrap_or(false)
-    }
-
-    pub async fn close_session(&self, addr: &SocketAddr) {
-        let msg = BlasterOperation::CloseSession { ip: addr.ip() };
-        let _ = self.channel.send(msg);
-    }
-
-    pub async fn signal_peer_op(&self, addr: &SocketAddr) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let msg = BlasterOperation::SignalPeerOperation { ip: addr.ip(), tx };
-        let _ = self.channel.send(msg);
-
-        rx.await.unwrap_or(false)
-    }
+        tx: oneshot::Sender<Result<(), Kick>>,
+    },
+    KickPlayer {
+        initiator: BasicId,
+        pid: BasicId,
+    },
+    RemovePlayer {
+        pid: BasicId,
+        reason: Option<Kick>,
+    },
+    AdvanceLobbyTimer {
+        pid: BasicId,
+        tx: oneshot::Sender<Result<(), Kick>>,
+    },
+    FlushPlayerQueue {
+        pid: BasicId,
+        tx: oneshot::Sender<Vec<ServerMessage>>,
+    },
+    IsKicked {
+        pid: BasicId,
+        tx: oneshot::Sender<Option<Kick>>,
+    },
+    IntroduceSession {
+        ip: IpAddr,
+        tx: oneshot::Sender<bool>,
+    },
+    CloseSession {
+        ip: IpAddr,
+    },
+    SignalPeerOperation {
+        ip: IpAddr,
+        tx: oneshot::Sender<bool>,
+    },
 }

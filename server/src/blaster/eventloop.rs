@@ -5,15 +5,13 @@ use std::{
 };
 
 use indexmap::IndexMap;
-use tokio::sync::oneshot;
 
 use crate::{
-    blaster::{CHUD_LOBBY_TIMEOUT, Config, Lobby, MAX_LOBBIES_IN_LIST, Peer, Player},
-    id::{BasicId, GameId, LobbyId},
-    protocol::{
-        payloads::{Kick, LobbyListing, ServerMessage},
-        utils::Metadata,
+    blaster::{
+        BlasterOperation, CHUD_LOBBY_TIMEOUT, Config, Lobby, MAX_LOBBIES_IN_LIST, Peer, Player,
     },
+    id::{BasicId, LobbyId},
+    protocol::payloads::{Kick, LobbyListing, ServerMessage},
 };
 
 const MAX_SESSIONS_PER_IP: usize = 4;
@@ -351,7 +349,11 @@ impl BlasterEventLoop {
 
                 let _ = tx.send(lobbies.into_values().collect());
             }
-            BlasterOperation::AdvanceLobbyTimer { lid, tx } => {
+            BlasterOperation::AdvanceLobbyTimer { pid, tx } => {
+                let Some(Player { lid, .. }) = self.players.get(&pid).clone() else {
+                    return;
+                };
+
                 let chud = self.players_in(&lid) == 1;
 
                 let Some(lobby) = self.lobbies.get_mut(&lid) else {
@@ -470,93 +472,4 @@ impl BlasterEventLoop {
             }
         }
     }
-}
-
-pub enum BlasterOperation {
-    CleanupLobbies,
-    SetCapacity {
-        initiator: BasicId,
-        capacity: usize,
-    },
-    SetListed {
-        initiator: BasicId,
-        listed: bool,
-    },
-    SetMaster {
-        initiator: BasicId,
-        new_master: BasicId,
-    },
-    SetPlayerMeta {
-        pid: BasicId,
-        key: String,
-        value: String,
-    },
-    ErasePlayerMeta {
-        pid: BasicId,
-        key: String,
-    },
-    SetLobbyMeta {
-        initiator: BasicId,
-        key: String,
-        value: String,
-    },
-    EraseLobbyMeta {
-        initiator: BasicId,
-        key: String,
-    },
-    IntroducePlayer {
-        pid: BasicId,
-        lid: LobbyId,
-        player_meta: Metadata,
-        tx: oneshot::Sender<Result<(), Kick>>,
-    },
-    Relay {
-        from: BasicId,
-        to: BasicId,
-        msg: ServerMessage,
-    },
-    ListLobbies {
-        gid: GameId,
-        limit: usize,
-        tx: oneshot::Sender<Vec<LobbyListing>>,
-    },
-    InsertLobby {
-        lid: LobbyId,
-        master: BasicId,
-        meta: Metadata,
-        capacity: usize,
-        listed: bool,
-        tx: oneshot::Sender<Result<(), Kick>>,
-    },
-    KickPlayer {
-        initiator: BasicId,
-        pid: BasicId,
-    },
-    RemovePlayer {
-        pid: BasicId,
-        reason: Option<Kick>,
-    },
-    AdvanceLobbyTimer {
-        lid: LobbyId,
-        tx: oneshot::Sender<Result<(), Kick>>,
-    },
-    FlushPlayerQueue {
-        pid: BasicId,
-        tx: oneshot::Sender<Vec<ServerMessage>>,
-    },
-    IsKicked {
-        pid: BasicId,
-        tx: oneshot::Sender<Option<Kick>>,
-    },
-    IntroduceSession {
-        ip: IpAddr,
-        tx: oneshot::Sender<bool>,
-    },
-    CloseSession {
-        ip: IpAddr,
-    },
-    SignalPeerOperation {
-        ip: IpAddr,
-        tx: oneshot::Sender<bool>,
-    },
 }
