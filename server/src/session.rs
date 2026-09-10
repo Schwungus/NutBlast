@@ -1,10 +1,8 @@
 use std::{
-    hash::Hasher as _,
     net::SocketAddr,
     time::{Duration, Instant},
 };
 
-use fnv::FnvHasher;
 use futures_util::{
     SinkExt as _, StreamExt as _,
     stream::{SplitSink, SplitStream},
@@ -17,7 +15,7 @@ use tokio_tungstenite::{
 
 use crate::{
     MAX_PLAYERS,
-    blaster::{Blaster, Lobby},
+    blaster::Blaster,
     id::{BasicId, LobbyId},
     protocol::{
         payloads::{ClientMessage, Kick, ServerMessage},
@@ -27,8 +25,6 @@ use crate::{
 };
 
 pub const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
-
-pub const MAX_SWARMS: usize = 10;
 
 pub struct Session {
     blaster: Blaster,
@@ -168,15 +164,14 @@ impl Session {
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
-                if self.blaster.has_lobby(&lid).await {
-                    return Err(Kick::violation("lobby_exists", "Lobby already exists"));
-                }
-
+                self.blaster
+                    .create_lobby(&lid, pid, lobby_meta, capacity, listed)
+                    .await?;
                 info!("new lobby max={capacity} {lid:?}");
 
-                let lober = Lobby::ugly_new(pid, lobby_meta, capacity, listed);
-                self.blaster.insert_lobby(&lid, lober).await;
-                self.blaster.introduce_player(pid, &lid, player_meta).await;
+                self.blaster
+                    .introduce_player(pid, &lid, player_meta)
+                    .await?;
             }
             ClientMessage::Join { lid, player_meta } if self.init_session().await => {
                 let pid = rand::random();
@@ -184,58 +179,9 @@ impl Session {
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
 
-                // also protecting swarms from abuse
-                if !self.blaster.has_lobby(&lid).await || self.blaster.lobby_is_swarm(&lid).await {
-                    return Err(Kick::violation("lobby_not_found", "Lobby not found"));
-                }
-
-                if self.blaster.lobby_full(&lid).await {
-                    return Err(Kick::violation("lobby_full", "Lobby is full"));
-                }
-
-                self.blaster.introduce_player(pid, &lid, player_meta).await;
-            }
-            ClientMessage::Swarm {
-                gid,
-                player_meta,
-                lobby_meta,
-            } if self.init_session().await => {
-                let pid = rand::random();
-                self.pid = Some(pid);
-
-                let mut lid = {
-                    let mut hasher = FnvHasher::default();
-                    hasher.write(gid.as_str().as_bytes());
-
-                    let lid = hasher.finish();
-                    LobbyId { gid, lid }
-                };
-
-                // (almost) INFINITE SWARMS!!!
-                let mut counter = 0;
-
-                while self.blaster.lobby_full(&lid).await && counter < MAX_SWARMS {
-                    lid.lid = lid.lid.wrapping_add(1);
-                    counter += 1;
-                }
-
-                if counter == MAX_SWARMS {
-                    return Err(Kick::violation(
-                        "lobby_full",
-                        "Swarm lobbies pool exhausted",
-                    ));
-                }
-
-                self.lid = Some(lid.clone());
-
-                if !self.blaster.has_lobby(&lid).await {
-                    info!("new swarm {lid:?}");
-
-                    let lober = Lobby::new_swarm(pid, lobby_meta);
-                    self.blaster.insert_lobby(&lid, lober).await;
-                }
-
-                self.blaster.introduce_player(pid, &lid, player_meta).await;
+                self.blaster
+                    .introduce_player(pid, &lid, player_meta)
+                    .await?;
             }
             ClientMessage::PassCandidate {
                 ref to,

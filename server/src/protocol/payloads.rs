@@ -25,11 +25,6 @@ pub enum ClientMessage {
         lid: LobbyId,
         player_meta: Metadata,
     },
-    Swarm {
-        gid: GameId,
-        player_meta: Metadata,
-        lobby_meta: Metadata,
-    },
     SetListed {
         listed: bool,
     },

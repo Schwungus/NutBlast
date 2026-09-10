@@ -28,10 +28,6 @@ where
 
 impl GameId {
     pub const MAX_LEN: usize = 63;
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]

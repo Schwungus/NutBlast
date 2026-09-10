@@ -244,14 +244,8 @@ void NutBlast_Join(NutBlast_ID id);
 /// Hosts a lobby with a given set options.
 void NutBlast_Host(NutBlast_HostOptions opts);
 
-/// Joins or creates a game-specific "swarm" lobby.
-///
-/// Swarms are essentially "whatever, just put me in a match" lobbies. No additional info is needed to join or create
-/// one besides the game ID; just call `NutBlast_JoinSwarm()`!
-void NutBlast_JoinSwarm();
-
 /// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
-void NutBlast_FindLobbies(size_t);
+void NutBlast_FindLobbies(size_t); // FIXME: use a `NutBlast_HostOptions`-like parameter instead
 
 /// Disconnects you from the lobby if you are in one, and resets the networking state.
 void NutBlast_Disconnect();

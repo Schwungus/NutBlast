@@ -9,7 +9,6 @@ use serde::Deserialize;
 use tokio::sync::oneshot;
 
 use crate::{
-    MAX_PLAYERS,
     id::{BasicId, GameId, LobbyId},
     protocol::{
         payloads::{Kick, LobbyListing, ServerMessage},
@@ -41,32 +40,12 @@ const MAX_LOBBIES_IN_LIST: usize = 100;
 const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(3);
 
 #[derive(Clone)]
-pub struct Lobby {
+struct Lobby {
     master: BasicId,
     meta: Metadata,
     capacity: usize,
     listed: bool,
-    swarm: bool,
     death_timer: Option<Instant>,
-}
-
-impl Lobby {
-    pub fn ugly_new(master: BasicId, meta: Metadata, capacity: usize, listed: bool) -> Self {
-        Self {
-            master,
-            meta,
-            capacity,
-            listed,
-            swarm: false,
-            death_timer: None,
-        }
-    }
-
-    pub fn new_swarm(master: BasicId, meta: Metadata) -> Self {
-        let mut lober = Self::ugly_new(master, meta, MAX_PLAYERS, false);
-        lober.swarm = true;
-        lober
-    }
 }
 
 #[derive(Clone)]
@@ -169,12 +148,22 @@ impl Blaster {
         });
     }
 
-    pub async fn introduce_player(&self, pid: BasicId, lid: &LobbyId, player_meta: Metadata) {
+    pub async fn introduce_player(
+        &self,
+        pid: BasicId,
+        lid: &LobbyId,
+        player_meta: Metadata,
+    ) -> Result<(), Kick> {
+        let (tx, rx) = oneshot::channel();
+
         let _ = self.channel.send(BlasterOperation::IntroducePlayer {
             pid,
             lid: lid.clone(),
             player_meta,
+            tx,
         });
+
+        rx.await.unwrap_or(Ok(()))
     }
 
     pub async fn master_of(&self, lid: &LobbyId) -> Option<BasicId> {
@@ -186,39 +175,6 @@ impl Blaster {
         });
 
         rx.await.unwrap_or(None)
-    }
-
-    pub async fn lobby_full(&self, lid: &LobbyId) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::LobbyFull {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(false)
-    }
-
-    pub async fn has_lobby(&self, lid: &LobbyId) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::HasLobby {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(false)
-    }
-
-    pub async fn lobby_is_swarm(&self, lid: &LobbyId) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::LobbyIsSwarm {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(false)
     }
 
     pub async fn relay(&self, from: BasicId, to: BasicId, msg: ServerMessage) {
@@ -245,11 +201,26 @@ impl Blaster {
         rx.await.unwrap_or_default()
     }
 
-    pub async fn insert_lobby(&self, lid: &LobbyId, lobby: Lobby) {
+    pub async fn create_lobby(
+        &self,
+        lid: &LobbyId,
+        master: BasicId,
+        meta: Metadata,
+        capacity: usize,
+        listed: bool,
+    ) -> Result<(), Kick> {
+        let (tx, rx) = oneshot::channel();
+
         let _ = self.channel.send(BlasterOperation::InsertLobby {
             lid: lid.clone(),
-            lobby,
+            master,
+            meta,
+            capacity,
+            listed,
+            tx,
         });
+
+        rx.await.unwrap_or(Ok(()))
     }
 
     pub async fn advance_lobby_timer(&self, lid: &LobbyId) -> Result<(), Kick> {

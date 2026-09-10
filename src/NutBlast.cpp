@@ -28,7 +28,6 @@
 #include <deque>
 #include <format>
 #include <optional>
-#include <random>
 #include <string>
 #include <unordered_map>
 
@@ -264,7 +263,6 @@ static enum class Mode {
     Host,
     Join,
     List,
-    Swarm,
 } mode = Mode::Join;
 
 static bool hosting_a_listed_lobby = true, permission_to_cook = false, time_to_die = false;
@@ -457,20 +455,6 @@ void Player::engage() {
     }
 }
 
-static NutBlast_ID generate_id() {
-    static constexpr const char characters[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-
-    static std::mt19937 mt{std::random_device()()};
-    std::uniform_int_distribution<size_t> dist(0, sizeof(characters) - 2);
-
-    char id[sizeof(NutBlast_ID)];
-
-    for (char& c : id)
-        c = characters[dist(mt)];
-
-    return *reinterpret_cast<NutBlast_ID*>(id);
-}
-
 static bool init = false;
 
 extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
@@ -661,13 +645,6 @@ static void join_pro() {
                 {"gid", ::gid},
                 {"limit", ::listing_limit},
             });
-        } else if (::mode == Mode::Swarm) {
-            ::ws_send({
-                {"type", "Swarm"},
-                {"gid", ::gid},
-                {"player_meta", ::player_meta},
-                {"lobby_meta", ::lobby_meta},
-            });
         } else if (::mode == Mode::Host) {
             ::ws_send({
                 {"type", "Host"},
@@ -773,18 +750,6 @@ extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
         ::mode = Mode::Host, ::hosting_a_listed_lobby = !opts.unlisted;
 
         ::log(NB_LogInfo, "Trying to host '{}' at: {}", lid, ::nutblaster_address);
-        join_pro();
-    }
-}
-
-extern "C" void NutBlast_JoinSwarm() {
-    if (::blaster_ws) {
-        ::log(NB_LogError, "You're already connected!");
-    } else if (!::init) {
-        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
-    } else {
-        ::mode = Mode::Swarm;
-        ::log(NB_LogInfo, "Trying to join a swarm for '{}'", ::gid);
         join_pro();
     }
 }

@@ -171,6 +171,7 @@ impl BlasterEventLoop {
                 pid,
                 lid,
                 player_meta,
+                tx,
             } => {
                 let Some(Lobby {
                     listed,
@@ -179,8 +180,14 @@ impl BlasterEventLoop {
                     ..
                 }) = self.lobbies.get(&lid).cloned()
                 else {
+                    let _ = tx.send(Err(Kick::violation("lobby_not_found", "Lobby not found")));
                     return;
                 };
+
+                if self.players_in(&lid) >= capacity {
+                    let _ = tx.send(Err(Kick::violation("lobby_full", "Lobby is full")));
+                    return;
+                }
 
                 self.players.insert(
                     pid,
@@ -240,6 +247,8 @@ impl BlasterEventLoop {
 
                     self.send_to(other, msg);
                 }
+
+                let _ = tx.send(Ok(()));
             }
             BlasterOperation::KickPlayer { lid, pid: kick_id } => {
                 if let Some(guy) = self.players.get_mut(&kick_id)
@@ -286,7 +295,7 @@ impl BlasterEventLoop {
                     .lobbies
                     .iter()
                     .filter_map(|(lid, lobby)| {
-                        if lid.gid != gid || !lobby.listed || lobby.swarm || self.lobby_full(lid) {
+                        if lid.gid != gid || !lobby.listed || self.lobby_full(lid) {
                             return None;
                         }
 
@@ -347,21 +356,17 @@ impl BlasterEventLoop {
                     nonempty.insert(player.lid.clone());
                 }
 
-                self.lobbies.retain(move |k, l| {
+                self.lobbies.retain(move |k, _| {
                     if nonempty.contains(k) {
                         return true;
                     } else {
-                        let noun = if l.swarm { "swarm" } else { "lober" };
-                        info!("bye {noun}: {:?}", k);
+                        info!("bye lober: {:?}", k);
                         return false;
                     }
                 });
             }
             BlasterOperation::MasterOf { lid, tx } => {
                 let _ = tx.send(self.master_of(&lid));
-            }
-            BlasterOperation::LobbyFull { lid, tx } => {
-                let _ = tx.send(self.lobby_full(&lid));
             }
             BlasterOperation::Relay { from, to, msg } => {
                 if let Some(p_from) = self.players.get(&from)
@@ -372,14 +377,32 @@ impl BlasterEventLoop {
                     }
                 }
             }
-            BlasterOperation::InsertLobby { lid, lobby } => {
-                self.lobbies.insert(lid, lobby);
-            }
-            BlasterOperation::HasLobby { lid, tx } => {
-                let _ = tx.send(self.lobbies.contains_key(&lid));
-            }
-            BlasterOperation::LobbyIsSwarm { lid, tx } => {
-                let _ = tx.send(self.lobbies.get(&lid).map(|x| x.swarm).unwrap_or(false));
+            BlasterOperation::InsertLobby {
+                lid,
+                master,
+                meta,
+                capacity,
+                listed,
+                tx,
+            } => {
+                let _ = tx.send(if self.lobbies.contains_key(&lid) {
+                    Err(Kick::violation("lobby_exists", "Lobby already exists"))
+                } else {
+                    info!("new lobby {lid:?}");
+
+                    self.lobbies.insert(
+                        lid,
+                        Lobby {
+                            master,
+                            meta,
+                            capacity,
+                            listed,
+                            death_timer: None,
+                        },
+                    );
+
+                    Ok(())
+                });
             }
             BlasterOperation::IsKicked { pid, tx } => {
                 let _ = tx.send(self.players.get(&pid).and_then(|x| x.kick_me_now.clone()));
@@ -452,22 +475,11 @@ pub enum BlasterOperation {
         lid: LobbyId,
         tx: oneshot::Sender<Option<BasicId>>,
     },
-    HasLobby {
-        lid: LobbyId,
-        tx: oneshot::Sender<bool>,
-    },
-    LobbyFull {
-        lid: LobbyId,
-        tx: oneshot::Sender<bool>,
-    },
-    LobbyIsSwarm {
-        lid: LobbyId,
-        tx: oneshot::Sender<bool>,
-    },
     IntroducePlayer {
         pid: BasicId,
         lid: LobbyId,
         player_meta: Metadata,
+        tx: oneshot::Sender<Result<(), Kick>>,
     },
     Relay {
         from: BasicId,
@@ -485,7 +497,11 @@ pub enum BlasterOperation {
     },
     InsertLobby {
         lid: LobbyId,
-        lobby: Lobby,
+        master: BasicId,
+        meta: Metadata,
+        capacity: usize,
+        listed: bool,
+        tx: oneshot::Sender<Result<(), Kick>>,
     },
     KickPlayer {
         lid: LobbyId,
