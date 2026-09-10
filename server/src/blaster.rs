@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -76,7 +76,7 @@ pub struct Config {
 struct BlasterImpl {
     lobbies: HashMap<LobbyId, Lobby>,
     players: IndexMap<BasicId, Player>,
-    connections: HashMap<SocketAddr, SocketConnection>,
+    connections: HashMap<IpAddr, SocketConnection>,
     config: Config,
 }
 
@@ -428,32 +428,31 @@ impl BlasterImpl {
             BlasterOperation::IsKicked { pid, tx } => {
                 let _ = tx.send(self.players.get(&pid).and_then(|x| x.kick_me_now.clone()));
             }
-            BlasterOperation::AcquireHandle { addr, tx } => {
+            BlasterOperation::AcquireHandle { ip, tx } => {
                 let total: usize = self.connections.values().map(|c| c.handles).sum();
 
-                let _ = tx.send(if total + 1 >= GLOBAL_SOCKET_HANDLES_CAP {
-                    error!("{}: global handle limit", addr);
+                let _ = tx.send(if total >= GLOBAL_SOCKET_HANDLES_CAP {
+                    error!("{ip}: global handle limit");
                     false
-                } else if let Some(conn) = self.connections.get_mut(&addr) {
-                    if conn.handles + 1 >= IP_SOCKET_HANDLES_CAP {
-                        error!("{}: too many handles", addr);
+                } else if let Some(conn) = self.connections.get_mut(&ip) {
+                    if conn.handles >= IP_SOCKET_HANDLES_CAP {
+                        error!("{ip}: too many handles");
                         false
                     } else {
                         conn.handles += 1;
                         true
                     }
                 } else {
-                    self.connections
-                        .insert(addr, SocketConnection { handles: 1 });
+                    self.connections.insert(ip, SocketConnection { handles: 1 });
                     true
                 });
             }
-            BlasterOperation::ReleaseHandle { addr } => {
-                if let Some(conn) = self.connections.get_mut(&addr) {
+            BlasterOperation::ReleaseHandle { ip } => {
+                if let Some(conn) = self.connections.get_mut(&ip) {
                     conn.handles = conn.handles.saturating_sub(1);
 
                     if conn.handles == 0 {
-                        self.connections.remove(&addr);
+                        self.connections.remove(&ip);
                     }
                 }
             }
@@ -549,11 +548,11 @@ enum BlasterOperation {
         tx: oneshot::Sender<Option<Kick>>,
     },
     AcquireHandle {
-        addr: SocketAddr,
+        ip: IpAddr,
         tx: oneshot::Sender<bool>,
     },
     ReleaseHandle {
-        addr: SocketAddr,
+        ip: IpAddr,
     },
 }
 
@@ -758,16 +757,14 @@ impl Blaster {
     pub async fn acquire_handle(&self, addr: &SocketAddr) -> bool {
         let (tx, rx) = oneshot::channel();
 
-        let _ = self.channel.send(BlasterOperation::AcquireHandle {
-            addr: addr.clone(),
-            tx,
-        });
+        let msg = BlasterOperation::AcquireHandle { ip: addr.ip(), tx };
+        let _ = self.channel.send(msg);
 
         rx.await.unwrap_or(false)
     }
 
     pub async fn release_handle(&self, addr: &SocketAddr) {
-        let msg = BlasterOperation::ReleaseHandle { addr: addr.clone() };
+        let msg = BlasterOperation::ReleaseHandle { ip: addr.ip() };
         let _ = self.channel.send(msg);
     }
 }
