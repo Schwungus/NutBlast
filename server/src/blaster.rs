@@ -10,7 +10,7 @@ use serde::Deserialize;
 use tokio::sync::oneshot;
 
 use crate::{
-    GLOBAL_HANDLES_CAP, HANDLES_CAP, MAX_PLAYERS,
+    GLOBAL_SOCKET_HANDLES_CAP, IP_SOCKET_HANDLES_CAP, MAX_PLAYERS,
     id::{BasicId, GameId, LobbyId},
     protocol::{
         payloads::{Kick, LobbyListing, ServerMessage},
@@ -431,11 +431,11 @@ impl BlasterImpl {
             BlasterOperation::AcquireHandle { addr, tx } => {
                 let total: usize = self.connections.values().map(|c| c.handles).sum();
 
-                let _ = tx.send(if total + 1 >= GLOBAL_HANDLES_CAP {
+                let _ = tx.send(if total + 1 >= GLOBAL_SOCKET_HANDLES_CAP {
                     error!("{}: global handle limit", addr);
                     false
                 } else if let Some(conn) = self.connections.get_mut(&addr) {
-                    if conn.handles + 1 >= HANDLES_CAP {
+                    if conn.handles + 1 >= IP_SOCKET_HANDLES_CAP {
                         error!("{}: too many handles", addr);
                         false
                     } else {

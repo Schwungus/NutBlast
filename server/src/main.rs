@@ -19,8 +19,8 @@ mod id;
 mod protocol;
 
 pub const MAX_PLAYERS: usize = 16;
-pub const HANDLES_CAP: usize = 8;
-pub const GLOBAL_HANDLES_CAP: usize = 256;
+pub const IP_SOCKET_HANDLES_CAP: usize = 4;
+pub const GLOBAL_SOCKET_HANDLES_CAP: usize = 256;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
