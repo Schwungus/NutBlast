@@ -163,12 +163,18 @@ void NutBlast_Init(NutBlast_InitOptions);
 /// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.
 void NutBlast_Cleanup();
 
+/// Returns true if you just called `NutBlast_Host`, `NutBlast_Join`, or `NutBlast_FindLobbies` and need to
+/// `NutBlast_Disconnect` before trying again.
+bool NutBlast_IsConnecting();
+
 /// Returns true if you are connected to a NutBlaster.
+///
+/// The next stage is `NutBlast_IsReady()`.
 bool NutBlast_IsOnline();
 
 /// Returns true if you are connected to a NutBlaster AND ready to communicate with all current players in the lobby.
-/// Note that when a new player is entering the lobby, this will go back to returning false until a connection is
-/// established with them.
+///
+/// Note that when a new player is entering the lobby, this will go false until a connection is established.
 bool NutBlast_IsReady();
 
 /// Returns the average round-trip time (in milliseconds) to the NutBlaster.

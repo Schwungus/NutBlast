@@ -271,9 +271,10 @@ static std::size_t listing_limit = 0;
 static std::unordered_map<NutBlast_ID, std::shared_ptr<Player>> players;
 static NutBlast_ID master = 0;
 
-static Pinger ws_pinger;
+static Pinger blaster_ping;
 static Once fire_ready;
-static std::shared_ptr<rtc::WebSocket> blaster_ws = nullptr;
+
+static std::shared_ptr<rtc::WebSocket> websocket = nullptr;
 static std::vector<nlohmann::json> ws_in, ws_out;
 
 static Metadata player_meta, lobby_meta;
@@ -319,7 +320,7 @@ static void ws_send(const nlohmann::json& obj) {
 
     try {
         for (const auto& obj : copy_and_clear(::ws_out))
-            ::blaster_ws->send(obj.dump());
+            ::websocket->send(obj.dump());
     } catch (const std::runtime_error&) {
         ::time_to_die = true;
         return;
@@ -618,7 +619,7 @@ static void join_pro() {
     ::incoming_candidates.clear(), ::incoming_offers.clear();
 
     ::master = 0, ::disconnection_reason = ByeReason(), ::permission_to_cook = false;
-    ::ws_pinger.reset();
+    ::blaster_ping.reset();
 
     for (auto& queue : recv_queues) {
         std::lock_guard<std::mutex> lock(queue.mutex);
@@ -632,13 +633,13 @@ static void join_pro() {
         conf.caCertificatePemFile = "/etc/ssl/certs/ca-certificates.crt";
 #endif
 
-    ::blaster_ws = std::make_shared<rtc::WebSocket>(
+    ::websocket = std::make_shared<rtc::WebSocket>(
 #ifndef __EMSCRIPTEN__
         conf
 #endif
     );
 
-    ::blaster_ws->onOpen([]() {
+    ::websocket->onOpen([]() {
         if (::mode == Mode::List) {
             ::ws_send({
                 {"type", "List"},
@@ -664,7 +665,7 @@ static void join_pro() {
         }
     });
 
-    ::blaster_ws->onMessage([](const auto& msg) {
+    ::websocket->onMessage([](const auto& msg) {
         if (!std::holds_alternative<rtc::string>(msg))
             return;
 
@@ -675,22 +676,22 @@ static void join_pro() {
         } catch (const nlohmann::json::parse_error&) {}
     });
 
-    ::blaster_ws->onClosed([]() {
+    ::websocket->onClosed([]() {
         ::time_to_die = true;
     });
 
-    ::blaster_ws->open(::nutblaster_address);
+    ::websocket->open(::nutblaster_address);
 }
 
 extern "C" void NutBlast_Disconnect() {
     ::time_to_die = false;
 
-    if (::blaster_ws) {
-        ::blaster_ws->onClosed(nullptr);
-        ::blaster_ws->onMessage(nullptr);
+    if (::websocket) {
+        ::websocket->onClosed(nullptr);
+        ::websocket->onMessage(nullptr);
 
         try {
-            ::blaster_ws->close();
+            ::websocket->close();
         } catch (const std::runtime_error&) {}
     }
 
@@ -703,7 +704,7 @@ extern "C" void NutBlast_Disconnect() {
 
         ::ws_in.clear(), ::ws_out.clear(), ::players.clear();
         ::incoming_candidates.clear(), ::incoming_offers.clear();
-        ::blaster_ws = nullptr, ::lid = 0;
+        ::websocket = nullptr, ::lid = 0;
         ::fire_ready.reset();
     }
 
@@ -715,7 +716,7 @@ extern "C" void NutBlast_Disconnect() {
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
-    if (::blaster_ws) {
+    if (NutBlast_IsConnecting()) {
         ::log(NB_LogError, "You're already connected!");
     } else if (!::init) {
         ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
@@ -727,7 +728,7 @@ extern "C" void NutBlast_FindLobbies(size_t limit) {
 }
 
 extern "C" void NutBlast_Join(NutBlast_ID id) {
-    if (::blaster_ws) {
+    if (NutBlast_IsConnecting()) {
         ::log(NB_LogError, "You're already connected!");
     } else if (!::init) {
         ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
@@ -741,7 +742,7 @@ extern "C" void NutBlast_Join(NutBlast_ID id) {
 }
 
 extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
-    if (::blaster_ws) {
+    if (NutBlast_IsConnecting()) {
         ::log(NB_LogError, "You're already connected!");
     } else if (!::init) {
         ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
@@ -1004,7 +1005,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
     {"List", handle_list},
     {"Pong",
         [](const auto&) {
-            ::ws_pinger.pong();
+            ::blaster_ping.pong();
         }},
 };
 
@@ -1032,7 +1033,7 @@ extern "C" void NutBlast_Flush() {
         return;
 
     if (pinger) {
-        ::ws_pinger.ping();
+        ::blaster_ping.ping();
 
         for (auto& [id, player] : ::players) {
             const auto dc = player->ping_dc.get();
@@ -1182,8 +1183,12 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
     return true;
 }
 
+extern "C" bool NutBlast_IsConnecting() {
+    return ::websocket != nullptr;
+}
+
 extern "C" bool NutBlast_IsOnline() {
-    return ::blaster_ws && ::blaster_ws->isOpen();
+    return ::websocket && ::websocket->isOpen();
 }
 
 extern "C" bool NutBlast_IsReady() {
@@ -1198,7 +1203,7 @@ extern "C" bool NutBlast_IsReady() {
 }
 
 extern "C" int NutBlast_ServerPing() {
-    return NutBlast_IsOnline() ? ::ws_pinger.millis() : 0;
+    return NutBlast_IsOnline() ? ::blaster_ping.millis() : 0;
 }
 
 extern "C" int NutBlast_PlayerPing(NutBlast_ID pid) {

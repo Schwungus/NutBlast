@@ -64,6 +64,7 @@ typedef struct {
 } Player;
 
 static TinyMap players = {0};
+static NutBlast_ID existing_lobby = 0;
 
 static void reset() {
     FreeTinyMap(&players);
@@ -115,6 +116,9 @@ static void draw_gui() {
 
         i++;
     }
+
+    if (existing_lobby)
+        DrawText("Lobby found!", 0, 0, fs, GREEN);
 
     DrawText("H to host, J to join, K to reset, P to ratelimit self", 0, GetScreenHeight() - fs * 2, fs, BLACK);
     DrawText("T to chat (reliable), L to kick everyone", 0, GetScreenHeight() - fs * 1, fs, BLACK);
@@ -197,11 +201,8 @@ static void on_disconnected(NutBlast_Reason reason) {
     reset();
 }
 
-static NutBlast_ID found_lobby = 0;
-
 static void on_lobbies_found(const NutBlast_Lobby* lobbies, size_t count) {
-    if (count)
-        found_lobby = lobbies->id;
+    existing_lobby = count ? lobbies->id : 0;
 }
 
 static int nb_to_rl(NutBlast_LogLevel level) {
@@ -256,18 +257,16 @@ int main(int argc, char* argv[]) {
     ((char*)(&lid))[3] = 't';
 
     while (!WindowShouldClose()) {
-        // TODO: test `NutBlast_Host` & `NutBlast_Join` properly
-
         if (IsKeyPressed(KEY_H)) {
             NutBlast_Disconnect();
             NutBlast_Host((NutBlast_HostOptions){.max_players = 4});
         } else if (IsKeyPressed(KEY_J)) {
             NutBlast_Disconnect();
-            NutBlast_Join(found_lobby);
-        } else if (!NutBlast_IsOnline()) {
-            NutBlast_FindLobbies(1);
+            NutBlast_Join(existing_lobby);
         } else if (IsKeyPressed(KEY_K)) {
             NutBlast_Disconnect();
+        } else if (!NutBlast_IsConnecting()) {
+            NutBlast_FindLobbies(1);
         }
 
         move_our_rect();
