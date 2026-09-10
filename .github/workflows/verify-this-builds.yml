@@ -1,14 +1,14 @@
-name: Verify this builds across several OSes and compilers
+name: Verify the C library builds across several OSes and compilers
 
 on:
   workflow_dispatch:
   push:
     branches: [master]
-    paths-ignore:
-      - README.md
-      - scripts/**
-      - server/**
-      - .*
+    paths:
+      - .github/workflows/verify-this-builds.yml
+      - CMakeLists.txt
+      - src/**
+      - include/**
 
 env:
   CRAZY_AHH_DEPS: >-
