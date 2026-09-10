@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize, de};
 
-pub const FIELD_NAME_MAX: usize = 255;
-pub const FIELD_VALUE_MAX: usize = 8191;
+const FIELD_NAME_MAX: usize = 255;
+const FIELD_VALUE_MAX: usize = 8191;
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct FieldKey(#[serde(deserialize_with = "deserialize_field_name")] pub String);
@@ -67,7 +67,7 @@ pub struct Metadata(
 );
 
 impl Metadata {
-    pub const MAX_FIELDS: usize = 16;
+    const MAX_FIELDS: usize = 16;
 
     pub fn can_add(&self, key: &str) -> bool {
         self.0.contains_key(key) || self.0.len() < Self::MAX_FIELDS

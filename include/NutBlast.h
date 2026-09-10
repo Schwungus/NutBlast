@@ -139,9 +139,6 @@ typedef struct {
 } NutBlast_Reason;
 
 typedef struct {
-    /// Pass 0 if you want NutBlast to generate the ID for you, or set it manually here.
-    NutBlast_ID lobby_id;
-
     /// Call `NutBlast_SetMaxPlayers()` if you need to set a different player-count later.
     int max_players;
 

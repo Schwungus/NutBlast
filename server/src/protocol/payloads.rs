@@ -14,8 +14,7 @@ pub enum ClientMessage {
         limit: usize,
     },
     Host {
-        #[serde(flatten)]
-        lid: LobbyId,
+        gid: GameId,
         capacity: usize,
         listed: bool,
         player_meta: Metadata,
@@ -78,6 +77,7 @@ pub enum ServerMessage {
     Pong,
     Connected {
         pid: BasicId,
+        lid: BasicId,
         ice_servers: Vec<String>,
     },
     Disconnected {

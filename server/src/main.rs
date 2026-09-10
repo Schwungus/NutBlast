@@ -10,17 +10,16 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::{
     blaster::{Blaster, Config},
-    connection::Connection,
+    session::Session,
 };
 
 mod blaster;
-mod connection;
 mod id;
 mod protocol;
+mod session;
+mod tokens;
 
 pub const MAX_PLAYERS: usize = 16;
-pub const IP_SOCKET_HANDLES_CAP: usize = 4;
-pub const GLOBAL_SOCKET_HANDLES_CAP: usize = 256;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -44,7 +43,7 @@ async fn main() -> eyre::Result<()> {
     let blaster = Blaster::new(config);
 
     while let Ok((stream, addr)) = listener.accept().await {
-        if !blaster.acquire_handle(&addr).await {
+        if !blaster.introduce_session(&addr).await {
             error!("{}: too many handles", addr);
             // no clean shutdown for you pesky beggars!!!
             continue;
@@ -58,7 +57,7 @@ async fn main() -> eyre::Result<()> {
         let blaster = blaster.clone();
 
         tokio::spawn(async move {
-            info!("conn: {}", addr);
+            info!("join: {}", addr);
 
             let (sender, receiver) =
                 match tokio_tungstenite::accept_async_with_config(stream, Some(config)).await {
@@ -68,15 +67,15 @@ async fn main() -> eyre::Result<()> {
                     }
                     Err(e) => {
                         error!("{}: {}", addr, e);
-                        blaster.release_handle(&addr).await;
+                        blaster.close_session(&addr).await;
                         return;
                     }
                 };
 
-            let conn = Connection::new(blaster.clone(), addr, sender, receiver);
-            conn.mainloop().await;
+            let session = Session::new(blaster.clone(), addr, sender, receiver);
+            session.mainloop().await;
 
-            blaster.release_handle(&addr).await;
+            blaster.close_session(&addr).await;
         });
     }
 

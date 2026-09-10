@@ -1,16 +1,14 @@
 use std::{
     collections::{HashMap, HashSet},
-    net::{IpAddr, SocketAddr},
-    sync::mpsc,
-    time::{Duration, Instant},
+    net::IpAddr,
+    time::Instant,
 };
 
 use indexmap::IndexMap;
-use serde::Deserialize;
 use tokio::sync::oneshot;
 
 use crate::{
-    GLOBAL_SOCKET_HANDLES_CAP, IP_SOCKET_HANDLES_CAP, MAX_PLAYERS,
+    blaster::{CHUD_LOBBY_TIMEOUT, Config, Lobby, MAX_LOBBIES_IN_LIST, Peer, Player},
     id::{BasicId, GameId, LobbyId},
     protocol::{
         payloads::{Kick, LobbyListing, ServerMessage},
@@ -18,69 +16,26 @@ use crate::{
     },
 };
 
-struct SocketConnection {
-    handles: usize,
-}
+const MAX_SESSIONS_PER_IP: usize = 4;
+const GLOBAL_MAX_SESSIONS: usize = 256;
 
-const MAX_LOBBIES_IN_LIST: usize = 100;
-const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(10);
-
-#[derive(Clone)]
-pub struct Lobby {
-    master: BasicId,
-    meta: Metadata,
-    capacity: usize,
-    listed: bool,
-    swarm: bool,
-    death_timer: Option<Instant>,
-}
-
-impl Lobby {
-    pub fn ugly_new(master: BasicId, meta: Metadata, capacity: usize, listed: bool) -> Self {
-        Self {
-            master,
-            meta,
-            capacity,
-            listed,
-            swarm: false,
-            death_timer: None,
-        }
-    }
-
-    pub fn new_swarm(master: BasicId, meta: Metadata) -> Self {
-        let mut lober = Self::ugly_new(master, meta, MAX_PLAYERS, false);
-        lober.swarm = true;
-        lober
-    }
-}
-
-#[derive(Clone)]
-pub struct Player {
-    lid: LobbyId,
-    meta: Metadata,
-    queue: Vec<ServerMessage>,
-    kick_me_now: Option<Kick>,
-}
-
-impl Player {
-    pub fn send(&mut self, msg: ServerMessage) {
-        self.queue.push(msg);
-    }
-}
-
-#[derive(Clone, Deserialize)]
-pub struct Config {
-    pub ice_servers: Vec<String>,
-}
-
-struct BlasterImpl {
+pub struct BlasterEventLoop {
     lobbies: HashMap<LobbyId, Lobby>,
     players: IndexMap<BasicId, Player>,
-    connections: HashMap<IpAddr, SocketConnection>,
+    peers: HashMap<IpAddr, Peer>,
     config: Config,
 }
 
-impl BlasterImpl {
+impl BlasterEventLoop {
+    pub fn new(config: Config) -> Self {
+        Self {
+            lobbies: HashMap::new(),
+            players: IndexMap::new(),
+            peers: HashMap::new(),
+            config,
+        }
+    }
+
     fn players_in(&self, lid: &LobbyId) -> usize {
         let mut counter = 0;
 
@@ -132,7 +87,7 @@ impl BlasterImpl {
         }
     }
 
-    fn recv(&mut self, msg: BlasterOperation) {
+    pub fn recv(&mut self, msg: BlasterOperation) {
         match msg {
             BlasterOperation::SetLobbyCapacity { lid, capacity } => {
                 if let Some(lobby) = self.lobbies.get_mut(&lid) {
@@ -272,6 +227,7 @@ impl BlasterImpl {
 
                     player.send(ServerMessage::Connected {
                         ice_servers: self.config.ice_servers.clone(),
+                        lid: lid.lid,
                         pid,
                     });
                 }
@@ -428,39 +384,43 @@ impl BlasterImpl {
             BlasterOperation::IsKicked { pid, tx } => {
                 let _ = tx.send(self.players.get(&pid).and_then(|x| x.kick_me_now.clone()));
             }
-            BlasterOperation::AcquireHandle { ip, tx } => {
-                let total: usize = self.connections.values().map(|c| c.handles).sum();
+            BlasterOperation::IntroduceSession { ip, tx } => {
+                let total_sessions: usize = self.peers.values().map(|c| c.session_count).sum();
 
-                let _ = tx.send(if total >= GLOBAL_SOCKET_HANDLES_CAP {
-                    error!("{ip}: global handle limit");
+                let _ = tx.send(if total_sessions >= GLOBAL_MAX_SESSIONS {
+                    error!("{ip}: global session limit");
                     false
-                } else if let Some(conn) = self.connections.get_mut(&ip) {
-                    if conn.handles >= IP_SOCKET_HANDLES_CAP {
-                        error!("{ip}: too many handles");
+                } else if let Some(peer) = self.peers.get_mut(&ip) {
+                    if peer.session_count >= MAX_SESSIONS_PER_IP {
+                        error!("{ip}: too many sessions");
                         false
                     } else {
-                        conn.handles += 1;
+                        peer.session_count += 1;
                         true
                     }
                 } else {
-                    self.connections.insert(ip, SocketConnection { handles: 1 });
+                    self.peers.insert(ip, Peer::new());
                     true
                 });
             }
-            BlasterOperation::ReleaseHandle { ip } => {
-                if let Some(conn) = self.connections.get_mut(&ip) {
-                    conn.handles = conn.handles.saturating_sub(1);
+            BlasterOperation::CloseSession { ip } => {
+                if let Some(session) = self.peers.get_mut(&ip) {
+                    session.session_count = session.session_count.saturating_sub(1);
 
-                    if conn.handles == 0 {
-                        self.connections.remove(&ip);
+                    if session.session_count == 0 {
+                        self.peers.remove(&ip);
                     }
                 }
+            }
+            BlasterOperation::SignalPeerOperation { ip, tx } => {
+                let peer = self.peers.get_mut(&ip);
+                let _ = tx.send(peer.map(|peer| peer.ops.try_take()).unwrap_or(false));
             }
         }
     }
 }
 
-enum BlasterOperation {
+pub enum BlasterOperation {
     CleanupLobbies,
     SetLobbyCapacity {
         lid: LobbyId,
@@ -547,224 +507,15 @@ enum BlasterOperation {
         pid: BasicId,
         tx: oneshot::Sender<Option<Kick>>,
     },
-    AcquireHandle {
+    IntroduceSession {
         ip: IpAddr,
         tx: oneshot::Sender<bool>,
     },
-    ReleaseHandle {
+    CloseSession {
         ip: IpAddr,
     },
-}
-
-#[derive(Clone)]
-pub struct Blaster {
-    channel: mpsc::Sender<BlasterOperation>,
-}
-
-impl Blaster {
-    pub fn new(config: Config) -> Self {
-        let (tx, rx) = mpsc::channel();
-
-        std::thread::spawn(move || {
-            let mut imp = BlasterImpl {
-                lobbies: HashMap::new(),
-                players: IndexMap::new(),
-                connections: HashMap::new(),
-                config,
-            };
-
-            while let Ok(msg) = rx.recv() {
-                imp.recv(msg);
-            }
-        });
-
-        Self { channel: tx }
-    }
-
-    pub async fn is_kicked(&self, pid: &BasicId) -> Option<Kick> {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self
-            .channel
-            .send(BlasterOperation::IsKicked { pid: *pid, tx });
-
-        rx.await.ok().and_then(|x| x)
-    }
-
-    pub async fn set_player_meta(&self, pid: BasicId, key: &str, value: &str) {
-        let _ = self.channel.send(BlasterOperation::SetPlayerMeta {
-            pid,
-            key: key.to_string(),
-            value: value.to_string(),
-        });
-    }
-
-    pub async fn erase_player_meta(&self, pid: BasicId, key: &str) {
-        let _ = self.channel.send(BlasterOperation::ErasePlayerMeta {
-            pid,
-            key: key.to_string(),
-        });
-    }
-
-    pub async fn set_lobby_capacity(&self, lid: &LobbyId, capacity: usize) {
-        let _ = self.channel.send(BlasterOperation::SetLobbyCapacity {
-            lid: lid.clone(),
-            capacity,
-        });
-    }
-
-    pub async fn set_lobby_listed(&self, lid: &LobbyId, listed: bool) {
-        let _ = self.channel.send(BlasterOperation::SetLobbyListed {
-            lid: lid.clone(),
-            listed,
-        });
-    }
-
-    pub async fn set_lobby_meta(&self, lid: &LobbyId, key: &str, value: &str) {
-        let _ = self.channel.send(BlasterOperation::SetLobbyMeta {
-            lid: lid.clone(),
-            key: key.to_string(),
-            value: value.to_string(),
-        });
-    }
-
-    pub async fn erase_lobby_meta(&self, lid: &LobbyId, key: &str) {
-        let _ = self.channel.send(BlasterOperation::EraseLobbyMeta {
-            lid: lid.clone(),
-            key: key.to_string(),
-        });
-    }
-
-    pub async fn kick_player(&self, lid: &LobbyId, pid: BasicId) {
-        let _ = self.channel.send(BlasterOperation::KickPlayer {
-            lid: lid.clone(),
-            pid,
-        });
-    }
-
-    pub async fn introduce_player(&self, pid: BasicId, lid: &LobbyId, player_meta: Metadata) {
-        let _ = self.channel.send(BlasterOperation::IntroducePlayer {
-            pid,
-            lid: lid.clone(),
-            player_meta,
-        });
-    }
-
-    pub async fn master_of(&self, lid: &LobbyId) -> Option<BasicId> {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::MasterOf {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(None)
-    }
-
-    pub async fn lobby_full(&self, lid: &LobbyId) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::LobbyFull {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(false)
-    }
-
-    pub async fn has_lobby(&self, lid: &LobbyId) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::HasLobby {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(false)
-    }
-
-    pub async fn lobby_is_swarm(&self, lid: &LobbyId) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::LobbyIsSwarm {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(false)
-    }
-
-    pub async fn relay(&self, from: BasicId, to: BasicId, msg: ServerMessage) {
-        let msg = BlasterOperation::Relay { from, to, msg };
-        let _ = self.channel.send(msg);
-    }
-
-    pub async fn set_lobby_master(&self, initiator_pid: BasicId, new_master_pid: BasicId) {
-        let _ = self.channel.send(BlasterOperation::SetLobbyMaster {
-            initiator_pid,
-            new_master_pid,
-        });
-    }
-
-    pub async fn list_lobbies(&self, gid: &GameId, limit: usize) -> Vec<LobbyListing> {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::ListLobbies {
-            gid: gid.clone(),
-            limit,
-            tx,
-        });
-
-        rx.await.unwrap_or_default()
-    }
-
-    pub async fn insert_lobby(&self, lid: &LobbyId, lobby: Lobby) {
-        let _ = self.channel.send(BlasterOperation::InsertLobby {
-            lid: lid.clone(),
-            lobby,
-        });
-    }
-
-    pub async fn advance_lobby_timer(&self, lid: &LobbyId) -> Result<(), Kick> {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.channel.send(BlasterOperation::AdvanceLobbyTimer {
-            lid: lid.clone(),
-            tx,
-        });
-
-        rx.await.unwrap_or(Ok(()))
-    }
-
-    pub async fn flush_player_queue(&self, pid: BasicId) -> Vec<ServerMessage> {
-        let (tx, rx) = oneshot::channel();
-
-        let msg = BlasterOperation::FlushPlayerQueue { pid, tx };
-        let _ = self.channel.send(msg);
-
-        rx.await.unwrap_or_default()
-    }
-
-    pub async fn remove_player(&self, pid: BasicId, reason: Option<Kick>) {
-        let msg = BlasterOperation::RemovePlayer { pid, reason };
-        let _ = self.channel.send(msg);
-    }
-
-    pub async fn cleanup_lobbies(&self) {
-        let _ = self.channel.send(BlasterOperation::CleanupLobbies);
-    }
-
-    pub async fn acquire_handle(&self, addr: &SocketAddr) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let msg = BlasterOperation::AcquireHandle { ip: addr.ip(), tx };
-        let _ = self.channel.send(msg);
-
-        rx.await.unwrap_or(false)
-    }
-
-    pub async fn release_handle(&self, addr: &SocketAddr) {
-        let msg = BlasterOperation::ReleaseHandle { ip: addr.ip() };
-        let _ = self.channel.send(msg);
-    }
+    SignalPeerOperation {
+        ip: IpAddr,
+        tx: oneshot::Sender<bool>,
+    },
 }

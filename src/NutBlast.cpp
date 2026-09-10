@@ -672,7 +672,6 @@ static void join_pro() {
             ::ws_send({
                 {"type", "Host"},
                 {"gid", ::gid},
-                {"lid", ::lid},
                 {"capacity", ::max_players},
                 {"listed", ::hosting_a_listed_lobby},
                 {"player_meta", ::player_meta},
@@ -772,7 +771,6 @@ extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
     } else {
         NutBlast_SetMaxPlayers(opts.max_players);
         ::mode = Mode::Host, ::hosting_a_listed_lobby = !opts.unlisted;
-        ::lid = opts.lobby_id ? opts.lobby_id : generate_id();
 
         ::log(NB_LogInfo, "Trying to host '{}' at: {}", lid, ::nutblaster_address);
         join_pro();
@@ -904,7 +902,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         [](const auto& obj) {
             ::rtc_config.iceServers.clear();
 
-            ::pid = obj["pid"];
+            ::pid = obj["pid"], ::lid = obj["lid"];
             ::log(NB_LogInfo, "You are ID={}", ::pid);
 
             ::log(NB_LogInfo, "ICE servers from NutBlaster:");

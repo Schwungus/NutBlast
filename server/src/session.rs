@@ -23,26 +23,29 @@ use crate::{
         payloads::{ClientMessage, Kick, ServerMessage},
         utils::{FieldKey, FieldValue},
     },
+    tokens::TokenBucket,
 };
 
-pub const MAX_PAYLOADS_PER_SEC: f32 = 30.0;
 pub const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
 pub const MAX_SWARMS: usize = 10;
 
-pub struct Connection {
+pub struct Session {
     blaster: Blaster,
+    addr: SocketAddr,
     receiver: SplitStream<WebSocketStream<TcpStream>>,
     sender: SplitSink<WebSocketStream<TcpStream>, Message>,
-    addr: SocketAddr,
     pid: Option<BasicId>,
     lid: Option<LobbyId>,
     bye_reason: Option<Kick>,
-    load: f32,
+    ops: TokenBucket,
 }
 
-impl Connection {
+impl Session {
     const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
+
+    const MAX_PAYLOADS_PER_SEC: f32 = 30.0;
+    const MAX_PAYLOADS_BURST: f32 = 30.0;
 
     pub fn new(
         blaster: Blaster,
@@ -55,27 +58,22 @@ impl Connection {
             addr,
             sender,
             receiver,
-            load: 0.0,
             pid: None,
             lid: None,
             bye_reason: None,
+            ops: TokenBucket::new(Self::MAX_PAYLOADS_PER_SEC, Self::MAX_PAYLOADS_BURST),
         }
     }
 
-    async fn handle_next_websock_msg(&mut self) -> Result<Loop, Kick> {
-        let start = Instant::now();
-
+    async fn handle_next_websocket_message(&mut self) -> Result<Loop, Kick> {
         let result = tokio::select! {
             msg = self.receiver.next() => {
-                self.handle_websock_msg(msg).await
+                self.accept_websocket_message(msg).await
             }
             _ = tokio::time::sleep(TICK_DELAY) => {
                 Ok(Loop::Continue)
             }
         };
-
-        let reimburse = Instant::now().duration_since(start).as_secs_f32();
-        self.load = (self.load - reimburse).max(0.0);
 
         // #27. single-player lobby timeouts
         if let Some(ref lid) = self.lid {
@@ -93,21 +91,18 @@ impl Connection {
         }
     }
 
-    async fn handle_websock_msg(
+    async fn accept_websocket_message(
         &mut self,
         msg: Option<Result<Message, TungError>>,
     ) -> Result<Loop, Kick> {
-        // #28. rate-limiting
-        self.load += 1.0 / MAX_PAYLOADS_PER_SEC;
-
-        if self.load >= 1.0 {
+        if !self.ops.try_take() {
             warn!("CALM DOWN, {}", self.addr);
             return Err(Kick::violation("rate_limited", "Too many payloads"));
         }
 
         match msg {
             Some(Ok(msg)) => {
-                return self.handle_client_msg(msg).await;
+                return self.process_websocket_message(msg).await;
             }
             Some(Err(e)) => {
                 if !matches!(e, TungError::ConnectionClosed) {
@@ -122,7 +117,7 @@ impl Connection {
         }
     }
 
-    async fn handle_client_msg(&mut self, msg: Message) -> Result<Loop, Kick> {
+    async fn process_websocket_message(&mut self, msg: Message) -> Result<Loop, Kick> {
         let json = match msg {
             Message::Text(text) => text.to_string(),
             Message::Close(_) => return Ok(Loop::Stop),
@@ -158,16 +153,17 @@ impl Connection {
                 return Ok(Loop::Stop);
             }
             ClientMessage::Host {
-                lid,
+                gid,
                 capacity,
                 listed,
                 player_meta,
                 lobby_meta,
-            } if (1..=MAX_PLAYERS).contains(&capacity)
-                && self.pid.is_none()
-                && self.lid.is_none() =>
-            {
+            } if (1..=MAX_PLAYERS).contains(&capacity) && self.init_session().await => {
                 let pid = rand::random();
+                let lid = LobbyId {
+                    gid,
+                    lid: rand::random(),
+                };
 
                 self.pid = Some(pid);
                 self.lid = Some(lid.clone());
@@ -182,9 +178,7 @@ impl Connection {
                 self.blaster.insert_lobby(&lid, lober).await;
                 self.blaster.introduce_player(pid, &lid, player_meta).await;
             }
-            ClientMessage::Join { lid, player_meta }
-                if self.pid.is_none() && self.lid.is_none() =>
-            {
+            ClientMessage::Join { lid, player_meta } if self.init_session().await => {
                 let pid = rand::random();
 
                 self.pid = Some(pid);
@@ -205,7 +199,7 @@ impl Connection {
                 gid,
                 player_meta,
                 lobby_meta,
-            } if self.pid.is_none() && self.lid.is_none() => {
+            } if self.init_session().await => {
                 let pid = rand::random();
                 self.pid = Some(pid);
 
@@ -336,6 +330,14 @@ impl Connection {
         Ok(Loop::Continue)
     }
 
+    async fn init_session(&mut self) -> bool {
+        self.pid.is_none() && self.lid.is_none() && self.signal_peer_op().await
+    }
+
+    async fn signal_peer_op(&mut self) -> bool {
+        self.blaster.signal_peer_op(&self.addr).await
+    }
+
     async fn send(&mut self, value: &ServerMessage) {
         if let ServerMessage::Disconnected { reason } = value {
             self.bye_reason = Some(reason.clone());
@@ -374,7 +376,7 @@ impl Connection {
         let created_at = Instant::now();
 
         loop {
-            match self.handle_next_websock_msg().await {
+            match self.handle_next_websocket_message().await {
                 Ok(Loop::Continue) => {}
                 Ok(Loop::Stop) => break,
                 Err(reason) => {

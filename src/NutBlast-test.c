@@ -116,7 +116,7 @@ static void draw_gui() {
         i++;
     }
 
-    DrawText("H to host, J to join, U to swarm, K to reset", 0, GetScreenHeight() - fs * 2, fs, BLACK);
+    DrawText("U to join swarm, K to reset, P to ratelimit self", 0, GetScreenHeight() - fs * 2, fs, BLACK);
     DrawText("T to chat (reliable), L to kick everyone", 0, GetScreenHeight() - fs * 1, fs, BLACK);
 }
 
@@ -248,11 +248,9 @@ int main(int argc, char* argv[]) {
     ((char*)(&lid))[3] = 't';
 
     while (!WindowShouldClose()) {
-        if (IsKeyPressed(KEY_H))
-            NutBlast_Host((NutBlast_HostOptions){.lobby_id = lid, .max_players = 4});
-        else if (IsKeyPressed(KEY_J))
-            NutBlast_Join(lid);
-        else if (IsKeyPressed(KEY_U))
+        // TODO: test `NutBlast_Host` & `NutBlast_Join` properly
+
+        if (IsKeyPressed(KEY_U))
             NutBlast_JoinSwarm();
         else if (IsKeyPressed(KEY_K))
             NutBlast_Disconnect();
