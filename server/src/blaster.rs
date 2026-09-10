@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    net::SocketAddr,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -9,13 +10,17 @@ use serde::Deserialize;
 use tokio::sync::oneshot;
 
 use crate::{
-    MAX_PLAYERS,
+    HANDLES_CAP, MAX_PLAYERS,
     id::{BasicId, GameId, LobbyId},
     protocol::{
         payloads::{Kick, LobbyListing, ServerMessage},
         utils::Metadata,
     },
 };
+
+struct SocketConnection {
+    handles: usize,
+}
 
 const MAX_LOBBIES_IN_LIST: usize = 100;
 const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(10);
@@ -71,6 +76,7 @@ pub struct Config {
 struct BlasterImpl {
     lobbies: HashMap<LobbyId, Lobby>,
     players: IndexMap<BasicId, Player>,
+    connections: HashMap<SocketAddr, SocketConnection>,
     config: Config,
 }
 
@@ -422,6 +428,30 @@ impl BlasterImpl {
             BlasterOperation::IsKicked { pid, tx } => {
                 let _ = tx.send(self.players.get(&pid).and_then(|x| x.kick_me_now.clone()));
             }
+            BlasterOperation::AcquireHandle { addr, tx } => {
+                let _ = tx.send(if let Some(conn) = self.connections.get_mut(&addr) {
+                    if conn.handles + 1 >= HANDLES_CAP {
+                        error!("{}: too many handles", addr);
+                        false
+                    } else {
+                        conn.handles += 1;
+                        true
+                    }
+                } else {
+                    self.connections
+                        .insert(addr, SocketConnection { handles: 1 });
+                    true
+                });
+            }
+            BlasterOperation::ReleaseHandle { addr } => {
+                if let Some(conn) = self.connections.get_mut(&addr) {
+                    conn.handles = conn.handles.saturating_sub(1);
+
+                    if conn.handles == 0 {
+                        self.connections.remove(&addr);
+                    }
+                }
+            }
         }
     }
 }
@@ -513,6 +543,13 @@ enum BlasterOperation {
         pid: BasicId,
         tx: oneshot::Sender<Option<Kick>>,
     },
+    AcquireHandle {
+        addr: SocketAddr,
+        tx: oneshot::Sender<bool>,
+    },
+    ReleaseHandle {
+        addr: SocketAddr,
+    },
 }
 
 #[derive(Clone)]
@@ -528,6 +565,7 @@ impl Blaster {
             let mut imp = BlasterImpl {
                 lobbies: HashMap::new(),
                 players: IndexMap::new(),
+                connections: HashMap::new(),
                 config,
             };
 
@@ -710,5 +748,21 @@ impl Blaster {
 
     pub async fn cleanup_lobbies(&self) {
         let _ = self.channel.send(BlasterOperation::CleanupLobbies);
+    }
+
+    pub async fn acquire_handle(&self, addr: &SocketAddr) -> bool {
+        let (tx, rx) = oneshot::channel();
+
+        let _ = self.channel.send(BlasterOperation::AcquireHandle {
+            addr: addr.clone(),
+            tx,
+        });
+
+        rx.await.unwrap_or(false)
+    }
+
+    pub async fn release_handle(&self, addr: &SocketAddr) {
+        let msg = BlasterOperation::ReleaseHandle { addr: addr.clone() };
+        let _ = self.channel.send(msg);
     }
 }

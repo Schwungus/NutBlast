@@ -19,6 +19,7 @@ mod id;
 mod protocol;
 
 pub const MAX_PLAYERS: usize = 16;
+pub const HANDLES_CAP: usize = 8;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -42,12 +43,18 @@ async fn main() -> eyre::Result<()> {
     let blaster = Blaster::new(config);
 
     while let Ok((stream, addr)) = listener.accept().await {
-        let blaster = blaster.clone();
+        if !blaster.acquire_handle(&addr).await {
+            error!("{}: too many handles", addr);
+            // no clean shutdown for you pesky beggars!!!
+            continue;
+        }
 
         let max = 32 * 1024;
         let config = WebSocketConfig::default()
             .max_frame_size(Some(max))
             .max_message_size(Some(max));
+
+        let blaster = blaster.clone();
 
         tokio::spawn(async move {
             info!("conn: {}", addr);
@@ -60,12 +67,15 @@ async fn main() -> eyre::Result<()> {
                     }
                     Err(e) => {
                         error!("{}: {}", addr, e);
+                        blaster.release_handle(&addr).await;
                         return;
                     }
                 };
 
-            let conn = Connection::new(blaster, addr, sender, receiver);
+            let conn = Connection::new(blaster.clone(), addr, sender, receiver);
             conn.mainloop().await;
+
+            blaster.release_handle(&addr).await;
         });
     }
 
