@@ -25,13 +25,13 @@ struct Peer {
 }
 
 impl Peer {
-    const SESSION_OPS_PER_SEC: f32 = 2.0;
+    const SESSION_OPS_RATE: f32 = 2.0;
     const SESSION_OPS_BURST: f32 = 4.0;
 
     fn new() -> Self {
         Self {
             session_count: 1,
-            ops: TokenBucket::new(Self::SESSION_OPS_PER_SEC, Self::SESSION_OPS_BURST),
+            ops: TokenBucket::new(Self::SESSION_OPS_RATE, Self::SESSION_OPS_BURST),
         }
     }
 }
@@ -49,7 +49,7 @@ struct Lobby {
 }
 
 #[derive(Clone)]
-pub struct Player {
+struct Player {
     lid: LobbyId,
     meta: Metadata,
     queue: Vec<ServerMessage>,
@@ -57,7 +57,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn send(&mut self, msg: ServerMessage) {
+    fn send(&mut self, msg: ServerMessage) {
         self.queue.push(msg);
     }
 }
@@ -98,17 +98,12 @@ impl Blaster {
     }
 
     pub async fn close_session(&self, addr: &SocketAddr) {
-        let msg = BlasterOperation::CloseSession { ip: addr.ip() };
-        let _ = self.channel.send(msg);
+        self.execute(BlasterOperation::CloseSession { ip: addr.ip() });
     }
 
     pub async fn is_kicked(&self, pid: &BasicId) -> Option<Kick> {
         let (tx, rx) = oneshot::channel();
-
-        let _ = self
-            .channel
-            .send(BlasterOperation::IsKicked { pid: *pid, tx });
-
+        self.execute(BlasterOperation::IsKicked { pid: *pid, tx });
         rx.await.ok().and_then(|x| x)
     }
 }

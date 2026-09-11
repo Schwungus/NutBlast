@@ -39,7 +39,7 @@ pub struct Session {
 impl Session {
     const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
 
-    const MAX_PAYLOADS_PER_SEC: f32 = 30.0;
+    const MAX_PAYLOADS_RATE: f32 = 30.0;
     const MAX_PAYLOADS_BURST: f32 = 30.0;
 
     pub fn new(
@@ -55,7 +55,7 @@ impl Session {
             receiver,
             pid: None,
             bye_reason: None,
-            ops: TokenBucket::new(Self::MAX_PAYLOADS_PER_SEC, Self::MAX_PAYLOADS_BURST),
+            ops: TokenBucket::new(Self::MAX_PAYLOADS_RATE, Self::MAX_PAYLOADS_BURST),
         }
     }
 

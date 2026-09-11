@@ -25,6 +25,8 @@ pub struct BlasterEventLoop {
 }
 
 impl BlasterEventLoop {
+    const FLUSH_MAX: usize = 10;
+
     pub fn new(config: Config) -> Self {
         Self {
             lobbies: HashMap::new(),
@@ -376,11 +378,12 @@ impl BlasterEventLoop {
             }
             BlasterOperation::FlushPlayerQueue { pid, tx } => {
                 let _ = if let Some(player) = self.players.get_mut(&pid) {
-                    let queue = player.queue.clone();
-                    player.queue.clear();
-                    tx.send(queue)
+                    let count = Self::FLUSH_MAX.min(player.queue.len());
+                    let rest = player.queue.split_off(count);
+                    let _ = tx.send(player.queue.clone());
+                    player.queue = rest;
                 } else {
-                    tx.send(Vec::new())
+                    let _ = tx.send(Vec::new());
                 };
             }
             BlasterOperation::CleanupLobbies => {
