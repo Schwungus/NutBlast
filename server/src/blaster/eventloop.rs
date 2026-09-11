@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 
 use crate::{
     blaster::{BlasterOperation, CHUD_LOBBY_TIMEOUT, Config, Lobby, Peer, Player},
-    id::{BasicId, LobbyId},
+    id::{BasicId, GameId, LobbyId},
     protocol::payloads::{Kick, LobbyListing, ServerMessage},
 };
 
@@ -19,6 +19,7 @@ const LOBBIES_PER_IP: usize = 2;
 const FLUSH_MAX: usize = 10;
 
 pub struct BlasterEventLoop {
+    gid_lobbies: HashMap<GameId, HashSet<BasicId>>,
     lobbies: HashMap<LobbyId, Lobby>,
     players: IndexMap<BasicId, Player>,
     peers: HashMap<IpAddr, Peer>,
@@ -28,6 +29,7 @@ pub struct BlasterEventLoop {
 impl BlasterEventLoop {
     pub fn new(config: Config) -> Self {
         Self {
+            gid_lobbies: HashMap::new(),
             lobbies: HashMap::new(),
             players: IndexMap::new(),
             peers: HashMap::new(),
@@ -35,27 +37,14 @@ impl BlasterEventLoop {
         }
     }
 
-    fn players_in(&self, lid: &LobbyId) -> usize {
-        let mut counter = 0;
-
-        for (_, p) in self.players.iter() {
-            if p.lid == *lid {
-                counter += 1;
-            }
-        }
-
-        counter
-    }
-
     fn master_of(&mut self, lid: &LobbyId) -> Option<BasicId> {
-        let empty = self.players_in(lid) == 0;
         let lobby = self.lobbies.get(lid)?.clone();
 
         if let Some(guy) = self.players.get(&lobby.master)
             && guy.lid == *lid
         {
             Some(lobby.master)
-        } else if empty {
+        } else if lobby.player_count == 0 {
             None
         } else {
             let new = *self.players.iter().find(|(_, p)| p.lid == *lid)?.0;
@@ -80,7 +69,7 @@ impl BlasterEventLoop {
 
     fn lobby_full(&self, lid: &LobbyId) -> bool {
         if let Some(ref lobby) = self.lobbies.get(lid) {
-            return self.players_in(lid) >= lobby.capacity;
+            return lobby.player_count >= lobby.capacity;
         } else {
             return false;
         }
@@ -205,6 +194,7 @@ impl BlasterEventLoop {
                 let Some(Lobby {
                     listed,
                     capacity,
+                    player_count,
                     meta: lobby_meta,
                     ..
                 }) = self.lobbies.get(&lid).cloned()
@@ -213,7 +203,7 @@ impl BlasterEventLoop {
                     return;
                 };
 
-                if self.players_in(&lid) >= capacity {
+                if player_count >= capacity {
                     let _ = tx.send(Err(Kick::violation("lobby_full", "Lobby is full")));
                     return;
                 }
@@ -228,6 +218,10 @@ impl BlasterEventLoop {
                         ip,
                     },
                 );
+
+                if let Some(lober) = self.lobbies.get_mut(&lid) {
+                    lober.player_count += 1;
+                }
 
                 let mastah = self.master_of(&lid);
 
@@ -300,10 +294,12 @@ impl BlasterEventLoop {
                     return;
                 };
 
-                if let Some(lober) = self.lobbies.get_mut(&lid)
-                    && lober.initiator == Some(ip)
-                {
-                    lober.initiator = None;
+                if let Some(lober) = self.lobbies.get_mut(&lid) {
+                    if lober.initiator == Some(ip) {
+                        lober.initiator = None;
+                    }
+
+                    lober.player_count = lober.player_count.saturating_sub(1);
                 }
 
                 let left = ServerMessage::Left { pid, reason };
@@ -330,58 +326,64 @@ impl BlasterEventLoop {
                 }
             }
             BlasterOperation::ListLobbies { gid, limit, tx } => {
-                let mut lobbies: HashMap<LobbyId, LobbyListing> = self
-                    .lobbies
-                    .iter()
+                let lobbies = self
+                    .gid_lobbies
+                    .get(&gid)
+                    .cloned()
+                    .unwrap_or(HashSet::new());
+
+                let lobbies: Vec<LobbyListing> = lobbies
+                    .into_iter()
+                    .take(limit.clamp(1, LOBBY_LISTING_CAP)) // limiting BEFORE filtering because i like shaving off cpu time by 1 nanotick
+                    .filter_map(|lid| {
+                        let lid = LobbyId {
+                            lid,
+                            gid: gid.clone(),
+                        };
+
+                        let lober = self.lobbies.get(&lid)?;
+                        Some((lid, lober))
+                    })
                     .filter_map(|(lid, lobby)| {
-                        if lid.gid != gid || !lobby.listed || self.lobby_full(lid) {
+                        if !lobby.listed || self.lobby_full(&lid) {
                             return None;
                         }
 
-                        let lobby = LobbyListing {
+                        Some(LobbyListing {
                             lid: lid.lid,
                             max: lobby.capacity,
                             players: 0,
                             meta: lobby.meta.clone(),
-                        };
-
-                        Some((lid.clone(), lobby))
+                        })
                     })
-                    .take(limit.clamp(1, LOBBY_LISTING_CAP))
                     .collect();
 
-                for (_, player) in self.players.iter() {
-                    if let Some(lober) = lobbies.get_mut(&player.lid) {
-                        lober.players += 1;
-                    }
-                }
-
-                let _ = tx.send(lobbies.into_values().collect());
+                let _ = tx.send(lobbies);
             }
             BlasterOperation::AdvanceLobbyTimer { pid, tx } => {
                 let Some(Player { lid, .. }) = self.players.get(&pid).clone() else {
                     return;
                 };
 
-                let chud = self.players_in(&lid) == 1;
-
                 let Some(lobby) = self.lobbies.get_mut(&lid) else {
                     return;
                 };
 
-                let mut result = Ok(());
+                let _ = tx.send((move || {
+                    let chud = lobby.player_count < 2;
 
-                if chud && let Some(start) = lobby.death_timer {
-                    if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
-                        result = Err(Kick::natural("inactive_lobby", "Inactive lobby"));
+                    if chud && let Some(start) = lobby.death_timer {
+                        if Instant::now().duration_since(start) >= CHUD_LOBBY_TIMEOUT {
+                            return Err(Kick::natural("inactive_lobby", "Inactive lobby"));
+                        }
+                    } else if chud {
+                        lobby.death_timer = Some(Instant::now());
+                    } else {
+                        lobby.death_timer = None;
                     }
-                } else if chud {
-                    lobby.death_timer = Some(Instant::now());
-                } else {
-                    lobby.death_timer = None;
-                }
 
-                let _ = tx.send(result);
+                    Ok(())
+                })());
             }
             BlasterOperation::FlushPlayerQueue { pid, tx } => {
                 let _ = if let Some(player) = self.players.get_mut(&pid) {
@@ -394,20 +396,26 @@ impl BlasterEventLoop {
                 };
             }
             BlasterOperation::CleanupLobbies => {
-                let mut nonempty = HashSet::new();
+                let mut deletion = HashSet::new();
 
-                for player in self.players.values() {
-                    nonempty.insert(player.lid.clone());
+                for (lid, lober) in self.lobbies.iter() {
+                    if lober.player_count == 0 {
+                        info!("bye lober: {lid:?}");
+                        deletion.insert(lid.clone());
+                    }
                 }
 
-                self.lobbies.retain(move |k, _| {
-                    if nonempty.contains(k) {
-                        return true;
-                    } else {
-                        info!("bye lober: {:?}", k);
-                        return false;
+                for lid in deletion {
+                    if let Some(set) = self.gid_lobbies.get_mut(&lid.gid) {
+                        set.remove(&lid.lid);
+
+                        if set.is_empty() {
+                            self.gid_lobbies.remove(&lid.gid);
+                        }
                     }
-                });
+
+                    self.lobbies.remove(&lid);
+                }
             }
             BlasterOperation::Relay { from, to, msg } => {
                 if let Some(p_from) = self.players.get(&from)
@@ -442,9 +450,10 @@ impl BlasterEventLoop {
                     info!("new lobby {lid:?}");
 
                     self.lobbies.insert(
-                        lid,
+                        lid.clone(),
                         Lobby {
                             initiator: Some(initiator),
+                            player_count: 0,
                             master,
                             meta,
                             capacity,
@@ -452,6 +461,14 @@ impl BlasterEventLoop {
                             death_timer: None,
                         },
                     );
+
+                    if let Some(set) = self.gid_lobbies.get_mut(&lid.gid) {
+                        set.insert(lid.lid);
+                    } else {
+                        let mut set = HashSet::new();
+                        set.insert(lid.lid);
+                        self.gid_lobbies.insert(lid.gid, set);
+                    }
 
                     Ok(())
                 })());
