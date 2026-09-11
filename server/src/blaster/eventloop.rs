@@ -332,7 +332,9 @@ impl BlasterEventLoop {
                 };
 
                 if let Some(lober) = self.lobbies.get_mut(&lid) {
-                    if lober.initiator == Some(ip) {
+                    if lober.initiator == Some(ip)
+                        && !self.players.iter().any(|(_, p)| p.lid == lid && p.ip == ip)
+                    {
                         lober.initiator = None;
                     }
 
