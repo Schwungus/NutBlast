@@ -15,7 +15,6 @@ use crate::{
 const MAX_SESSIONS_PER_IP: usize = 4;
 const GLOBAL_MAX_SESSIONS: usize = 256;
 const LOBBY_LISTING_CAP: usize = 100;
-const LOBBIES_PER_IP: usize = 2;
 const FLUSH_MAX: usize = 10;
 
 pub struct BlasterEventLoop {
@@ -435,15 +434,19 @@ impl BlasterEventLoop {
                 listed,
                 tx,
             } => {
+                const LOBBIES_PER_IP: usize = 4;
+
                 let _ = tx.send((move || {
                     if self.lobbies.contains_key(&lid) {
                         return Err(Kick::violation("lobby_exists", "Lobby already exists"));
                     }
 
-                    let iter = self.lobbies.iter();
-                    let iter = iter.filter(|(_, l)| l.initiator == Some(initiator));
+                    let iter = self.lobbies.values();
+                    let iter = iter.filter(|l| l.initiator == Some(initiator));
 
-                    if iter.count() >= LOBBIES_PER_IP {
+                    if iter.clone().any(|l| l.listed)
+                        || iter.filter(|l| !l.listed).count() >= LOBBIES_PER_IP
+                    {
                         return Err(Kick::violation("rate_limited", "Lobbies per IP limit"));
                     }
 
@@ -506,7 +509,8 @@ impl BlasterEventLoop {
             }
             BlasterOperation::SignalPerIpCap { ip, tx } => {
                 let peer = self.peers.get_mut(&ip);
-                let _ = tx.send(peer.map(|peer| peer.ops.try_take(1)).unwrap_or(false));
+                let peer = peer.map(|peer| peer.ops.try_take(1).is_ok());
+                let _ = tx.send(peer.unwrap_or(false));
             }
         }
     }

@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use crate::protocol::payloads::Kick;
+
 pub struct TokenBucket {
     tokens: f32,
     last_refill: Instant,
@@ -17,7 +19,7 @@ impl TokenBucket {
         }
     }
 
-    pub fn try_take(&mut self, count: usize) -> bool {
+    pub fn try_take(&mut self, count: usize) -> Result<(), Kick> {
         let count = count as f32;
 
         let now = Instant::now();
@@ -25,11 +27,11 @@ impl TokenBucket {
         self.last_refill = now;
         self.tokens = (self.tokens + dt * self.rate).min(self.burst);
 
-        if self.tokens >= count {
-            self.tokens -= count;
-            true
-        } else {
-            false
+        if self.tokens < count {
+            return Err(Kick::violation("rate_limited", "Bandwidth patrol!"));
         }
+
+        self.tokens -= count;
+        Ok(())
     }
 }

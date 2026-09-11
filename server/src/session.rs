@@ -100,18 +100,12 @@ impl Session {
         &mut self,
         msg: Option<Result<Message, TungError>>,
     ) -> Result<Loop, Kick> {
-        if !self.payloads.try_take(1) {
-            // silent rate-limiting might bite me in the ass later but ok
-            return Ok(Loop::Stop);
-        }
+        self.payloads.try_take(1)?;
 
         match msg {
             Some(Ok(msg)) => {
-                return if self.bandwidth.try_take(msg.len()) {
-                    self.process_websocket_message(msg).await
-                } else {
-                    Ok(Loop::Stop) // see the comment above
-                };
+                self.bandwidth.try_take(msg.len())?;
+                return self.process_websocket_message(msg).await;
             }
             Some(Err(e)) => {
                 if !matches!(e, TungError::ConnectionClosed) {
