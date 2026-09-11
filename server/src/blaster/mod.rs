@@ -41,6 +41,7 @@ const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(3);
 
 #[derive(Clone)]
 struct Lobby {
+    initiator: IpAddr,
     master: BasicId,
     meta: Metadata,
     capacity: usize,
@@ -157,6 +158,7 @@ pub enum BlasterOperation {
         tx: oneshot::Sender<Vec<LobbyListing>>,
     },
     InsertLobby {
+        initiator: IpAddr,
         lid: LobbyId,
         master: BasicId,
         meta: Metadata,

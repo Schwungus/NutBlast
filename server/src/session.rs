@@ -176,6 +176,7 @@ impl Session {
                 let (tx, rx) = oneshot::channel();
 
                 let _ = self.execute(BlasterOperation::InsertLobby {
+                    initiator: self.address.ip(),
                     lid: lid.clone(),
                     master: pid,
                     meta: lobby_meta,

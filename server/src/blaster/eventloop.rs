@@ -412,6 +412,7 @@ impl BlasterEventLoop {
                 }
             }
             BlasterOperation::InsertLobby {
+                initiator,
                 lid,
                 master,
                 meta,
@@ -419,14 +420,23 @@ impl BlasterEventLoop {
                 listed,
                 tx,
             } => {
-                let _ = tx.send(if self.lobbies.contains_key(&lid) {
-                    Err(Kick::violation("lobby_exists", "Lobby already exists"))
-                } else {
+                let _ = tx.send((move || {
+                    if self.lobbies.contains_key(&lid) {
+                        return Err(Kick::violation("lobby_exists", "Lobby already exists"));
+                    }
+
+                    let iter = self.lobbies.iter();
+
+                    if iter.filter(|(_, l)| l.initiator == initiator).count() > 0 {
+                        return Err(Kick::violation("rate_limited", "One lobby per IP please"));
+                    }
+
                     info!("new lobby {lid:?}");
 
                     self.lobbies.insert(
                         lid,
                         Lobby {
+                            initiator,
                             master,
                             meta,
                             capacity,
@@ -436,7 +446,7 @@ impl BlasterEventLoop {
                     );
 
                     Ok(())
-                });
+                })());
             }
             BlasterOperation::IsKicked { pid, tx } => {
                 let _ = tx.send(self.players.get(&pid).and_then(|x| x.kick_me_now.clone()));
