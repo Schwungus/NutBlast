@@ -444,8 +444,7 @@ impl BlasterEventLoop {
                     let iter = self.lobbies.values();
                     let iter = iter.filter(|l| l.initiator == Some(initiator));
 
-                    if iter.clone().any(|l| l.listed)
-                        || iter.filter(|l| !l.listed).count() >= LOBBIES_PER_IP
+                    if (listed && iter.clone().any(|l| l.listed)) || iter.count() >= LOBBIES_PER_IP
                     {
                         return Err(Kick::violation("rate_limited", "Lobbies per IP limit"));
                     }
