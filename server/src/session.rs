@@ -49,8 +49,8 @@ impl Session {
         const MAX_PAYLOADS_RATE: f32 = 30.0;
         const MAX_PAYLOADS_BURST: f32 = 30.0;
 
-        const MAX_BANDWIDTH_RATE: f32 = 2048.0;
-        const MAX_BANDWIDTH_BURST: f32 = 4096.0;
+        const MAX_BANDWIDTH_RATE: f32 = 4096.0;
+        const MAX_BANDWIDTH_BURST: f32 = 12288.0;
 
         Self {
             blaster,
