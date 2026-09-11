@@ -390,8 +390,6 @@ impl Session {
         if let Ok(mut ws) = self.receiver.reunite(self.sender) {
             let _ = ws.close(None).await;
         }
-
-        self.blaster.execute(BlasterOperation::CleanupLobbies);
     }
 }
 

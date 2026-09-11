@@ -151,6 +151,29 @@ impl BlasterEventLoop {
         }
     }
 
+    fn cleanup_lobbies(&mut self) {
+        let mut deletion = HashSet::new();
+
+        for (lid, lober) in self.lobbies.iter() {
+            if lober.player_count == 0 {
+                info!("bye lober: {lid:?}");
+                deletion.insert(lid.clone());
+            }
+        }
+
+        for lid in deletion {
+            if let Some(set) = self.gid_lobbies.get_mut(&lid.gid) {
+                set.remove(&lid.lid);
+
+                if set.is_empty() {
+                    self.gid_lobbies.remove(&lid.gid);
+                }
+            }
+
+            self.lobbies.remove(&lid);
+        }
+    }
+
     pub fn recv(&mut self, msg: BlasterOperation) {
         match msg {
             BlasterOperation::SetCapacity {
@@ -321,6 +344,8 @@ impl BlasterEventLoop {
                     let msg = ServerMessage::SetMaster { pid: mastah };
                     self.send_to_lobby(&lid, &msg);
                 }
+
+                self.cleanup_lobbies();
             }
             BlasterOperation::SetMaster {
                 initiator,
@@ -406,28 +431,6 @@ impl BlasterEventLoop {
                 } else {
                     let _ = tx.send(Vec::new());
                 };
-            }
-            BlasterOperation::CleanupLobbies => {
-                let mut deletion = HashSet::new();
-
-                for (lid, lober) in self.lobbies.iter() {
-                    if lober.player_count == 0 {
-                        info!("bye lober: {lid:?}");
-                        deletion.insert(lid.clone());
-                    }
-                }
-
-                for lid in deletion {
-                    if let Some(set) = self.gid_lobbies.get_mut(&lid.gid) {
-                        set.remove(&lid.lid);
-
-                        if set.is_empty() {
-                            self.gid_lobbies.remove(&lid.gid);
-                        }
-                    }
-
-                    self.lobbies.remove(&lid);
-                }
             }
             BlasterOperation::Relay { from, to, msg } => {
                 if let Some(p_from) = self.players.get(&from)

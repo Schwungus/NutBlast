@@ -115,7 +115,6 @@ impl Blaster {
 }
 
 pub enum BlasterOperation {
-    CleanupLobbies,
     SetCapacity {
         initiator: BasicId,
         capacity: usize,
