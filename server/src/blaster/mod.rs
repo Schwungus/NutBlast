@@ -59,10 +59,10 @@ struct Player {
 }
 
 impl Player {
-    const QUEUE_CAP: usize = 30;
-
     fn send(&mut self, msg: ServerMessage) {
-        if self.queue.len() < Self::QUEUE_CAP {
+        const QUEUE_CAP: usize = 120;
+
+        if matches!(msg, ServerMessage::Disconnected { .. }) || self.queue.len() < QUEUE_CAP {
             self.queue.push(msg);
         }
     }
