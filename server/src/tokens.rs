@@ -17,14 +17,16 @@ impl TokenBucket {
         }
     }
 
-    pub fn try_take(&mut self) -> bool {
+    pub fn try_take(&mut self, count: usize) -> bool {
+        let count = count as f32;
+
         let now = Instant::now();
         let dt = now.duration_since(self.last_refill).as_secs_f32();
         self.last_refill = now;
         self.tokens = (self.tokens + dt * self.rate).min(self.burst);
 
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
+        if self.tokens >= count {
+            self.tokens -= count;
             true
         } else {
             false

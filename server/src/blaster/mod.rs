@@ -36,12 +36,11 @@ impl Peer {
     }
 }
 
-const MAX_LOBBIES_IN_LIST: usize = 100;
 const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(3);
 
 #[derive(Clone)]
 struct Lobby {
-    initiator: IpAddr,
+    initiator: Option<IpAddr>,
     master: BasicId,
     meta: Metadata,
     capacity: usize,
@@ -51,6 +50,7 @@ struct Lobby {
 
 #[derive(Clone)]
 struct Player {
+    ip: IpAddr,
     lid: LobbyId,
     meta: Metadata,
     queue: Vec<ServerMessage>,
@@ -58,8 +58,12 @@ struct Player {
 }
 
 impl Player {
+    const QUEUE_CAP: usize = 30;
+
     fn send(&mut self, msg: ServerMessage) {
-        self.queue.push(msg);
+        if self.queue.len() < Self::QUEUE_CAP {
+            self.queue.push(msg);
+        }
     }
 }
 
@@ -142,6 +146,7 @@ pub enum BlasterOperation {
         key: String,
     },
     IntroducePlayer {
+        ip: IpAddr,
         pid: BasicId,
         lid: LobbyId,
         player_meta: Metadata,
@@ -193,7 +198,7 @@ pub enum BlasterOperation {
     CloseSession {
         ip: IpAddr,
     },
-    SignalPeerOperation {
+    SignalPerIpCap {
         ip: IpAddr,
         tx: oneshot::Sender<bool>,
     },

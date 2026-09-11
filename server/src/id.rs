@@ -9,10 +9,12 @@ fn validate_gid<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: de::Deserializer<'de>,
 {
+    const MAX_LEN: usize = 63;
+
     let gid = String::deserialize(deserializer)?;
 
-    if gid.len() < 1 || gid.len() > GameId::MAX_LEN {
-        let msg = format!("game ID must be within 1..={} bytes", GameId::MAX_LEN);
+    if gid.is_empty() || gid.len() > MAX_LEN {
+        let msg = format!("game ID must be nonempty, up to {MAX_LEN} bytes");
         return Err(de::Error::custom(msg));
     }
 
@@ -24,10 +26,6 @@ where
     }
 
     Ok(gid)
-}
-
-impl GameId {
-    pub const MAX_LEN: usize = 63;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]

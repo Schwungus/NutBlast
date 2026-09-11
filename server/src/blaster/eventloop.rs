@@ -7,15 +7,16 @@ use std::{
 use indexmap::IndexMap;
 
 use crate::{
-    blaster::{
-        BlasterOperation, CHUD_LOBBY_TIMEOUT, Config, Lobby, MAX_LOBBIES_IN_LIST, Peer, Player,
-    },
+    blaster::{BlasterOperation, CHUD_LOBBY_TIMEOUT, Config, Lobby, Peer, Player},
     id::{BasicId, LobbyId},
     protocol::payloads::{Kick, LobbyListing, ServerMessage},
 };
 
 const MAX_SESSIONS_PER_IP: usize = 4;
 const GLOBAL_MAX_SESSIONS: usize = 256;
+const LOBBY_LISTING_CAP: usize = 100;
+const LOBBIES_PER_IP: usize = 2;
+const FLUSH_MAX: usize = 10;
 
 pub struct BlasterEventLoop {
     lobbies: HashMap<LobbyId, Lobby>,
@@ -25,8 +26,6 @@ pub struct BlasterEventLoop {
 }
 
 impl BlasterEventLoop {
-    const FLUSH_MAX: usize = 10;
-
     pub fn new(config: Config) -> Self {
         Self {
             lobbies: HashMap::new(),
@@ -197,6 +196,7 @@ impl BlasterEventLoop {
                 }
             }
             BlasterOperation::IntroducePlayer {
+                ip,
                 pid,
                 lid,
                 player_meta,
@@ -225,6 +225,7 @@ impl BlasterEventLoop {
                         meta: player_meta.clone(),
                         queue: Vec::new(),
                         kick_me_now: None,
+                        ip,
                     },
                 );
 
@@ -295,9 +296,15 @@ impl BlasterEventLoop {
                 }
             }
             BlasterOperation::RemovePlayer { pid, reason } => {
-                let Some(Player { lid, .. }) = self.players.shift_remove(&pid) else {
+                let Some(Player { ip, lid, .. }) = self.players.shift_remove(&pid) else {
                     return;
                 };
+
+                if let Some(lober) = self.lobbies.get_mut(&lid)
+                    && lober.initiator == Some(ip)
+                {
+                    lober.initiator = None;
+                }
 
                 let left = ServerMessage::Left { pid, reason };
                 self.send_to_lobby(&lid, &left);
@@ -340,7 +347,7 @@ impl BlasterEventLoop {
 
                         Some((lid.clone(), lobby))
                     })
-                    .take(limit.clamp(1, MAX_LOBBIES_IN_LIST))
+                    .take(limit.clamp(1, LOBBY_LISTING_CAP))
                     .collect();
 
                 for (_, player) in self.players.iter() {
@@ -378,7 +385,7 @@ impl BlasterEventLoop {
             }
             BlasterOperation::FlushPlayerQueue { pid, tx } => {
                 let _ = if let Some(player) = self.players.get_mut(&pid) {
-                    let count = Self::FLUSH_MAX.min(player.queue.len());
+                    let count = FLUSH_MAX.min(player.queue.len());
                     let rest = player.queue.split_off(count);
                     let _ = tx.send(player.queue.clone());
                     player.queue = rest;
@@ -426,9 +433,10 @@ impl BlasterEventLoop {
                     }
 
                     let iter = self.lobbies.iter();
+                    let iter = iter.filter(|(_, l)| l.initiator == Some(initiator));
 
-                    if iter.filter(|(_, l)| l.initiator == initiator).count() > 0 {
-                        return Err(Kick::violation("rate_limited", "One lobby per IP please"));
+                    if iter.count() >= LOBBIES_PER_IP {
+                        return Err(Kick::violation("rate_limited", "Lobbies per IP limit"));
                     }
 
                     info!("new lobby {lid:?}");
@@ -436,7 +444,7 @@ impl BlasterEventLoop {
                     self.lobbies.insert(
                         lid,
                         Lobby {
-                            initiator,
+                            initiator: Some(initiator),
                             master,
                             meta,
                             capacity,
@@ -479,9 +487,9 @@ impl BlasterEventLoop {
                     }
                 }
             }
-            BlasterOperation::SignalPeerOperation { ip, tx } => {
+            BlasterOperation::SignalPerIpCap { ip, tx } => {
                 let peer = self.peers.get_mut(&ip);
-                let _ = tx.send(peer.map(|peer| peer.ops.try_take()).unwrap_or(false));
+                let _ = tx.send(peer.map(|peer| peer.ops.try_take(1)).unwrap_or(false));
             }
         }
     }

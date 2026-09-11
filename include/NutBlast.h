@@ -41,7 +41,7 @@ extern "C" {
 #define NUTBLAST_MAX_PLAYERS (16)
 #define NUTBLAST_MAX_FIELDS (16)
 #define NUTBLAST_FIELD_NAME_MAX (255)
-#define NUTBLAST_FIELD_VALUE_MAX (8191)
+#define NUTBLAST_FIELD_VALUE_MAX (1023)
 
 // NOTE: same with these field and error macros for any special behavior:
 

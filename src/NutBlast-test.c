@@ -256,6 +256,8 @@ int main(int argc, char* argv[]) {
     ((char*)(&lid))[2] = 's';
     ((char*)(&lid))[3] = 't';
 
+    double next_search = GetTime();
+
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H)) {
             NutBlast_Disconnect();
@@ -265,8 +267,9 @@ int main(int argc, char* argv[]) {
             NutBlast_Join(existing_lobby);
         } else if (IsKeyPressed(KEY_K)) {
             NutBlast_Disconnect();
-        } else if (!NutBlast_IsConnecting()) {
+        } else if (!NutBlast_IsConnecting() && GetTime() >= next_search) {
             NutBlast_FindLobbies(1);
+            next_search = GetTime() + 3.0;
         }
 
         move_our_rect();

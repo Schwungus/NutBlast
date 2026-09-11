@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize, de};
 
 const FIELD_NAME_MAX: usize = 255;
-const FIELD_VALUE_MAX: usize = 8191;
+const FIELD_VALUE_MAX: usize = 1023;
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct FieldKey(#[serde(deserialize_with = "deserialize_field_name")] pub String);

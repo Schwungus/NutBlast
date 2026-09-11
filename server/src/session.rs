@@ -24,7 +24,7 @@ use crate::{
     tokens::TokenBucket,
 };
 
-pub const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
+const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
 pub struct Session {
     blaster: Blaster,
@@ -33,14 +33,12 @@ pub struct Session {
     sender: SplitSink<WebSocketStream<TcpStream>, Message>,
     pid: Option<BasicId>,
     bye_reason: Option<Kick>,
-    ops: TokenBucket,
+    payloads: TokenBucket,
+    bandwidth: TokenBucket,
 }
 
 impl Session {
     const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
-
-    const MAX_PAYLOADS_RATE: f32 = 30.0;
-    const MAX_PAYLOADS_BURST: f32 = 30.0;
 
     pub fn new(
         blaster: Blaster,
@@ -48,6 +46,12 @@ impl Session {
         sender: SplitSink<WebSocketStream<TcpStream>, Message>,
         receiver: SplitStream<WebSocketStream<TcpStream>>,
     ) -> Self {
+        const MAX_PAYLOADS_RATE: f32 = 30.0;
+        const MAX_PAYLOADS_BURST: f32 = 30.0;
+
+        const MAX_BANDWIDTH_RATE: f32 = 2048.0;
+        const MAX_BANDWIDTH_BURST: f32 = 4096.0;
+
         Self {
             blaster,
             address,
@@ -55,7 +59,8 @@ impl Session {
             receiver,
             pid: None,
             bye_reason: None,
-            ops: TokenBucket::new(Self::MAX_PAYLOADS_RATE, Self::MAX_PAYLOADS_BURST),
+            payloads: TokenBucket::new(MAX_PAYLOADS_RATE, MAX_PAYLOADS_BURST),
+            bandwidth: TokenBucket::new(MAX_BANDWIDTH_RATE, MAX_BANDWIDTH_BURST),
         }
     }
 
@@ -95,14 +100,18 @@ impl Session {
         &mut self,
         msg: Option<Result<Message, TungError>>,
     ) -> Result<Loop, Kick> {
-        if !self.ops.try_take() {
-            warn!("CALM DOWN, {}", self.address);
-            return Err(Kick::violation("rate_limited", "Too many payloads"));
+        if !self.payloads.try_take(1) {
+            // silent rate-limiting might bite me in the ass later but ok
+            return Ok(Loop::Stop);
         }
 
         match msg {
             Some(Ok(msg)) => {
-                return self.process_websocket_message(msg).await;
+                return if self.bandwidth.try_take(msg.len()) {
+                    self.process_websocket_message(msg).await
+                } else {
+                    Ok(Loop::Stop) // see the comment above
+                };
             }
             Some(Err(e)) => {
                 if !matches!(e, TungError::ConnectionClosed) {
@@ -144,7 +153,7 @@ impl Session {
                     self.relay(*pid, *pid, ServerMessage::Pong).await;
                 }
             }
-            ClientMessage::List { gid, limit } => {
+            ClientMessage::List { gid, limit } if self.is_fresh().await => {
                 let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::ListLobbies {
@@ -164,7 +173,7 @@ impl Session {
                 listed,
                 player_meta,
                 lobby_meta,
-            } if (1..=MAX_PLAYERS).contains(&capacity) && self.init_session().await => {
+            } if (1..=MAX_PLAYERS).contains(&capacity) && self.is_fresh().await => {
                 let pid = rand::random();
                 self.pid = Some(pid);
 
@@ -188,12 +197,11 @@ impl Session {
                 let _ = rx.await.unwrap_or(Ok(()))?;
                 info!("new lobby max={capacity} {lid:?}");
 
-                self.introduce_player(pid, &lid, player_meta).await?;
+                self.introduce_player(&lid, player_meta).await?;
             }
-            ClientMessage::Join { lid, player_meta } if self.init_session().await => {
-                let pid = rand::random();
-                self.pid = Some(pid);
-                self.introduce_player(pid, &lid, player_meta).await?;
+            ClientMessage::Join { lid, player_meta } if self.is_fresh().await => {
+                self.pid = Some(rand::random());
+                self.introduce_player(&lid, player_meta).await?;
             }
             ClientMessage::PassCandidate {
                 ref to,
@@ -289,15 +297,15 @@ impl Session {
         let _ = self.execute(op);
     }
 
-    async fn introduce_player(
-        &self,
-        pid: BasicId,
-        lid: &LobbyId,
-        player_meta: Metadata,
-    ) -> Result<(), Kick> {
+    async fn introduce_player(&self, lid: &LobbyId, player_meta: Metadata) -> Result<(), Kick> {
+        let Some(pid) = self.pid else {
+            return Ok(());
+        };
+
         let (tx, rx) = oneshot::channel();
 
         self.execute(BlasterOperation::IntroducePlayer {
+            ip: self.address.ip(),
             pid,
             lid: lid.clone(),
             player_meta,
@@ -307,14 +315,14 @@ impl Session {
         rx.await.unwrap_or(Ok(()))
     }
 
-    async fn init_session(&mut self) -> bool {
-        self.pid.is_none() && self.signal_peer_op().await
+    async fn is_fresh(&mut self) -> bool {
+        self.pid.is_none() && self.cap_ip().await
     }
 
-    async fn signal_peer_op(&mut self) -> bool {
+    async fn cap_ip(&mut self) -> bool {
         let (tx, rx) = oneshot::channel();
 
-        let _ = self.execute(BlasterOperation::SignalPeerOperation {
+        let _ = self.execute(BlasterOperation::SignalPerIpCap {
             ip: self.address.ip(),
             tx,
         });
