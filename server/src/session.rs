@@ -19,7 +19,7 @@ use crate::{
     id::{BasicId, LobbyId},
     protocol::{
         payloads::{ClientMessage, Kick, ServerMessage},
-        utils::{FieldKey, FieldValue, Metadata},
+        utils::{FieldKey, FieldValue},
     },
     tokens::TokenBucket,
 };
@@ -178,24 +178,37 @@ impl Session {
 
                 let (tx, rx) = oneshot::channel();
 
-                let _ = self.execute(BlasterOperation::InsertLobby {
+                let _ = self.execute(BlasterOperation::HostLobby {
                     initiator: self.address.ip(),
                     lid: lid.clone(),
                     master: pid,
-                    meta: lobby_meta,
+                    lobby_meta,
                     capacity,
                     listed,
+                    pid,
+                    player_meta,
                     tx,
                 });
 
-                let _ = rx.await.unwrap_or(Ok(()))?;
-                info!("new lobby max={capacity} {lid:?}");
+                rx.await.unwrap_or(Ok(()))?;
 
-                self.introduce_player(&lid, player_meta).await?;
+                info!("new lobby max={capacity} {lid:?}");
             }
             ClientMessage::Join { lid, player_meta } if self.is_fresh().await => {
-                self.pid = Some(rand::random());
-                self.introduce_player(&lid, player_meta).await?;
+                let pid = rand::random();
+                self.pid = Some(pid);
+
+                let (tx, rx) = oneshot::channel();
+
+                self.execute(BlasterOperation::JoinLobby {
+                    ip: self.address.ip(),
+                    pid,
+                    lid: lid.clone(),
+                    player_meta,
+                    tx,
+                });
+
+                rx.await.unwrap_or(Ok(()))?;
             }
             ClientMessage::PassCandidate {
                 ref to,
@@ -289,24 +302,6 @@ impl Session {
     async fn relay(&self, from: BasicId, to: BasicId, msg: ServerMessage) {
         let op = BlasterOperation::Relay { from, to, msg };
         let _ = self.execute(op);
-    }
-
-    async fn introduce_player(&self, lid: &LobbyId, player_meta: Metadata) -> Result<(), Kick> {
-        let Some(pid) = self.pid else {
-            return Ok(());
-        };
-
-        let (tx, rx) = oneshot::channel();
-
-        self.execute(BlasterOperation::IntroducePlayer {
-            ip: self.address.ip(),
-            pid,
-            lid: lid.clone(),
-            player_meta,
-            tx,
-        });
-
-        rx.await.unwrap_or(Ok(()))
     }
 
     async fn is_fresh(&mut self) -> bool {

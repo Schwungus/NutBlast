@@ -146,7 +146,7 @@ pub enum BlasterOperation {
         initiator: BasicId,
         key: String,
     },
-    IntroducePlayer {
+    JoinLobby {
         ip: IpAddr,
         pid: BasicId,
         lid: LobbyId,
@@ -163,13 +163,15 @@ pub enum BlasterOperation {
         limit: usize,
         tx: oneshot::Sender<Vec<LobbyListing>>,
     },
-    InsertLobby {
+    HostLobby {
         initiator: IpAddr,
         lid: LobbyId,
         master: BasicId,
-        meta: Metadata,
+        lobby_meta: Metadata,
         capacity: usize,
         listed: bool,
+        pid: BasicId,
+        player_meta: Metadata,
         tx: oneshot::Sender<Result<(), Kick>>,
     },
     KickPlayer {
