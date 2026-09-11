@@ -333,7 +333,6 @@ impl BlasterEventLoop {
 
                 let lobbies: Vec<LobbyListing> = lobbies
                     .into_iter()
-                    .take(limit.clamp(1, LOBBY_LISTING_CAP)) // limiting BEFORE filtering because i like shaving off cpu time by 1 nanotick
                     .filter_map(|lid| {
                         let lid = LobbyId {
                             lid,
@@ -351,10 +350,11 @@ impl BlasterEventLoop {
                         Some(LobbyListing {
                             lid: lid.lid,
                             max: lobby.capacity,
-                            players: 0,
+                            players: lobby.player_count,
                             meta: lobby.meta.clone(),
                         })
                     })
+                    .take(limit.clamp(1, LOBBY_LISTING_CAP))
                     .collect();
 
                 let _ = tx.send(lobbies);
