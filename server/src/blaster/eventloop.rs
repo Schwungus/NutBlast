@@ -17,7 +17,9 @@ use crate::{
 
 const MAX_SESSIONS_PER_IP: usize = 4;
 const GLOBAL_MAX_SESSIONS: usize = 256;
-const LOBBY_LISTING_CAP: usize = 100;
+const LOBBY_LISTING_CAP: usize = 32;
+const LISTED_LOBBIES_PER_GID: usize = 32;
+const LOBBIES_PER_IP: usize = 4;
 const FLUSH_MAX: usize = 10;
 
 pub struct BlasterEventLoop {
@@ -452,8 +454,6 @@ impl BlasterEventLoop {
                 player_meta,
                 tx,
             } => {
-                const LOBBIES_PER_IP: usize = 4;
-
                 let _ = tx.send((move || {
                     if self.lobbies.contains_key(&lid) {
                         return Err(Kick::violation("lobby_exists", "Lobby already exists"));
@@ -461,10 +461,27 @@ impl BlasterEventLoop {
 
                     let iter = self.lobbies.values();
                     let iter = iter.filter(|l| l.initiator == Some(initiator));
+                    let ip_has_listed = iter.clone().any(|l| l.listed);
 
-                    if (listed && iter.clone().any(|l| l.listed)) || iter.count() >= LOBBIES_PER_IP
-                    {
+                    if (listed && ip_has_listed) || iter.count() >= LOBBIES_PER_IP {
                         return Err(Kick::violation("rate_limited", "Lobbies per IP limit"));
+                    }
+
+                    if listed && let Some(set) = self.gid_lobbies.get(&lid.gid) {
+                        let mut lid = lid.clone();
+
+                        let count = set
+                            .iter()
+                            .filter_map(|&id| {
+                                lid.lid = id;
+                                self.lobbies.get(&lid)
+                            })
+                            .filter(|l| l.listed)
+                            .count();
+
+                        if count >= LISTED_LOBBIES_PER_GID {
+                            return Err(Kick::violation("rate_limited", "Lobbies per GID limit"));
+                        }
                     }
 
                     info!("new lobby {lid:?}");
