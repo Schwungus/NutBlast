@@ -38,8 +38,6 @@ pub struct Session {
 }
 
 impl Session {
-    const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
-
     pub fn new(
         blaster: Blaster,
         address: SocketAddr,
@@ -355,6 +353,7 @@ impl Session {
     }
 
     pub async fn mainloop(mut self) {
+        const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
         let created_at = Instant::now();
 
         loop {
@@ -374,8 +373,7 @@ impl Session {
                 }
             }
 
-            if self.pid.is_none() && Instant::now().duration_since(created_at) > Self::IDLE_TIMEOUT
-            {
+            if self.pid.is_none() && Instant::now().duration_since(created_at) > IDLE_TIMEOUT {
                 break;
             }
         }

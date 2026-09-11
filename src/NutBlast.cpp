@@ -56,7 +56,7 @@ namespace ns {
 };
 
 namespace interval {
-    constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second;
+    constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second, sdp_timeout = 5 * ::ns::second;
 };
 
 template <typename T> static T copy_and_clear(T& obj) {
@@ -188,6 +188,8 @@ struct Player : std::enable_shared_from_this<Player> {
 
     std::vector<rtc::Candidate> outgoing_candidates;
     std::mutex outgoing_candidates_mutex;
+
+    std::optional<std::uint64_t> sdp_timeout = std::nullopt;
 
     Player(NutBlast_ID pid, const Metadata& meta) : pid(pid), meta(meta) {}
 
@@ -351,6 +353,7 @@ void Player::engage() {
         return;
 
     const auto id = this->pid;
+    sdp_timeout = NutBlast_TimeNS() + ::interval::sdp_timeout;
 
     pc = std::make_shared<rtc::PeerConnection>(::rtc_config);
 
@@ -1073,9 +1076,25 @@ extern "C" void NutBlast_Update() {
         return;
     }
 
-    if (::permission_to_cook)
-        for (auto& [id, player] : ::players)
+    if (::permission_to_cook) {
+        for (auto& [id, player] : ::players) {
+            if (player->unreliable_dc != nullptr && player->unreliable_dc->isOpen())
+                player->sdp_timeout = std::nullopt;
+
+            // nonk: i think it's a lot more humane to disconnect yourself and let others play, instead of kicking
+            // everyone who isn't connecting up properly. the latter approach would also NOT work for anyone that isn't
+            // the lobby's master: keep in mind that in a 3-peer scenario (or more, but let's assume a "triangle" mesh),
+            // the first two peers may be able to reach one another, while the third peer may have trouble connecting to
+            // either of them; and that would cut the triangular mesh down to a plain old angle.
+            if (player->sdp_timeout.has_value() && NutBlast_TimeNS() >= *player->sdp_timeout) {
+                ::time_to_die = true;
+                ::log(NB_LogError, "Humane disconnection");
+                return;
+            }
+
             player->engage();
+        }
+    }
 
     if (NutBlast_IsReady()) {
         if (::fire_ready && ::mode != Mode::List) {

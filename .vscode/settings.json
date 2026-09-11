@@ -15,7 +15,7 @@
         ".clang*": "yaml"
     },
     "prettier.enable": false,
-    "rewrap.wrappingColumn": 100,
+    "rewrap.wrappingColumn": 120,
     "[c]": {
         "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
     },
