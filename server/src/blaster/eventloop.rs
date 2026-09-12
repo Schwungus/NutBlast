@@ -429,9 +429,7 @@ impl BlasterEventLoop {
             BlasterOperation::FlushPlayerQueue { pid, tx } => {
                 let _ = if let Some(player) = self.players.get_mut(&pid) {
                     let count = FLUSH_MAX.min(player.queue.len());
-                    let rest = player.queue.split_off(count);
-                    let _ = tx.send(player.queue.clone());
-                    player.queue = rest;
+                    let _ = tx.send(player.queue.drain(..count).collect());
                 } else {
                     let _ = tx.send(Vec::new());
                 };

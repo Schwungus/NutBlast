@@ -118,3 +118,35 @@ mod tests {
         unwrap_key("0");
     }
 }
+
+#[derive(Debug, Deserialize)]
+pub struct CandidateString(#[serde(deserialize_with = "validate_candidate")] pub String);
+
+fn validate_candidate<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let candiate = String::deserialize(deserializer)?;
+
+    if candiate.len() > 512 {
+        return Err(de::Error::custom("up to 512 bytes pl0x"));
+    }
+
+    Ok(candiate)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SdpString(#[serde(deserialize_with = "validate_sdp")] pub String);
+
+fn validate_sdp<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let sdp = String::deserialize(deserializer)?;
+
+    if sdp.len() > 4096 {
+        return Err(de::Error::custom("up to 4096 bytes pl0x"));
+    }
+
+    Ok(sdp)
+}

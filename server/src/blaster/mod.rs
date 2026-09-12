@@ -25,13 +25,10 @@ struct Peer {
 }
 
 impl Peer {
-    const SESSION_OPS_RATE: f32 = 2.0;
-    const SESSION_OPS_BURST: f32 = 4.0;
-
     fn new() -> Self {
         Self {
             session_count: 1,
-            ops: TokenBucket::new(Self::SESSION_OPS_RATE, Self::SESSION_OPS_BURST),
+            ops: TokenBucket::new(2.0, 3.0, 4.0),
         }
     }
 }

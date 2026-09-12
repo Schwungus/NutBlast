@@ -19,7 +19,7 @@ use crate::{
     id::{BasicId, LobbyId},
     protocol::{
         payloads::{ClientMessage, Kick, ServerMessage},
-        utils::{FieldKey, FieldValue},
+        utils::{CandidateString, FieldKey, FieldValue, SdpString},
     },
     tokens::TokenBucket,
 };
@@ -33,8 +33,9 @@ pub struct Session {
     sender: SplitSink<WebSocketStream<TcpStream>, Message>,
     pid: Option<BasicId>,
     bye_reason: Option<Kick>,
-    payloads: TokenBucket,
-    bandwidth: TokenBucket,
+    payloads_budget: TokenBucket,
+    relays_budget: TokenBucket,
+    bandwidth_budget: TokenBucket,
 }
 
 impl Session {
@@ -44,21 +45,16 @@ impl Session {
         sender: SplitSink<WebSocketStream<TcpStream>, Message>,
         receiver: SplitStream<WebSocketStream<TcpStream>>,
     ) -> Self {
-        const MAX_PAYLOADS_RATE: f32 = 30.0;
-        const MAX_PAYLOADS_BURST: f32 = 30.0;
-
-        const MAX_BANDWIDTH_RATE: f32 = 4096.0;
-        const MAX_BANDWIDTH_BURST: f32 = 12288.0;
-
         Self {
+            payloads_budget: TokenBucket::new(30.0, 30.0, 60.0),
+            relays_budget: TokenBucket::new(5.0, 5.0, 40.0),
+            bandwidth_budget: TokenBucket::new(4096.0, 4096.0, 12288.0),
+            pid: None,
+            bye_reason: None,
             blaster,
             address,
             sender,
             receiver,
-            pid: None,
-            bye_reason: None,
-            payloads: TokenBucket::new(MAX_PAYLOADS_RATE, MAX_PAYLOADS_BURST),
-            bandwidth: TokenBucket::new(MAX_BANDWIDTH_RATE, MAX_BANDWIDTH_BURST),
         }
     }
 
@@ -98,24 +94,21 @@ impl Session {
         &mut self,
         msg: Option<Result<Message, TungError>>,
     ) -> Result<Loop, Kick> {
-        self.payloads.try_take(1)?;
-
         match msg {
             Some(Ok(msg)) => {
-                self.bandwidth.try_take(msg.len())?;
+                self.payloads_budget.try_take(1)?;
+                self.bandwidth_budget.try_take(msg.len())?;
                 return self.process_websocket_message(msg).await;
             }
             Some(Err(e)) => {
                 if !matches!(e, TungError::ConnectionClosed) {
                     error!("{}: {}", self.address, e);
                 }
-
-                return Ok(Loop::Stop);
             }
-            None => {
-                return Ok(Loop::Stop);
-            }
+            None => {}
         }
+
+        Ok(Loop::Stop)
     }
 
     async fn process_websocket_message(&mut self, msg: Message) -> Result<Loop, Kick> {
@@ -141,8 +134,8 @@ impl Session {
 
         match msg {
             ClientMessage::Ping => {
-                if let Some(ref pid) = self.pid {
-                    self.relay(*pid, *pid, ServerMessage::Pong).await;
+                if self.pid.is_some() {
+                    self.send(&ServerMessage::Pong).await;
                 }
             }
             ClientMessage::List { gid, limit } if self.is_fresh().await => {
@@ -209,9 +202,9 @@ impl Session {
                 rx.await.unwrap_or(Ok(()))?;
             }
             ClientMessage::PassCandidate {
-                ref to,
-                candidate,
-                mid,
+                to,
+                candidate: CandidateString(candidate),
+                mid: CandidateString(mid),
             } if let Some(from) = self.pid => {
                 let msg = ServerMessage::Candidate {
                     from,
@@ -219,15 +212,19 @@ impl Session {
                     mid,
                 };
 
-                self.relay(from, *to, msg).await;
+                self.relay(from, to, msg);
             }
-            ClientMessage::PassOffer { ref to, sdp } if let Some(from) = self.pid => {
-                let msg = ServerMessage::Offer { from, sdp };
-                self.relay(from, *to, msg).await;
+            ClientMessage::PassOffer {
+                to,
+                sdp: SdpString(sdp),
+            } if let Some(from) = self.pid => {
+                self.relay(from, to, ServerMessage::Offer { from, sdp });
             }
-            ClientMessage::PassAnswer { ref to, sdp } if let Some(from) = self.pid => {
-                let msg = ServerMessage::Answer { from, sdp };
-                self.relay(from, *to, msg).await;
+            ClientMessage::PassAnswer {
+                to,
+                sdp: SdpString(sdp),
+            } if let Some(from) = self.pid => {
+                self.relay(from, to, ServerMessage::Answer { from, sdp });
             }
             ClientMessage::SetListed { listed } if let Some(pid) = self.pid => {
                 self.execute(BlasterOperation::SetListed {
@@ -297,9 +294,10 @@ impl Session {
         Ok(Loop::Continue)
     }
 
-    async fn relay(&self, from: BasicId, to: BasicId, msg: ServerMessage) {
-        let op = BlasterOperation::Relay { from, to, msg };
-        let _ = self.execute(op);
+    fn relay(&mut self, from: BasicId, to: BasicId, msg: ServerMessage) {
+        if self.relays_budget.try_take(1).is_ok() {
+            self.execute(BlasterOperation::Relay { from, to, msg });
+        }
     }
 
     async fn is_fresh(&mut self) -> bool {
