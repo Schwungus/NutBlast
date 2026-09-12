@@ -177,8 +177,10 @@ struct ByeReason {
 };
 
 struct Player : std::enable_shared_from_this<Player> {
-    const NutBlast_ID pid;
     Once fire_join, init;
+
+    const NutBlast_ID pid;
+    const std::uint64_t birth;
 
     Pinger pinger;
     Metadata meta;
@@ -191,7 +193,7 @@ struct Player : std::enable_shared_from_this<Player> {
 
     std::optional<std::uint64_t> sdp_timeout = std::nullopt;
 
-    Player(NutBlast_ID pid, const Metadata& meta) : pid(pid), meta(meta) {}
+    Player(NutBlast_ID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
 
     ~Player() {
         if (::incoming_offers.contains(pid))
@@ -268,6 +270,7 @@ static enum class Mode {
 } mode = Mode::Join;
 
 static bool hosting_a_listed_lobby = true, permission_to_cook = false, time_to_die = false;
+static std::uint64_t our_birth = 0;
 static std::size_t listing_limit = 0;
 
 static std::unordered_map<NutBlast_ID, std::shared_ptr<Player>> players;
@@ -871,7 +874,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         [](const auto& obj) {
             ::rtc_config.iceServers.clear();
 
-            ::pid = obj["pid"], ::lid = obj["lid"];
+            ::pid = obj["pid"], ::lid = obj["lid"], ::our_birth = obj["birth"];
             ::log(NB_LogInfo, "You are ID={}", ::pid);
 
             ::log(NB_LogInfo, "ICE servers from NutBlaster:");
@@ -990,7 +993,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
     {"Joined",
         [](const auto& obj) {
             const NutBlast_ID id = obj["pid"];
-            ::players.insert({id, std::make_shared<Player>(id, obj["meta"])});
+            ::players.insert({id, std::make_shared<Player>(id, obj["meta"], obj["birth"])});
         }},
     {"Left",
         [](const auto& obj) {
@@ -1087,9 +1090,13 @@ extern "C" void NutBlast_Update() {
             // the first two peers may be able to reach one another, while the third peer may have trouble connecting to
             // either of them; and that would cut the triangular mesh down to a plain old angle.
             if (player->sdp_timeout.has_value() && NutBlast_TimeNS() >= *player->sdp_timeout) {
-                ::time_to_die = true;
-                ::log(NB_LogError, "Humane disconnection");
-                return;
+                // only the newest player should disconnect. had to introduce this check because BOTH peers kept
+                // disconnecting :wilted_flower: each time
+                if (::our_birth >= player->birth) {
+                    ::time_to_die = true;
+                    ::log(NB_LogError, "Humane disconnection");
+                    return;
+                }
             }
 
             player->engage();

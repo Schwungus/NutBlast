@@ -275,8 +275,8 @@ impl Session {
             }
             ClientMessage::Kick { pid: kickee } if let Some(pid) = self.pid => {
                 self.execute(BlasterOperation::KickPlayer {
-                    initiator: pid,
-                    pid: kickee,
+                    kicker: pid,
+                    kickee,
                 });
             }
             ClientMessage::SetMaster { pid: new_master } if let Some(pid) = self.pid => {

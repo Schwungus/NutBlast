@@ -73,6 +73,7 @@ pub enum ServerMessage {
     Connected {
         pid: BasicId,
         lid: BasicId,
+        birth: u128,
         ice_servers: Vec<String>,
     },
     Disconnected {
@@ -106,6 +107,7 @@ pub enum ServerMessage {
     Joined {
         pid: BasicId,
         meta: Metadata,
+        birth: u128,
     },
     Left {
         pid: BasicId,

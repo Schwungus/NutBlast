@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     net::{IpAddr, SocketAddr},
     sync::mpsc,
     time::{Duration, Instant},
@@ -37,13 +38,20 @@ const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(3);
 
 #[derive(Clone)]
 struct Lobby {
-    player_count: usize,
+    players: HashSet<BasicId>,
     initiator: Option<IpAddr>,
     master: BasicId,
     meta: Metadata,
     capacity: usize,
     listed: bool,
     death_timer: Option<Instant>,
+    created_at: Instant,
+}
+
+impl Lobby {
+    fn is_full(&self) -> bool {
+        self.players.len() >= self.capacity
+    }
 }
 
 #[derive(Clone)]
@@ -53,6 +61,7 @@ struct Player {
     meta: Metadata,
     queue: Vec<ServerMessage>,
     kick_me_now: Option<Kick>,
+    birth: u128,
 }
 
 impl Player {
@@ -171,8 +180,8 @@ pub enum BlasterOperation {
         tx: oneshot::Sender<Result<(), Kick>>,
     },
     KickPlayer {
-        initiator: BasicId,
-        pid: BasicId,
+        kicker: BasicId,
+        kickee: BasicId,
     },
     RemovePlayer {
         pid: BasicId,
