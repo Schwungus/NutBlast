@@ -3,7 +3,6 @@ name: Verify the C library builds across several OSes and compilers
 on:
   workflow_dispatch:
   push:
-    branches: [master]
     paths:
       - .github/workflows/verify-this-builds.yml
       - CMakeLists.txt

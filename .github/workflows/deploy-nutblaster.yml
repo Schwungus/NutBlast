@@ -3,7 +3,7 @@ name: deploy nutblaster
 on:
   workflow_dispatch:
   push:
-    branches: [master]
+    branches: [production]
     paths:
       - .github/workflows/deploy-nutblaster.yml
       - server/**.rs
