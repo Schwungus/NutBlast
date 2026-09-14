@@ -192,6 +192,20 @@ impl BlasterEventLoop {
                     self.send_to_lobby(&lid, &msg);
                 }
             }
+            BlasterOperation::SetMaster {
+                initiator,
+                new_master,
+            } => {
+                if new_master != initiator
+                    && let Some(Player { lid, .. }) = self.players.get(&new_master).cloned()
+                    && let Some(lobby) = self.lobbies.get_mut(&lid)
+                    && lobby.master == initiator
+                    && lobby.alterations_budget.take(1)
+                {
+                    lobby.master = new_master;
+                    self.send_to_lobby(&lid, &ServerMessage::SetMaster { pid: new_master });
+                }
+            }
             BlasterOperation::SetPlayerMeta { pid, key, value } => {
                 let lid = if let Some(player) = self.players.get_mut(&pid)
                     && player.metadata.can_add(&key)
@@ -324,23 +338,6 @@ impl BlasterEventLoop {
                 self.send_to_lobby(&lid, &left);
 
                 self.cleanup_lobbies();
-            }
-            BlasterOperation::SetMaster {
-                initiator,
-                new_master,
-            } => {
-                if new_master == initiator {
-                    return;
-                }
-
-                let Some(Player { lid, .. }) = self.players.get(&new_master).cloned() else {
-                    return;
-                };
-
-                if let Some(lober) = self.lobbies.get_mut(&lid) {
-                    lober.master = new_master;
-                    self.send_to_lobby(&lid, &ServerMessage::SetMaster { pid: new_master });
-                }
             }
             BlasterOperation::ListLobbies { gid, limit, tx } => {
                 let lobbies = self
