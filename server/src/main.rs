@@ -82,8 +82,11 @@ async fn main() -> eyre::Result<()> {
             };
 
             let accept = tokio_tungstenite::accept_hdr_async_with_config(stream, hdr, Some(config));
+            let Ok(accept) = tokio::time::timeout(Duration::from_secs(5), accept).await else {
+                return;
+            };
 
-            let (sender, receiver) = match accept.await {
+            let (sender, receiver) = match accept {
                 Ok(ws) => {
                     info!("hi {}", real_ip);
                     ws.split()
