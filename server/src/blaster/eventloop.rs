@@ -459,6 +459,8 @@ impl BlasterEventLoop {
 
                 info!("new lobby {lid:?}");
 
+                let now = Instant::now();
+
                 self.lobbies.insert(
                     lid.clone(),
                     Lobby {
@@ -468,8 +470,8 @@ impl BlasterEventLoop {
                         metadata: lobby_meta,
                         capacity,
                         listed,
-                        idle_since: None,
-                        created_at: Instant::now(),
+                        idle_since: Some(now),
+                        created_at: now,
                         alterations_budget: TokenBucket::new(1.0, 2.0, 2.0),
                         metadata_budget: TokenBucket::new_metadata(),
                     },
