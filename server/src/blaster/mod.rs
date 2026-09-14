@@ -119,10 +119,10 @@ impl Blaster {
         let _ = self.channel.send(operation);
     }
 
-    pub async fn introduce_session(&self, ip: IpAddr) -> bool {
-        let (tx, rx) = oneshot::channel();
+    pub fn introduce_session(&self, ip: IpAddr) -> bool {
+        let (tx, rx) = mpsc::channel();
         self.execute(BlasterOperation::IntroduceSession { ip, tx });
-        rx.await.unwrap_or(false)
+        rx.recv().unwrap_or(false)
     }
 
     pub async fn close_session(&self, ip: IpAddr) {
@@ -203,7 +203,7 @@ pub enum BlasterOperation {
     },
     IntroduceSession {
         ip: IpAddr,
-        tx: oneshot::Sender<bool>,
+        tx: mpsc::Sender<bool>,
     },
     Prune,
     CloseSession {

@@ -1,5 +1,12 @@
 {
 	email "admin@schwung.us"
+
+	servers {
+		timeouts {
+			read_header 3s
+			idle 10s
+		}
+	}
 }
 
 nutblast.schwung.us, nutblaster.schwung.us {

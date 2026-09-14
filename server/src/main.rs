@@ -8,6 +8,7 @@ use futures_util::StreamExt as _;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::{
     handshake::server::{Request, Response},
+    http::StatusCode,
     protocol::WebSocketConfig,
 };
 
@@ -79,15 +80,23 @@ async fn main() -> eyre::Result<()> {
                     real_ip = real;
                 }
 
+                if !blaster.introduce_session(real_ip) {
+                    error!("{}: too many handles", real_ip);
+
+                    let err_response = Response::builder()
+                        .status(StatusCode::TOO_MANY_REQUESTS)
+                        .body(Some("too many connections from this IP".into()))
+                        .unwrap();
+
+                    return Err(err_response);
+                }
+
                 Ok(response)
             };
 
             let accept = tokio_tungstenite::accept_hdr_async_with_config(stream, hdr, Some(config));
-            let Ok(accept) = tokio::time::timeout(Duration::from_secs(5), accept).await else {
-                return;
-            };
 
-            let (sender, receiver) = match accept {
+            let (sender, receiver) = match accept.await {
                 Ok(ws) => {
                     info!("hi {}", real_ip);
                     ws.split()
@@ -98,11 +107,6 @@ async fn main() -> eyre::Result<()> {
                     return;
                 }
             };
-
-            if !blaster.introduce_session(real_ip).await {
-                error!("{}: too many handles", real_ip);
-                return; // no clean shutdown for you pesky beggars!!!
-            }
 
             let session = Session::new(blaster.clone(), real_ip, sender, receiver);
             session.mainloop().await;
