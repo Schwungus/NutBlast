@@ -20,16 +20,28 @@ use crate::{
 
 mod eventloop;
 
+enum PeerSessionCount {
+    Some(usize),
+    Decaying(Instant),
+}
+
 struct Peer {
-    session_count: usize,
+    session_count: PeerSessionCount,
     ops: TokenBucket,
 }
 
 impl Peer {
     fn new() -> Self {
         Self {
-            session_count: 1,
+            session_count: PeerSessionCount::Some(1),
             ops: TokenBucket::new(2.0, 3.0, 4.0),
+        }
+    }
+
+    fn session_count(&self) -> usize {
+        match self.session_count {
+            PeerSessionCount::Some(count) => count,
+            PeerSessionCount::Decaying(_) => 0,
         }
     }
 }
@@ -206,6 +218,7 @@ pub enum BlasterOperation {
         ip: IpAddr,
         tx: oneshot::Sender<bool>,
     },
+    PruneStaleSessions,
     CloseSession {
         ip: IpAddr,
     },

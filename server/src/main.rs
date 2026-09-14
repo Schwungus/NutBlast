@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use std::{fs::File, io::BufReader};
+use std::{fs::File, io::BufReader, time::Duration};
 
 use color_eyre::eyre::{self, eyre};
 use futures_util::StreamExt as _;
@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::{
-    blaster::{Blaster, Config},
+    blaster::{Blaster, BlasterOperation, Config},
     session::Session,
 };
 
@@ -40,7 +40,19 @@ async fn main() -> eyre::Result<()> {
 
     info!("listening on: ws://{}", addr);
 
-    let blaster = Blaster::new(config);
+    let blaster0 = Blaster::new(config);
+    let blaster = blaster0.clone();
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+
+        loop {
+            interval.tick().await;
+            blaster.execute(BlasterOperation::PruneStaleSessions);
+        }
+    });
+
+    let blaster = blaster0.clone();
 
     while let Ok((stream, addr)) = listener.accept().await {
         if !blaster.introduce_session(&addr).await {

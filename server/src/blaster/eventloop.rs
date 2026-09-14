@@ -1,14 +1,16 @@
 use std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use indexmap::IndexMap;
 
 use crate::{
     MAX_PLAYERS,
-    blaster::{BlasterOperation, CHUD_LOBBY_TIMEOUT, Config, Lobby, Peer, Player},
+    blaster::{
+        BlasterOperation, CHUD_LOBBY_TIMEOUT, Config, Lobby, Peer, PeerSessionCount, Player,
+    },
     id::{BasicId, GameId, LobbyId},
     protocol::{
         payloads::{Kick, LobbyListing, ServerMessage},
@@ -493,17 +495,17 @@ impl BlasterEventLoop {
                 let _ = tx.send(self.players.get(&pid).and_then(|x| x.kick_me_now.clone()));
             }
             BlasterOperation::IntroduceSession { ip, tx } => {
-                let total_sessions: usize = self.peers.values().map(|c| c.session_count).sum();
+                let total_sessions: usize = self.peers.values().map(|c| c.session_count()).sum();
 
                 let _ = tx.send(if total_sessions >= GLOBAL_MAX_SESSIONS {
                     error!("{ip}: global session limit");
                     false
                 } else if let Some(peer) = self.peers.get_mut(&ip) {
-                    if peer.session_count >= MAX_SESSIONS_PER_IP {
+                    if peer.session_count() >= MAX_SESSIONS_PER_IP {
                         error!("{ip}: too many sessions");
                         false
                     } else {
-                        peer.session_count += 1;
+                        peer.session_count = PeerSessionCount::Some(peer.session_count() + 1);
                         true
                     }
                 } else {
@@ -511,13 +513,33 @@ impl BlasterEventLoop {
                     true
                 });
             }
-            BlasterOperation::CloseSession { ip } => {
-                if let Some(session) = self.peers.get_mut(&ip) {
-                    session.session_count = session.session_count.saturating_sub(1);
+            BlasterOperation::PruneStaleSessions => {
+                const DEATH_INTERVAL: Duration = Duration::from_secs(60);
+                let now = Instant::now();
 
-                    if session.session_count == 0 {
-                        self.peers.remove(&ip);
+                let before = self.peers.len();
+
+                self.peers.retain(|_, peer| {
+                    if let PeerSessionCount::Decaying(death) = peer.session_count {
+                        now.duration_since(death) < DEATH_INTERVAL
+                    } else {
+                        true
                     }
+                });
+
+                info!("{} peers pruned", before - self.peers.len());
+            }
+            BlasterOperation::CloseSession { ip } => {
+                if let Some(peer) = self.peers.get_mut(&ip) {
+                    match peer.session_count {
+                        PeerSessionCount::Decaying(_) => (),
+                        PeerSessionCount::Some(count) => {
+                            peer.session_count = match count.saturating_sub(1) {
+                                0 => PeerSessionCount::Decaying(Instant::now()),
+                                more => PeerSessionCount::Some(more),
+                            }
+                        }
+                    };
                 }
             }
             BlasterOperation::SignalPerIpCap { ip, tx } => {
