@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, SocketAddr},
+    net::IpAddr,
     time::{Duration, Instant},
 };
 
