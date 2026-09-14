@@ -1,9 +1,4 @@
-use std::{
-    collections::HashSet,
-    net::IpAddr,
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashSet, net::IpAddr, sync::mpsc, time::Instant};
 
 use eventloop::BlasterEventLoop;
 use serde::Deserialize;
@@ -46,8 +41,6 @@ impl Peer {
     }
 }
 
-const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(3);
-
 #[derive(Clone)]
 struct Lobby {
     players: HashSet<BasicId>,
@@ -56,7 +49,7 @@ struct Lobby {
     metadata: Metadata,
     capacity: usize,
     listed: bool,
-    death_timer: Option<Instant>,
+    idle_since: Option<Instant>,
     created_at: Instant,
     alterations_budget: TokenBucket,
     metadata_budget: TokenBucket,
@@ -74,7 +67,7 @@ struct Player {
     lid: LobbyId,
     metadata: Metadata,
     queue: Vec<ServerMessage>,
-    kick_me_now: Option<Kick>,
+    kick_me_now: mpsc::Sender<Kick>,
     birth: u128,
     metadata_budget: TokenBucket,
 }
@@ -86,6 +79,10 @@ impl Player {
         if matches!(msg, ServerMessage::Disconnected { .. }) || self.queue.len() < QUEUE_CAP {
             self.queue.push(msg);
         }
+    }
+
+    fn kick(&self, reason: Kick) {
+        let _ = self.kick_me_now.send(reason);
     }
 }
 
@@ -131,12 +128,6 @@ impl Blaster {
     pub async fn close_session(&self, ip: IpAddr) {
         self.execute(BlasterOperation::CloseSession { ip });
     }
-
-    pub async fn is_kicked(&self, pid: &BasicId) -> Option<Kick> {
-        let (tx, rx) = oneshot::channel();
-        self.execute(BlasterOperation::IsKicked { pid: *pid, tx });
-        rx.await.ok().and_then(|x| x)
-    }
 }
 
 pub enum BlasterOperation {
@@ -175,7 +166,7 @@ pub enum BlasterOperation {
         pid: BasicId,
         lid: LobbyId,
         player_meta: Metadata,
-        tx: oneshot::Sender<Result<(), Kick>>,
+        kick_me_now: mpsc::Sender<Kick>,
     },
     Relay {
         from: BasicId,
@@ -196,7 +187,7 @@ pub enum BlasterOperation {
         listed: bool,
         pid: BasicId,
         player_meta: Metadata,
-        tx: oneshot::Sender<Result<(), Kick>>,
+        kick_me_now: mpsc::Sender<Kick>,
     },
     KickPlayer {
         kicker: BasicId,
@@ -206,23 +197,15 @@ pub enum BlasterOperation {
         pid: BasicId,
         reason: Option<Kick>,
     },
-    AdvanceLobbyTimer {
-        pid: BasicId,
-        tx: oneshot::Sender<Result<(), Kick>>,
-    },
     FlushPlayerQueue {
         pid: BasicId,
         tx: oneshot::Sender<Vec<ServerMessage>>,
-    },
-    IsKicked {
-        pid: BasicId,
-        tx: oneshot::Sender<Option<Kick>>,
     },
     IntroduceSession {
         ip: IpAddr,
         tx: oneshot::Sender<bool>,
     },
-    PruneStaleSessions,
+    Prune,
     CloseSession {
         ip: IpAddr,
     },

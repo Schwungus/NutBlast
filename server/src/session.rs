@@ -1,5 +1,6 @@
 use std::{
     net::IpAddr,
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -36,6 +37,7 @@ pub struct Session {
     payloads_budget: TokenBucket,
     relays_budget: TokenBucket,
     bandwidth_budget: TokenBucket,
+    kick_me_now: (mpsc::Sender<Kick>, mpsc::Receiver<Kick>),
 }
 
 impl Session {
@@ -46,6 +48,7 @@ impl Session {
         receiver: SplitStream<WebSocketStream<TcpStream>>,
     ) -> Self {
         Self {
+            kick_me_now: mpsc::channel(),
             payloads_budget: TokenBucket::new(30.0, 30.0, 60.0),
             relays_budget: TokenBucket::new(5.0, 5.0, 40.0),
             bandwidth_budget: TokenBucket::new(4096.0, 4096.0, 12288.0),
@@ -72,22 +75,12 @@ impl Session {
             }
         };
 
-        // #27. single-player lobby timeouts
-        if let Some(pid) = self.pid {
-            let (tx, rx) = oneshot::channel();
-            let _ = self.execute(BlasterOperation::AdvanceLobbyTimer { pid, tx });
-            rx.await.unwrap_or(Ok(()))?;
+        if let Ok(kick) = self.kick_me_now.1.try_recv() {
+            return Err(kick);
         }
 
         self.flush().await;
-
-        if let Some(pid) = self.pid
-            && let Some(kick) = self.blaster.is_kicked(&pid).await
-        {
-            Err(kick)
-        } else {
-            result
-        }
+        result
     }
 
     async fn accept_websocket_message(
@@ -167,9 +160,8 @@ impl Session {
                     lid: rand::random(),
                 };
 
-                let (tx, rx) = oneshot::channel();
-
-                let _ = self.execute(BlasterOperation::HostLobby {
+                self.execute(BlasterOperation::HostLobby {
+                    kick_me_now: self.kick_me_now.0.clone(),
                     initiator: self.real_ip.clone(),
                     lid: lid.clone(),
                     master: pid,
@@ -178,28 +170,19 @@ impl Session {
                     listed,
                     pid,
                     player_meta,
-                    tx,
                 });
-
-                rx.await.unwrap_or(Ok(()))?;
-
-                info!("new lobby max={capacity} {lid:?}");
             }
             ClientMessage::Join { lid, player_meta } if self.is_fresh().await => {
                 let pid = rand::random();
                 self.pid = Some(pid);
 
-                let (tx, rx) = oneshot::channel();
-
                 self.execute(BlasterOperation::JoinLobby {
+                    kick_me_now: self.kick_me_now.0.clone(),
                     ip: self.real_ip,
                     pid,
                     lid: lid.clone(),
                     player_meta,
-                    tx,
                 });
-
-                rx.await.unwrap_or(Ok(()))?;
             }
             ClientMessage::PassCandidate {
                 to,

@@ -51,7 +51,7 @@ async fn main() -> eyre::Result<()> {
 
         loop {
             interval.tick().await;
-            blaster.execute(BlasterOperation::PruneStaleSessions);
+            blaster.execute(BlasterOperation::Prune);
         }
     });
 
