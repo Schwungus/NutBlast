@@ -107,7 +107,8 @@ impl Blaster {
             let mut event_loop = BlasterEventLoop::new(config);
 
             while let Ok(msg) = rx.recv() {
-                event_loop.recv(msg);
+                let recv = std::panic::AssertUnwindSafe(|| event_loop.recv(msg));
+                let _ = std::panic::catch_unwind(recv);
             }
         });
 
