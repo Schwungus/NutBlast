@@ -169,7 +169,8 @@ struct ByeReason {
     std::string code = NUTBLAST_ERROR_OK, msg = "Graceful disconnection";
 
     ByeReason() {}
-    ByeReason(const nlohmann::json& obj) : err(obj["type"] == "violation"), code(obj["code"]), msg(obj["msg"]) {}
+    ByeReason(const nlohmann::json& obj)
+        : err(obj.at("type") == "violation"), code(obj.at("code")), msg(obj.at("msg")) {}
 
     operator NutBlast_Reason() const {
         return {.err = err, .code = code.c_str(), .msg = msg.c_str()};
@@ -807,24 +808,24 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID pid) {
 }
 
 static void handle_offer_or_answer(const nlohmann::json& obj) {
-    const NutBlast_ID pid = obj["from"];
-    const auto& type = obj["type"] == "Offer" ? "offer" : "answer";
+    const NutBlast_ID pid = obj.at("from");
+    const auto& type = obj.at("type") == "Offer" ? "offer" : "answer";
 
     if (!::incoming_offers.contains(pid))
         ::incoming_offers.insert({pid, {}});
 
-    ::incoming_offers.at(pid).emplace_back(obj["sdp"], type);
+    ::incoming_offers.at(pid).emplace_back(obj.at("sdp"), type);
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
-    const NutBlast_ID& pid = obj["from"];
+    const NutBlast_ID& pid = obj.at("from");
 
     if (!::incoming_candidates.contains(pid))
         ::incoming_candidates.insert({pid, {}});
 
     try {
         auto& queue = ::incoming_candidates.at(pid);
-        queue.emplace_back(obj["candidate"], obj["mid"]);
+        queue.emplace_back(obj.at("candidate"), obj.at("mid"));
     } catch (const std::invalid_argument&) { ::incoming_candidates.erase(pid); }
 }
 
@@ -837,7 +838,7 @@ static void handle_list(const nlohmann::json& obj) {
     std::vector<NutBlast_Lobby> lobbies;
     std::vector<LobbyInfo> tmp;
 
-    const auto& lobers = obj["list"];
+    const auto& lobers = obj.at("list");
     tmp.reserve(lobers.size());
 
     for (const auto& lober : lobers) {
@@ -845,7 +846,7 @@ static void handle_list(const nlohmann::json& obj) {
 
         LobbyInfo& tlob = tmp.back();
 
-        const auto& read_meta = lober["meta"];
+        const auto& read_meta = lober.at("meta");
         tlob.fields.reserve(read_meta.size());
 
         for (const auto& [key, value] : read_meta.items()) {
@@ -858,9 +859,9 @@ static void handle_list(const nlohmann::json& obj) {
         }
 
         lobbies.push_back({
-            .id = lober["lid"],
-            .players = lober["players"],
-            .capacity = lober["max"],
+            .id = lober.at("lid"),
+            .players = lober.at("players"),
+            .capacity = lober.at("max"),
             .metadata = tlob.meta.data(),
             .field_count = tlob.meta.size(),
         });
@@ -869,17 +870,17 @@ static void handle_list(const nlohmann::json& obj) {
     ::on_lobbies_found(lobbies.data(), lobbies.size());
 }
 
-static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> response_types{
+static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> response_handlers{
     {"Connected",
         [](const auto& obj) {
             ::rtc_config.iceServers.clear();
 
-            ::pid = obj["pid"], ::lid = obj["lid"], ::our_birth = obj["birth"];
+            ::pid = obj.at("pid"), ::lid = obj.at("lid"), ::our_birth = obj.at("birth");
             ::log(NB_LogInfo, "You are ID={}", ::pid);
 
             ::log(NB_LogInfo, "ICE servers from NutBlaster:");
 
-            for (const auto& server : obj["ice_servers"]) {
+            for (const auto& server : obj.at("ice_servers")) {
                 ::rtc_config.iceServers.emplace_back(server);
                 ::log(NB_LogInfo, "  {}", (std::string)server);
             }
@@ -888,20 +889,20 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         }},
     {"Disconnected",
         [](const auto& obj) {
-            ::disconnection_reason = obj["reason"];
+            ::disconnection_reason = obj.at("reason");
             ::time_to_die = true;
         }},
     {"SetListed",
         [](const auto& obj) {
-            ::hosting_a_listed_lobby = obj["listed"];
+            ::hosting_a_listed_lobby = obj.at("listed");
         }},
     {"SetCapacity",
         [](const auto& obj) {
-            ::max_players = obj["capacity"];
+            ::max_players = obj.at("capacity");
         }},
     {"SetPlayerMeta",
         [](const auto& obj) {
-            const NutBlast_ID pid = obj["pid"];
+            const NutBlast_ID pid = obj.at("pid");
 
             if (!::players.contains(pid))
                 return;
@@ -909,7 +910,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
             const auto& player = ::players.at(pid);
             auto& meta = player->meta;
 
-            const std::string key = obj["key"], new_value = obj["value"];
+            const std::string key = obj.at("key"), new_value = obj.at("value");
             std::optional<std::string> old_value;
 
             if (meta.contains(key))
@@ -929,13 +930,13 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         }},
     {"ErasePlayerMeta",
         [](const auto& obj) {
-            const NutBlast_ID pid = obj["pid"];
+            const NutBlast_ID pid = obj.at("pid");
 
             if (!::players.contains(pid))
                 return;
 
             auto& meta = ::players.at(pid)->meta;
-            const std::string key = obj["key"];
+            const std::string key = obj.at("key");
 
             if (!meta.contains(key))
                 return;
@@ -950,7 +951,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         }},
     {"SetLobbyMeta",
         [](const auto& obj) {
-            const std::string key = obj["key"], new_value = obj["value"];
+            const std::string key = obj.at("key"), new_value = obj.at("value");
             std::optional<std::string> old_value;
 
             if (::lobby_meta.contains(key))
@@ -969,7 +970,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         }},
     {"EraseLobbyMeta",
         [](const auto& obj) {
-            const std::string key = obj["key"];
+            const std::string key = obj.at("key");
 
             if (!::lobby_meta.contains(key))
                 return;
@@ -985,23 +986,23 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
     {"SetMaster",
         [](const auto& obj) {
             const auto old_master = ::master;
-            ::master = obj["pid"];
+            ::master = obj.at("pid");
 
             if (old_master != ::master)
                 ::on_master_changed(old_master);
         }},
     {"Joined",
         [](const auto& obj) {
-            const NutBlast_ID id = obj["pid"];
-            ::players.insert({id, std::make_shared<Player>(id, obj["meta"], obj["birth"])});
+            const NutBlast_ID id = obj.at("pid");
+            ::players.insert({id, std::make_shared<Player>(id, obj.at("meta"), obj.at("birth"))});
         }},
     {"Left",
         [](const auto& obj) {
-            const NutBlast_ID pid = obj["pid"];
+            const NutBlast_ID pid = obj.at("pid");
 
             if (::players.contains(pid)) {
-                const bool got_reason = obj.contains("reason") && !obj["reason"].is_null();
-                ::on_player_left(pid, got_reason ? obj["reason"] : ByeReason());
+                const bool got_reason = obj.contains("reason") && !obj.at("reason").is_null();
+                ::on_player_left(pid, got_reason ? obj.at("reason") : ByeReason());
                 ::players.erase(pid);
             }
         }},
@@ -1019,13 +1020,15 @@ static void recv_stuff() {
     std::lock_guard<std::mutex> lock(::globals_mutex);
 
     for (const auto& obj : copy_and_clear(::ws_in)) {
-        if (!obj.contains("type"))
-            continue;
+        try {
+            const std::string& type = obj.at("type");
+            const auto handler = response_handlers.find(type);
 
-        const auto restype = response_types.find(obj["type"]);
-
-        if (restype != response_types.end())
-            restype->second(obj);
+            if (handler != response_handlers.end())
+                handler->second(obj);
+        } catch (const nlohmann::json::out_of_range& e) {
+            ::log(NB_LogError, "Version mismatch between the NutBlast client library and the server: {}", e.what());
+        }
     }
 
     for (auto& [id, player] : ::players)
