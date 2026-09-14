@@ -108,7 +108,10 @@ impl Blaster {
 
             while let Ok(msg) = rx.recv() {
                 let recv = std::panic::AssertUnwindSafe(|| event_loop.recv(msg));
-                let _ = std::panic::catch_unwind(recv);
+
+                if let Err(e) = std::panic::catch_unwind(recv) {
+                    error!("{e:?}");
+                }
             }
         });
 
