@@ -106,7 +106,8 @@ pub enum ServerMessage {
     },
     Joined {
         pid: BasicId,
-        meta: Metadata,
+        #[serde(rename = "meta")]
+        metadata: Metadata,
         birth: u128,
     },
     Left {
@@ -159,5 +160,6 @@ pub struct LobbyListing {
     pub lid: BasicId,
     pub players: usize,
     pub max: usize,
-    pub meta: Metadata,
+    #[serde(rename = "meta")]
+    pub metadata: Metadata,
 }

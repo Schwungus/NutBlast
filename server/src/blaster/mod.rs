@@ -41,11 +41,13 @@ struct Lobby {
     players: HashSet<BasicId>,
     initiator: Option<IpAddr>,
     master: BasicId,
-    meta: Metadata,
+    metadata: Metadata,
     capacity: usize,
     listed: bool,
     death_timer: Option<Instant>,
     created_at: Instant,
+    alterations_budget: TokenBucket,
+    metadata_budget: TokenBucket,
 }
 
 impl Lobby {
@@ -58,10 +60,11 @@ impl Lobby {
 struct Player {
     ip: IpAddr,
     lid: LobbyId,
-    meta: Metadata,
+    metadata: Metadata,
     queue: Vec<ServerMessage>,
     kick_me_now: Option<Kick>,
     birth: u128,
+    metadata_budget: TokenBucket,
 }
 
 impl Player {

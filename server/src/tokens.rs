@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use crate::protocol::payloads::Kick;
 
+#[derive(Clone)]
 pub struct TokenBucket {
     tokens: f32,
     last_refill: Instant,
@@ -10,6 +11,10 @@ pub struct TokenBucket {
 }
 
 impl TokenBucket {
+    pub fn new_metadata() -> Self {
+        Self::new(4096.0, 8192.0, 8192.0)
+    }
+
     pub fn new(rate: f32, max: f32, burst: f32) -> Self {
         Self {
             tokens: burst,
@@ -17,6 +22,10 @@ impl TokenBucket {
             rate,
             max,
         }
+    }
+
+    pub fn take(&mut self, count: usize) -> bool {
+        self.try_take(count).is_ok()
     }
 
     pub fn try_take(&mut self, count: usize) -> Result<(), Kick> {

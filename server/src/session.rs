@@ -295,7 +295,7 @@ impl Session {
     }
 
     fn relay(&mut self, from: BasicId, to: BasicId, msg: ServerMessage) {
-        if self.relays_budget.try_take(1).is_ok() {
+        if self.relays_budget.take(1) {
             self.execute(BlasterOperation::Relay { from, to, msg });
         }
     }
