@@ -757,7 +757,7 @@ extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
         NutBlast_SetMaxPlayers(opts.max_players);
         ::mode = Mode::Host, ::hosting_a_listed_lobby = !opts.unlisted;
 
-        ::log(NB_LogInfo, "Trying to host '{}' at: {}", lid, ::nutblaster_address);
+        ::log(NB_LogInfo, "Trying to host at: {}", ::nutblaster_address);
         join_pro();
     }
 }
