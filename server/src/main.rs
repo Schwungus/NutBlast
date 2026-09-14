@@ -69,6 +69,7 @@ async fn main() -> eyre::Result<()> {
 
         tokio::spawn(async move {
             let hdr = |req: &Request, response: Response| {
+                // TODO: add a "trust reverse-proxy" opt-in flag.
                 if let Some(xff) = req.headers().get("x-forwarded-for")
                     && let Ok(xff_str) = xff.to_str()
                     && let Some(client_ip) = xff_str.split(',').next()
