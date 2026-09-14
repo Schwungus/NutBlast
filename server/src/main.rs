@@ -1,12 +1,15 @@
 #[macro_use]
 extern crate log;
 
-use std::{fs::File, io::BufReader, time::Duration};
+use std::{fs::File, io::BufReader, net::IpAddr, time::Duration};
 
 use color_eyre::eyre::{self, eyre};
 use futures_util::StreamExt as _;
 use tokio::net::TcpListener;
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::tungstenite::{
+    handshake::server::{Request, Response},
+    protocol::WebSocketConfig,
+};
 
 use crate::{
     blaster::{Blaster, BlasterOperation, Config},
@@ -54,12 +57,8 @@ async fn main() -> eyre::Result<()> {
 
     let blaster = blaster0.clone();
 
-    while let Ok((stream, addr)) = listener.accept().await {
-        if !blaster.introduce_session(&addr).await {
-            error!("{}: too many handles", addr);
-            // no clean shutdown for you pesky beggars!!!
-            continue;
-        }
+    while let Ok((stream, local_address)) = listener.accept().await {
+        let mut real_ip = local_address.ip();
 
         let max = 32 * 1024;
         let config = WebSocketConfig::default()
@@ -69,25 +68,41 @@ async fn main() -> eyre::Result<()> {
         let blaster = blaster.clone();
 
         tokio::spawn(async move {
-            info!("join: {}", addr);
+            let hdr = |req: &Request, response: Response| {
+                if let Some(xff) = req.headers().get("x-forwarded-for")
+                    && let Ok(xff_str) = xff.to_str()
+                    && let Some(client_ip) = xff_str.split(',').next()
+                    // X-Forwarded-For can be a comma-separated list: "client, proxy1, proxy2". The first entry is the original client IP.
+                    && let Ok(real) = client_ip.trim().parse::<IpAddr>()
+                {
+                    real_ip = real;
+                }
 
-            let (sender, receiver) =
-                match tokio_tungstenite::accept_async_with_config(stream, Some(config)).await {
-                    Ok(ws) => {
-                        info!("hi {}", addr);
-                        ws.split()
-                    }
-                    Err(e) => {
-                        error!("{}: {}", addr, e);
-                        blaster.close_session(&addr).await;
-                        return;
-                    }
-                };
+                Ok(response)
+            };
 
-            let session = Session::new(blaster.clone(), addr, sender, receiver);
+            let accept = tokio_tungstenite::accept_hdr_async_with_config(stream, hdr, Some(config));
+
+            let (sender, receiver) = match accept.await {
+                Ok(ws) => {
+                    info!("hi {}", real_ip);
+                    ws.split()
+                }
+                Err(e) => {
+                    error!("{}: {}", real_ip, e);
+                    blaster.close_session(real_ip).await;
+                    return;
+                }
+            };
+
+            if !blaster.introduce_session(real_ip).await {
+                error!("{}: too many handles", real_ip);
+                return; // no clean shutdown for you pesky beggars!!!
+            }
+
+            let session = Session::new(blaster.clone(), real_ip, sender, receiver);
             session.mainloop().await;
-
-            blaster.close_session(&addr).await;
+            blaster.close_session(real_ip).await;
         });
     }
 

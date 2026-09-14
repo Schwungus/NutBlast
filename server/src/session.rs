@@ -1,5 +1,5 @@
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 
@@ -28,7 +28,7 @@ const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
 
 pub struct Session {
     blaster: Blaster,
-    address: SocketAddr,
+    real_ip: IpAddr,
     receiver: SplitStream<WebSocketStream<TcpStream>>,
     sender: SplitSink<WebSocketStream<TcpStream>, Message>,
     pid: Option<BasicId>,
@@ -41,7 +41,7 @@ pub struct Session {
 impl Session {
     pub fn new(
         blaster: Blaster,
-        address: SocketAddr,
+        real_ip: IpAddr,
         sender: SplitSink<WebSocketStream<TcpStream>, Message>,
         receiver: SplitStream<WebSocketStream<TcpStream>>,
     ) -> Self {
@@ -52,7 +52,7 @@ impl Session {
             pid: None,
             bye_reason: None,
             blaster,
-            address,
+            real_ip,
             sender,
             receiver,
         }
@@ -102,7 +102,7 @@ impl Session {
             }
             Some(Err(e)) => {
                 if !matches!(e, TungError::ConnectionClosed) {
-                    error!("{}: {}", self.address, e);
+                    error!("{}: {}", self.real_ip, e);
                 }
             }
             None => {}
@@ -127,7 +127,7 @@ impl Session {
         let msg = match serde_json::from_str(&json) {
             Ok(ok) => ok,
             Err(err) => {
-                error!("parse msg from {}: {}", self.address, err);
+                error!("parse msg from {}: {}", self.real_ip, err);
                 return Err(Kick::violation("bad_json", "JSON parse error"));
             }
         };
@@ -170,7 +170,7 @@ impl Session {
                 let (tx, rx) = oneshot::channel();
 
                 let _ = self.execute(BlasterOperation::HostLobby {
-                    initiator: self.address.ip(),
+                    initiator: self.real_ip.clone(),
                     lid: lid.clone(),
                     master: pid,
                     lobby_meta,
@@ -192,7 +192,7 @@ impl Session {
                 let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::JoinLobby {
-                    ip: self.address.ip(),
+                    ip: self.real_ip,
                     pid,
                     lid: lid.clone(),
                     player_meta,
@@ -308,7 +308,7 @@ impl Session {
         let (tx, rx) = oneshot::channel();
 
         let _ = self.execute(BlasterOperation::SignalPerIpCap {
-            ip: self.address.ip(),
+            ip: self.real_ip,
             tx,
         });
 
@@ -323,13 +323,13 @@ impl Session {
         let s = match serde_json::to_string(value) {
             Ok(ok) => ok,
             Err(err) => {
-                error!("serialize {}: {}", self.address, err);
+                error!("serialize {}: {}", self.real_ip, err);
                 return;
             }
         };
 
         if let Err(err) = self.sender.send(Message::text(s)).await {
-            error!("send to {}: {}", self.address, err);
+            error!("send to {}: {}", self.real_ip, err);
         }
     }
 
@@ -360,7 +360,7 @@ impl Session {
                 Ok(Loop::Stop) => break,
                 Err(reason) => {
                     if let Kick::Violation { ref code, .. } = reason {
-                        warn!("boot to the face for {}: {}", self.address, code);
+                        warn!("boot to the face for {}: {}", self.real_ip, code);
                     }
 
                     let bye = ServerMessage::Disconnected { reason };
@@ -383,7 +383,7 @@ impl Session {
             });
         }
 
-        info!("bye {}", self.address);
+        info!("bye, {}!", self.real_ip);
 
         if let Ok(mut ws) = self.receiver.reunite(self.sender) {
             let _ = ws.close(None).await;

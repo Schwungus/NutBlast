@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    net::{IpAddr, SocketAddr},
+    net::IpAddr,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -118,14 +118,14 @@ impl Blaster {
         let _ = self.channel.send(operation);
     }
 
-    pub async fn introduce_session(&self, addr: &SocketAddr) -> bool {
+    pub async fn introduce_session(&self, ip: IpAddr) -> bool {
         let (tx, rx) = oneshot::channel();
-        self.execute(BlasterOperation::IntroduceSession { ip: addr.ip(), tx });
+        self.execute(BlasterOperation::IntroduceSession { ip, tx });
         rx.await.unwrap_or(false)
     }
 
-    pub async fn close_session(&self, addr: &SocketAddr) {
-        self.execute(BlasterOperation::CloseSession { ip: addr.ip() });
+    pub async fn close_session(&self, ip: IpAddr) {
+        self.execute(BlasterOperation::CloseSession { ip });
     }
 
     pub async fn is_kicked(&self, pid: &BasicId) -> Option<Kick> {
