@@ -44,19 +44,17 @@ async fn main() -> eyre::Result<()> {
 
     info!("listening on: ws://{}", addr);
 
-    let blaster0 = Blaster::new(config);
-    let blaster = blaster0.clone();
+    let blaster = Blaster::new(config);
+    let pruning_blaster = blaster.clone();
 
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
 
         loop {
             interval.tick().await;
-            blaster.execute(BlasterOperation::Prune);
+            pruning_blaster.execute(BlasterOperation::Prune);
         }
     });
-
-    let blaster = blaster0.clone();
 
     while let Ok((stream, local_address)) = listener.accept().await {
         const MAX: Option<usize> = Some(32 * 1024);
