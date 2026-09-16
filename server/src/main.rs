@@ -102,7 +102,7 @@ async fn main() -> eyre::Result<()> {
 
             let (sender, receiver) = match accept.await {
                 Ok(ws) => {
-                    info!("hi {}", real_ip);
+                    info!("hi {real_ip}");
                     ws.split()
                 }
                 Err(e) => {
@@ -113,6 +113,7 @@ async fn main() -> eyre::Result<()> {
 
             let session = Session::new(blaster.clone(), real_ip, sender, receiver);
             session.mainloop().await;
+            info!("bye {real_ip}");
         });
     }
 
