@@ -2,7 +2,6 @@ use std::{collections::HashSet, net::IpAddr, sync::mpsc, time::Instant};
 
 use eventloop::BlasterEventLoop;
 use serde::Deserialize;
-use tokio::sync::oneshot;
 
 use crate::{
     id::{BasicId, GameId, LobbyId},
@@ -101,13 +100,14 @@ impl Blaster {
         let (tx, rx) = mpsc::channel();
 
         std::thread::spawn(move || {
-            let mut event_loop = BlasterEventLoop::new(config);
+            let mut event_loop = BlasterEventLoop::new(config.clone());
 
             while let Ok(msg) = rx.recv() {
                 let recv = std::panic::AssertUnwindSafe(|| event_loop.recv(msg));
 
                 if let Err(e) = std::panic::catch_unwind(recv) {
-                    error!("{e:?}");
+                    error!("EVENT-LOOP RESET!!! {e:?}");
+                    event_loop = BlasterEventLoop::new(config.clone());
                 }
             }
         });
@@ -174,9 +174,10 @@ pub enum BlasterOperation {
         msg: ServerMessage,
     },
     ListLobbies {
+        ip: IpAddr,
         gid: GameId,
         limit: usize,
-        tx: oneshot::Sender<Vec<LobbyListing>>,
+        tx: mpsc::Sender<LobbyListing>,
     },
     HostLobby {
         initiator: IpAddr,
@@ -199,7 +200,7 @@ pub enum BlasterOperation {
     },
     FlushPlayerQueue {
         pid: BasicId,
-        tx: oneshot::Sender<Vec<ServerMessage>>,
+        tx: mpsc::Sender<ServerMessage>,
     },
     IntroduceSession {
         ip: IpAddr,
@@ -208,9 +209,5 @@ pub enum BlasterOperation {
     Prune,
     CloseSession {
         ip: IpAddr,
-    },
-    SignalPerIpCap {
-        ip: IpAddr,
-        tx: oneshot::Sender<bool>,
     },
 }

@@ -8,7 +8,7 @@ use futures_util::{
     SinkExt as _, StreamExt as _,
     stream::{SplitSink, SplitStream},
 };
-use tokio::{net::TcpStream, sync::oneshot};
+use tokio::net::TcpStream;
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Error as TungError, Message},
@@ -131,16 +131,17 @@ impl Session {
                     self.send(&ServerMessage::Pong).await;
                 }
             }
-            ClientMessage::List { gid, limit } if self.is_fresh().await => {
-                let (tx, rx) = oneshot::channel();
+            ClientMessage::List { gid, limit } if self.pid.is_none() => {
+                let (tx, rx) = mpsc::channel();
 
                 self.execute(BlasterOperation::ListLobbies {
+                    ip: self.real_ip,
                     gid: gid.clone(),
                     limit,
                     tx,
                 });
 
-                let list = rx.await.unwrap_or_default();
+                let list = rx.iter().collect();
                 self.send(&ServerMessage::List { list }).await;
 
                 return Ok(Loop::Stop);
@@ -151,7 +152,7 @@ impl Session {
                 listed,
                 player_meta,
                 lobby_meta,
-            } if (1..=MAX_PLAYERS).contains(&capacity) && self.is_fresh().await => {
+            } if (1..=MAX_PLAYERS).contains(&capacity) && self.pid.is_none() => {
                 let pid = rand::random();
                 self.pid = Some(pid);
 
@@ -162,7 +163,7 @@ impl Session {
 
                 self.execute(BlasterOperation::HostLobby {
                     kick_me_now: self.kick_me_now.0.clone(),
-                    initiator: self.real_ip.clone(),
+                    initiator: self.real_ip,
                     lid: lid.clone(),
                     master: pid,
                     lobby_meta,
@@ -172,7 +173,7 @@ impl Session {
                     player_meta,
                 });
             }
-            ClientMessage::Join { lid, player_meta } if self.is_fresh().await => {
+            ClientMessage::Join { lid, player_meta } if self.pid.is_none() => {
                 let pid = rand::random();
                 self.pid = Some(pid);
 
@@ -283,21 +284,6 @@ impl Session {
         }
     }
 
-    async fn is_fresh(&mut self) -> bool {
-        self.pid.is_none() && self.cap_ip().await
-    }
-
-    async fn cap_ip(&mut self) -> bool {
-        let (tx, rx) = oneshot::channel();
-
-        let _ = self.execute(BlasterOperation::SignalPerIpCap {
-            ip: self.real_ip,
-            tx,
-        });
-
-        rx.await.unwrap_or(false)
-    }
-
     async fn send(&mut self, value: &ServerMessage) {
         if let ServerMessage::Disconnected { reason } = value {
             self.bye_reason = Some(reason.clone());
@@ -321,10 +307,10 @@ impl Session {
             return;
         };
 
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = mpsc::channel();
         self.execute(BlasterOperation::FlushPlayerQueue { pid, tx });
 
-        for msg in rx.await.unwrap_or_default() {
+        for msg in rx {
             self.send(&msg).await;
 
             if let ServerMessage::Disconnected { .. } = msg {

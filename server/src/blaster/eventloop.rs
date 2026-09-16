@@ -181,8 +181,151 @@ impl BlasterEventLoop {
         }
     }
 
+    fn cap_ip(&mut self, ip: IpAddr) -> bool {
+        let peer = self.peers.get_mut(&ip);
+        peer.map(|peer| peer.ops.take(1)).unwrap_or(false)
+    }
+
     pub fn recv(&mut self, msg: BlasterOperation) {
         match msg {
+            BlasterOperation::ListLobbies { ip, gid, limit, tx } => {
+                if !self.cap_ip(ip) {
+                    return;
+                }
+
+                let list = self
+                    .gid_lobbies
+                    .get(&gid)
+                    .cloned()
+                    .unwrap_or(HashSet::new());
+
+                let list = list
+                    .into_iter()
+                    .filter_map(|lid| {
+                        let lid = LobbyId {
+                            lid,
+                            gid: gid.clone(),
+                        };
+
+                        let lobby = self.lobbies.get(&lid)?;
+                        Some((lid, lobby))
+                    })
+                    .filter(|(_, lobby)| lobby.listed && !lobby.is_full())
+                    .map(|(lid, lobby)| LobbyListing {
+                        lid: lid.lid,
+                        max: lobby.capacity,
+                        players: lobby.players.len(),
+                        metadata: lobby.metadata.clone(),
+                    });
+
+                for lobby in list.take(limit.clamp(1, LOBBY_LISTING_CAP)) {
+                    let _ = tx.send(lobby);
+                }
+            }
+            BlasterOperation::HostLobby {
+                initiator,
+                lid,
+                master,
+                lobby_meta,
+                capacity,
+                listed,
+                pid,
+                player_meta,
+                kick_me_now,
+            } => {
+                if !self.cap_ip(initiator) {
+                    return;
+                }
+
+                if self.lobbies.contains_key(&lid) {
+                    let reason = Kick::violation("lobby_exists", "Lobby already exists");
+                    let _ = kick_me_now.send(reason);
+                    return;
+                }
+
+                let iter = self.lobbies.values();
+                let iter = iter.filter(|l| l.initiator == Some(initiator));
+                let ip_has_listed = iter.clone().any(|l| l.listed);
+
+                if (listed && ip_has_listed) || iter.count() >= LOBBIES_PER_IP {
+                    let reason = Kick::violation("rate_limited", "Lobbies per IP limit");
+                    let _ = kick_me_now.send(reason);
+                    return;
+                }
+
+                if listed && let Some(set) = self.gid_lobbies.get(&lid.gid) {
+                    let mut lid = lid.clone();
+
+                    let count = set
+                        .iter()
+                        .filter_map(|&id| {
+                            lid.lid = id;
+                            self.lobbies.get(&lid)
+                        })
+                        .filter(|l| l.listed)
+                        .count();
+
+                    if count >= LISTED_LOBBIES_PER_GID {
+                        let reason = Kick::violation("rate_limited", "Lobbies per GID limit");
+                        let _ = kick_me_now.send(reason);
+                        return;
+                    }
+                }
+
+                info!("new lobby {lid:?}");
+
+                let now = Instant::now();
+
+                self.lobbies.insert(
+                    lid.clone(),
+                    Lobby {
+                        initiator: Some(initiator),
+                        players: HashSet::new(),
+                        master,
+                        metadata: lobby_meta,
+                        capacity,
+                        listed,
+                        idle_since: Some(now),
+                        created_at: now,
+                        alterations_budget: TokenBucket::new(1.0, 2.0, 2.0),
+                        metadata_budget: TokenBucket::new_metadata(),
+                    },
+                );
+
+                info!("new lobby max={capacity} {lid:?}");
+
+                if let Some(set) = self.gid_lobbies.get_mut(&lid.gid) {
+                    set.insert(lid.lid);
+                } else {
+                    let mut set = HashSet::new();
+                    set.insert(lid.lid);
+                    self.gid_lobbies.insert(lid.gid.clone(), set);
+                }
+
+                self.insert_player(kick_me_now, initiator, pid, lid, player_meta);
+            }
+            BlasterOperation::JoinLobby {
+                ip,
+                pid,
+                lid,
+                player_meta,
+                kick_me_now,
+            } => {
+                if !self.cap_ip(ip) {
+                    return;
+                }
+
+                let Some(lobby) = self.lobbies.get(&lid) else {
+                    let _ = kick_me_now.send(Kick::violation("lobby_not_found", "Lobby not found"));
+                    return;
+                };
+
+                if lobby.is_full() {
+                    let _ = kick_me_now.send(Kick::violation("lobby_full", "Lobby is full"));
+                } else {
+                    self.insert_player(kick_me_now, ip, pid, lid, player_meta);
+                }
+            }
             BlasterOperation::SetCapacity {
                 initiator,
                 capacity,
@@ -293,24 +436,6 @@ impl BlasterEventLoop {
                     self.send_to_lobby(&lid, &msg);
                 }
             }
-            BlasterOperation::JoinLobby {
-                ip,
-                pid,
-                lid,
-                player_meta,
-                kick_me_now,
-            } => {
-                let Some(lobby) = self.lobbies.get(&lid) else {
-                    let _ = kick_me_now.send(Kick::violation("lobby_not_found", "Lobby not found"));
-                    return;
-                };
-
-                if lobby.is_full() {
-                    let _ = kick_me_now.send(Kick::violation("lobby_full", "Lobby is full"));
-                } else {
-                    self.insert_player(kick_me_now, ip, pid, lid, player_meta);
-                }
-            }
             BlasterOperation::KickPlayer {
                 kicker,
                 kickee: kick_id,
@@ -359,48 +484,14 @@ impl BlasterEventLoop {
 
                 self.cleanup_lobbies();
             }
-            BlasterOperation::ListLobbies { gid, limit, tx } => {
-                let lobbies = self
-                    .gid_lobbies
-                    .get(&gid)
-                    .cloned()
-                    .unwrap_or(HashSet::new());
-
-                let lobbies: Vec<LobbyListing> = lobbies
-                    .into_iter()
-                    .filter_map(|lid| {
-                        let lid = LobbyId {
-                            lid,
-                            gid: gid.clone(),
-                        };
-
-                        let lober = self.lobbies.get(&lid)?;
-                        Some((lid, lober))
-                    })
-                    .filter_map(|(lid, lobby)| {
-                        if !lobby.listed || lobby.is_full() {
-                            return None;
-                        }
-
-                        Some(LobbyListing {
-                            lid: lid.lid,
-                            max: lobby.capacity,
-                            players: lobby.players.len(),
-                            metadata: lobby.metadata.clone(),
-                        })
-                    })
-                    .take(limit.clamp(1, LOBBY_LISTING_CAP))
-                    .collect();
-
-                let _ = tx.send(lobbies);
-            }
             BlasterOperation::FlushPlayerQueue { pid, tx } => {
-                let _ = if let Some(player) = self.players.get_mut(&pid) {
+                if let Some(player) = self.players.get_mut(&pid) {
                     let count = FLUSH_MAX.min(player.queue.len());
-                    let _ = tx.send(player.queue.drain(..count).collect());
-                } else {
-                    let _ = tx.send(Vec::new());
-                };
+
+                    for msg in player.queue.drain(..count) {
+                        let _ = tx.send(msg);
+                    }
+                }
             }
             BlasterOperation::Relay { from, to, msg } => {
                 if let Some(p_from) = self.players.get(&from)
@@ -410,84 +501,6 @@ impl BlasterEventLoop {
                         self.send_to(to, msg);
                     }
                 }
-            }
-            BlasterOperation::HostLobby {
-                initiator,
-                lid,
-                master,
-                lobby_meta,
-                capacity,
-                listed,
-                pid,
-                player_meta,
-                kick_me_now,
-            } => {
-                if self.lobbies.contains_key(&lid) {
-                    let reason = Kick::violation("lobby_exists", "Lobby already exists");
-                    let _ = kick_me_now.send(reason);
-                    return;
-                }
-
-                let iter = self.lobbies.values();
-                let iter = iter.filter(|l| l.initiator == Some(initiator));
-                let ip_has_listed = iter.clone().any(|l| l.listed);
-
-                if (listed && ip_has_listed) || iter.count() >= LOBBIES_PER_IP {
-                    let reason = Kick::violation("rate_limited", "Lobbies per IP limit");
-                    let _ = kick_me_now.send(reason);
-                    return;
-                }
-
-                if listed && let Some(set) = self.gid_lobbies.get(&lid.gid) {
-                    let mut lid = lid.clone();
-
-                    let count = set
-                        .iter()
-                        .filter_map(|&id| {
-                            lid.lid = id;
-                            self.lobbies.get(&lid)
-                        })
-                        .filter(|l| l.listed)
-                        .count();
-
-                    if count >= LISTED_LOBBIES_PER_GID {
-                        let reason = Kick::violation("rate_limited", "Lobbies per GID limit");
-                        let _ = kick_me_now.send(reason);
-                        return;
-                    }
-                }
-
-                info!("new lobby {lid:?}");
-
-                let now = Instant::now();
-
-                self.lobbies.insert(
-                    lid.clone(),
-                    Lobby {
-                        initiator: Some(initiator),
-                        players: HashSet::new(),
-                        master,
-                        metadata: lobby_meta,
-                        capacity,
-                        listed,
-                        idle_since: Some(now),
-                        created_at: now,
-                        alterations_budget: TokenBucket::new(1.0, 2.0, 2.0),
-                        metadata_budget: TokenBucket::new_metadata(),
-                    },
-                );
-
-                info!("new lobby max={capacity} {lid:?}");
-
-                if let Some(set) = self.gid_lobbies.get_mut(&lid.gid) {
-                    set.insert(lid.lid);
-                } else {
-                    let mut set = HashSet::new();
-                    set.insert(lid.lid);
-                    self.gid_lobbies.insert(lid.gid.clone(), set);
-                }
-
-                self.insert_player(kick_me_now, initiator, pid, lid, player_meta);
             }
             BlasterOperation::IntroduceSession { ip, tx } => {
                 let total_sessions: usize = self.peers.values().map(|c| c.session_count()).sum();
@@ -547,11 +560,6 @@ impl BlasterEventLoop {
                         }
                     };
                 }
-            }
-            BlasterOperation::SignalPerIpCap { ip, tx } => {
-                let peer = self.peers.get_mut(&ip);
-                let peer = peer.map(|peer| peer.ops.take(1));
-                let _ = tx.send(peer.unwrap_or(false));
             }
         }
     }
