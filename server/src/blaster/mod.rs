@@ -111,11 +111,11 @@ impl Blaster {
     }
 
     pub fn introduce_session(&self, ip: IpAddr) -> Option<SessionHandle> {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = oneshot::channel();
 
         self.execute(BlasterOperation::IntroduceSession { ip, tx });
 
-        if let Ok(true) = rx.recv() {
+        if let Ok(true) = tokio::task::block_in_place(|| rx.blocking_recv()) {
             return Some(SessionHandle {
                 blaster: self.clone(),
                 ip,
@@ -211,10 +211,30 @@ pub enum BlasterOperation {
     },
     IntroduceSession {
         ip: IpAddr,
-        tx: mpsc::Sender<bool>,
+        tx: oneshot::Sender<bool>,
     },
     Prune,
     CloseSession {
         ip: IpAddr,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn introduce_session_in_tokio_runtime() {
+        let config = Config {
+            ice_servers: vec![],
+        };
+
+        let blaster = Blaster::new(config);
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+
+        let handle = blaster.introduce_session(ip);
+        assert!(handle.is_some());
+    }
 }
