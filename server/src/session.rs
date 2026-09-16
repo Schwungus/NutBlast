@@ -1,6 +1,5 @@
 use std::{
     net::IpAddr,
-    sync::mpsc::{self},
     time::{Duration, Instant},
 };
 
@@ -8,7 +7,7 @@ use futures_util::{
     SinkExt as _, StreamExt as _,
     stream::{SplitSink, SplitStream},
 };
-use tokio::net::TcpStream;
+use tokio::{net::TcpStream, sync::oneshot};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Error as TungError, Message},
@@ -125,7 +124,7 @@ impl Session {
                 }
             }
             ClientMessage::List { gid, limit } if self.pid.is_none() => {
-                let (tx, rx) = mpsc::channel();
+                let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::ListLobbies {
                     ip: self.real_ip,
@@ -134,7 +133,7 @@ impl Session {
                     tx,
                 });
 
-                let list = rx.iter().collect();
+                let list = rx.await.unwrap_or_default();
                 self.send(&ServerMessage::List { list }).await;
 
                 return Ok(Loop::Stop);
@@ -325,12 +324,6 @@ impl Session {
                 reason: self.bye_reason.clone(),
                 pid,
             });
-        }
-
-        info!("bye, {}!", self.real_ip);
-
-        if let Ok(mut ws) = self.ws_receiver.reunite(self.ws_sender) {
-            let _ = ws.close(None).await;
         }
     }
 }

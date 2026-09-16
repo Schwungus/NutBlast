@@ -212,11 +212,10 @@ impl BlasterEventLoop {
                         max: lobby.capacity,
                         players: lobby.players.len(),
                         metadata: lobby.metadata.clone(),
-                    });
+                    })
+                    .take(limit.clamp(1, LOBBY_LISTING_CAP));
 
-                for lobby in list.take(limit.clamp(1, LOBBY_LISTING_CAP)) {
-                    let _ = tx.send(lobby);
-                }
+                let _ = tx.send(list.collect());
             }
             BlasterOperation::HostLobby {
                 initiator,

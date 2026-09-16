@@ -2,6 +2,7 @@ use std::{collections::HashSet, net::IpAddr, sync::mpsc, time::Instant};
 
 use eventloop::BlasterEventLoop;
 use serde::Deserialize;
+use tokio::sync::oneshot;
 
 use crate::{
     id::{BasicId, GameId, LobbyId},
@@ -110,14 +111,32 @@ impl Blaster {
         let _ = self.channel.send(operation);
     }
 
-    pub fn introduce_session(&self, ip: IpAddr) -> bool {
+    pub fn introduce_session(&self, ip: IpAddr) -> Option<SessionHandle> {
         let (tx, rx) = mpsc::channel();
-        self.execute(BlasterOperation::IntroduceSession { ip, tx });
-        rx.recv().unwrap_or(false)
-    }
 
-    pub async fn close_session(&self, ip: IpAddr) {
-        self.execute(BlasterOperation::CloseSession { ip });
+        self.execute(BlasterOperation::IntroduceSession { ip, tx });
+
+        if let Ok(true) = rx.recv() {
+            return Some(SessionHandle {
+                blaster: self.clone(),
+                ip,
+            });
+        }
+
+        None
+    }
+}
+
+#[must_use]
+pub struct SessionHandle {
+    blaster: Blaster,
+    ip: IpAddr,
+}
+
+impl Drop for SessionHandle {
+    fn drop(&mut self) {
+        let op = BlasterOperation::CloseSession { ip: self.ip };
+        self.blaster.execute(op);
     }
 }
 
@@ -164,7 +183,7 @@ pub enum BlasterOperation {
         ip: IpAddr,
         gid: GameId,
         limit: usize,
-        tx: mpsc::Sender<LobbyListing>,
+        tx: oneshot::Sender<Vec<LobbyListing>>,
     },
     HostLobby {
         initiator: IpAddr,

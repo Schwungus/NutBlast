@@ -59,33 +59,37 @@ async fn main() -> eyre::Result<()> {
     let blaster = blaster0.clone();
 
     while let Ok((stream, local_address)) = listener.accept().await {
-        let mut real_ip = local_address.ip();
+        const MAX: Option<usize> = Some(32 * 1024);
 
-        let max = 32 * 1024;
         let config = WebSocketConfig::default()
-            .max_frame_size(Some(max))
-            .max_message_size(Some(max));
+            .max_frame_size(MAX)
+            .max_message_size(MAX);
 
         let blaster = blaster.clone();
 
         tokio::spawn(async move {
+            let mut real_ip = local_address.ip();
+            let mut session_handle = None;
+
             let hdr = |req: &Request, response: Response| {
-                // TODO: add a "trust reverse-proxy" opt-in flag.
+                // TODO: add a "trust reverse-proxy" opt-in flag for private deployments.
                 if let Some(xff) = req.headers().get("x-forwarded-for")
-                    && let Ok(xff_str) = xff.to_str()
-                    && let Some(client_ip) = xff_str.split(',').next()
+                    && let Ok(xff) = xff.to_str()
+                    && let Some(client_ip) = xff.split(',').next()
                     // X-Forwarded-For can be a comma-separated list: "client, proxy1, proxy2". The first entry is the original client IP.
                     && let Ok(real) = client_ip.trim().parse::<IpAddr>()
                 {
                     real_ip = real;
                 }
 
-                if !blaster.introduce_session(real_ip) {
+                session_handle = blaster.introduce_session(real_ip);
+
+                if session_handle.is_none() {
                     error!("{}: too many handles", real_ip);
 
                     let err_response = Response::builder()
                         .status(StatusCode::TOO_MANY_REQUESTS)
-                        .body(Some("too many connections from this IP".into()))
+                        .body(None)
                         .unwrap();
 
                     return Err(err_response);
@@ -103,14 +107,12 @@ async fn main() -> eyre::Result<()> {
                 }
                 Err(e) => {
                     error!("{}: {}", real_ip, e);
-                    blaster.close_session(real_ip).await;
                     return;
                 }
             };
 
             let session = Session::new(blaster.clone(), real_ip, sender, receiver);
             session.mainloop().await;
-            blaster.close_session(real_ip).await;
         });
     }
 
