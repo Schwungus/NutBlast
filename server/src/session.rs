@@ -1,7 +1,4 @@
-use std::{
-    net::IpAddr,
-    time::{Duration, Instant},
-};
+use std::{net::IpAddr, time::Duration};
 
 use futures_util::{
     SinkExt as _, StreamExt as _,
@@ -23,8 +20,6 @@ use crate::{
     },
     tokens::TokenBucket,
 };
-
-const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
 
 pub struct Session {
     blaster: Blaster,
@@ -69,9 +64,13 @@ impl Session {
     }
 
     async fn handle_next_websocket_message(&mut self) -> Result<Loop, Kick> {
+        const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
+
         tokio::select! {
             _ = tokio::time::sleep(IDLE_TIMEOUT) => {
-                return Ok(Loop::Stop);
+                if self.pid.is_none() {
+                    return Ok(Loop::Stop);
+                }
             }
             Some(msg) = self.ws_receiver.next() => {
                 match msg {
@@ -301,8 +300,6 @@ impl Session {
     }
 
     pub async fn mainloop(mut self) {
-        let created_at = Instant::now();
-
         loop {
             match self.handle_next_websocket_message().await {
                 Ok(Loop::Continue) => {}
@@ -316,10 +313,6 @@ impl Session {
 
                     break;
                 }
-            }
-
-            if self.pid.is_none() && Instant::now().duration_since(created_at) >= IDLE_TIMEOUT {
-                break;
             }
         }
 
