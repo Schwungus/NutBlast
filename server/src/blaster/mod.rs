@@ -44,7 +44,7 @@ impl Peer {
 #[derive(Clone)]
 struct Lobby {
     players: HashSet<BasicId>,
-    initiator: Option<IpAddr>,
+    initiator: IpAddr,
     master: BasicId,
     metadata: Metadata,
     capacity: usize,

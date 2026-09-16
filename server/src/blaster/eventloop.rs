@@ -239,7 +239,7 @@ impl BlasterEventLoop {
                 }
 
                 let iter = self.lobbies.values();
-                let iter = iter.filter(|l| l.initiator == Some(initiator));
+                let iter = iter.filter(|l| l.initiator == initiator);
                 let ip_has_listed = iter.clone().any(|l| l.listed);
 
                 if (listed && ip_has_listed) || iter.count() >= LOBBIES_PER_IP {
@@ -272,7 +272,7 @@ impl BlasterEventLoop {
                 self.lobbies.insert(
                     lid.clone(),
                     Lobby {
-                        initiator: Some(initiator),
+                        initiator,
                         players: HashSet::new(),
                         master,
                         metadata: lobby_meta,
@@ -447,7 +447,7 @@ impl BlasterEventLoop {
                 }
             }
             BlasterOperation::RemovePlayer { pid, reason } => {
-                let Some(Player { ip, lid, .. }) = self.players.shift_remove(&pid) else {
+                let Some(Player { lid, .. }) = self.players.shift_remove(&pid) else {
                     return;
                 };
 
@@ -459,12 +459,6 @@ impl BlasterEventLoop {
 
                 if lobby.players.len() < CHUD_THRESHOLD && lobby.idle_since.is_none() {
                     lobby.idle_since.replace(Instant::now());
-                }
-
-                if lobby.initiator == Some(ip)
-                    && !self.players.iter().any(|(_, p)| p.lid == lid && p.ip == ip)
-                {
-                    lobby.initiator = None;
                 }
 
                 if pid == lobby.master
