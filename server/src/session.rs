@@ -1,6 +1,6 @@
 use std::{
     net::IpAddr,
-    sync::mpsc::{self, TryRecvError},
+    sync::mpsc::{self},
     time::{Duration, Instant},
 };
 
@@ -16,7 +16,7 @@ use tokio_tungstenite::{
 
 use crate::{
     MAX_PLAYERS,
-    blaster::{Blaster, BlasterOperation},
+    blaster::{Blaster, BlasterOperation, TokioReceiver, TokioSender},
     id::{BasicId, LobbyId},
     protocol::{
         payloads::{ClientMessage, Kick, ServerMessage},
@@ -30,8 +30,8 @@ pub struct Session {
     real_ip: IpAddr,
     ws_sender: SplitSink<WebSocketStream<TcpStream>, Message>,
     ws_receiver: SplitStream<WebSocketStream<TcpStream>>,
-    msg_sender: mpsc::Sender<ServerMessage>,
-    msg_receiver: mpsc::Receiver<ServerMessage>,
+    msg_sender: TokioSender,
+    msg_receiver: TokioReceiver,
     pid: Option<BasicId>,
     bye_reason: Option<Kick>,
     payloads_budget: TokenBucket,
@@ -46,7 +46,7 @@ impl Session {
         ws_sender: SplitSink<WebSocketStream<TcpStream>, Message>,
         ws_receiver: SplitStream<WebSocketStream<TcpStream>>,
     ) -> Self {
-        let (msg_sender, msg_receiver) = mpsc::channel();
+        let (msg_sender, msg_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         Self {
             payloads_budget: TokenBucket::new(30.0, 30.0, 60.0),
@@ -68,39 +68,33 @@ impl Session {
     }
 
     async fn handle_next_websocket_message(&mut self) -> Result<Loop, Kick> {
-        const TICK_INTERVAL: Duration = Duration::from_millis(1000 / 60);
-        let mut result = Ok(Loop::Continue);
-
-        if let Ok(Some(msg)) = tokio::time::timeout(TICK_INTERVAL, self.ws_receiver.next()).await {
-            match msg {
-                Ok(msg) => {
-                    self.payloads_budget.try_take(1)?;
-                    self.bandwidth_budget.try_take(msg.len())?;
-                    result = self.process_websocket_message(msg).await;
-                }
-                Err(e) => {
-                    if !matches!(e, TungError::ConnectionClosed) {
-                        error!("{}: {}", self.real_ip, e);
+        tokio::select! {
+            Some(msg) = self.ws_receiver.next() => {
+                match msg {
+                    Ok(msg) => {
+                        self.payloads_budget.try_take(1)?;
+                        self.bandwidth_budget.try_take(msg.len())?;
+                        return self.process_websocket_message(msg).await;
                     }
+                    Err(e) => {
+                        if !matches!(e, TungError::ConnectionClosed) {
+                            error!("{}: {}", self.real_ip, e);
+                        }
 
+                        return Ok(Loop::Stop);
+                    }
+                }
+            }
+            Some(msg) = self.msg_receiver.recv() => {
+                self.send(&msg).await;
+
+                if let ServerMessage::Disconnected { .. } = msg {
                     return Ok(Loop::Stop);
                 }
-            };
-        }
-
-        loop {
-            let msg = match self.msg_receiver.try_recv() {
-                Ok(msg) => msg,
-                Err(TryRecvError::Empty) => return result,
-                Err(TryRecvError::Disconnected) => return Ok(Loop::Stop),
-            };
-
-            self.send(&msg).await;
-
-            if let ServerMessage::Disconnected { .. } = msg {
-                return Ok(Loop::Stop);
             }
         }
+
+        Ok(Loop::Continue)
     }
 
     async fn process_websocket_message(&mut self, msg: Message) -> Result<Loop, Kick> {

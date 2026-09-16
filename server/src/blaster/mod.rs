@@ -65,7 +65,7 @@ struct Player {
     ip: IpAddr,
     lid: LobbyId,
     metadata: Metadata,
-    sender: mpsc::Sender<ServerMessage>,
+    sender: TokioSender,
     birth: u128,
     metadata_budget: TokenBucket,
 }
@@ -121,6 +121,9 @@ impl Blaster {
     }
 }
 
+pub type TokioSender = tokio::sync::mpsc::UnboundedSender<ServerMessage>;
+pub type TokioReceiver = tokio::sync::mpsc::UnboundedReceiver<ServerMessage>;
+
 pub enum BlasterOperation {
     SetCapacity {
         initiator: BasicId,
@@ -172,14 +175,14 @@ pub enum BlasterOperation {
         listed: bool,
         pid: BasicId,
         player_meta: Metadata,
-        sender: mpsc::Sender<ServerMessage>,
+        sender: TokioSender,
     },
     JoinLobby {
         ip: IpAddr,
         pid: BasicId,
         lid: LobbyId,
         player_meta: Metadata,
-        sender: mpsc::Sender<ServerMessage>,
+        sender: TokioSender,
     },
     KickPlayer {
         kicker: BasicId,

@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
-    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -9,7 +8,7 @@ use indexmap::IndexMap;
 
 use crate::{
     MAX_PLAYERS,
-    blaster::{BlasterOperation, Config, Lobby, Peer, PeerSessionCount, Player},
+    blaster::{BlasterOperation, Config, Lobby, Peer, PeerSessionCount, Player, TokioSender},
     id::{BasicId, GameId, LobbyId},
     protocol::{
         payloads::{Kick, LobbyListing, ServerMessage},
@@ -65,7 +64,7 @@ impl BlasterEventLoop {
 
     fn insert_player(
         &mut self,
-        sender: mpsc::Sender<ServerMessage>,
+        sender: TokioSender,
         ip: IpAddr,
         pid: BasicId,
         lid: LobbyId,
