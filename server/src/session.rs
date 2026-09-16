@@ -42,7 +42,9 @@ impl Session {
         ws_sender: SplitSink<WebSocketStream<TcpStream>, Message>,
         ws_receiver: SplitStream<WebSocketStream<TcpStream>>,
     ) -> Self {
-        let (msg_sender, msg_receiver) = tokio::sync::mpsc::unbounded_channel();
+        const QUEUE_CAP: usize = 120;
+
+        let (msg_sender, msg_receiver) = tokio::sync::mpsc::channel(QUEUE_CAP);
 
         Self {
             payloads_budget: TokenBucket::new(30.0, 30.0, 60.0),

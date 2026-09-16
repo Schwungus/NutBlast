@@ -72,7 +72,7 @@ struct Player {
 
 impl Player {
     fn send(&mut self, msg: ServerMessage) {
-        let _ = self.sender.send(msg);
+        let _ = self.sender.try_send(msg);
     }
 }
 
@@ -139,8 +139,8 @@ impl Drop for SessionHandle {
     }
 }
 
-pub type TokioSender = tokio::sync::mpsc::UnboundedSender<ServerMessage>;
-pub type TokioReceiver = tokio::sync::mpsc::UnboundedReceiver<ServerMessage>;
+pub type TokioSender = tokio::sync::mpsc::Sender<ServerMessage>;
+pub type TokioReceiver = tokio::sync::mpsc::Receiver<ServerMessage>;
 
 pub enum BlasterOperation {
     SetCapacity {
