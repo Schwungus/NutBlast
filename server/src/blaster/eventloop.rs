@@ -68,7 +68,7 @@ impl BlasterEventLoop {
         pid: BasicId,
         lid: LobbyId,
         player_metadata: Metadata,
-    ) -> Result<(), Kick> {
+    ) {
         let Lobby {
             listed,
             capacity,
@@ -88,7 +88,7 @@ impl BlasterEventLoop {
 
             result
         } else {
-            return Err(Kick::violation("unreachable", "wtf???"));
+            unreachable!();
         };
 
         let now = Instant::now();
@@ -150,8 +150,6 @@ impl BlasterEventLoop {
                 },
             );
         }
-
-        Ok(())
     }
 
     fn cleanup_lobbies(&mut self) {
@@ -294,7 +292,7 @@ impl BlasterEventLoop {
                         self.gid_lobbies.insert(lid.gid.clone(), set);
                     }
 
-                    self.insert_player(sender, pid, lid, player_meta)?;
+                    self.insert_player(sender, pid, lid, player_meta);
 
                     Ok(pid)
                 })());
@@ -318,7 +316,7 @@ impl BlasterEventLoop {
                     }
 
                     let pid = rand::random();
-                    self.insert_player(sender, pid, lid, player_meta)?;
+                    self.insert_player(sender, pid, lid, player_meta);
 
                     Ok(pid)
                 })());
