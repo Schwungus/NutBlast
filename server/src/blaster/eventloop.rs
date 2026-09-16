@@ -17,8 +17,9 @@ use crate::{
     tokens::TokenBucket,
 };
 
-const MAX_SESSIONS_PER_IP: usize = 4;
-const GLOBAL_MAX_SESSIONS: usize = 256;
+const SESSIONS_PER_IP_CAP: usize = 4;
+const GLOBAL_SESSIONS_CAP: usize = 1024;
+const GLOBAL_PEERS_CAP: usize = 512;
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 const LOBBY_LISTING_CAP: usize = 32;
@@ -486,17 +487,20 @@ impl BlasterEventLoop {
             BlasterOperation::IntroduceSession { ip, tx } => {
                 let total_sessions: usize = self.peers.values().map(|c| c.session_count()).sum();
 
-                let _ = tx.send(if total_sessions >= GLOBAL_MAX_SESSIONS {
+                let _ = tx.send(if total_sessions >= GLOBAL_SESSIONS_CAP {
                     error!("{ip}: global session limit");
                     false
                 } else if let Some(peer) = self.peers.get_mut(&ip) {
-                    if peer.session_count() >= MAX_SESSIONS_PER_IP {
+                    if peer.session_count() >= SESSIONS_PER_IP_CAP {
                         error!("{ip}: too many sessions");
                         false
                     } else {
                         peer.session_count = PeerSessionCount::Some(peer.session_count() + 1);
                         true
                     }
+                } else if self.peers.len() >= GLOBAL_PEERS_CAP {
+                    error!("{ip}: global peer limit");
+                    false
                 } else {
                     self.peers.insert(ip, Peer::new());
                     true
