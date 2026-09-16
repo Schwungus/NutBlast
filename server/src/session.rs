@@ -16,7 +16,7 @@ use tokio_tungstenite::{
 use crate::{
     MAX_PLAYERS,
     blaster::{Blaster, BlasterOperation, TokioReceiver, TokioSender},
-    id::{BasicId, LobbyId},
+    id::BasicId,
     protocol::{
         payloads::{ClientMessage, Kick, ServerMessage},
         utils::{CandidateString, FieldKey, FieldValue, SdpString},
@@ -138,8 +138,9 @@ impl Session {
                     tx,
                 });
 
-                let list = rx.await.unwrap_or_default();
-                self.send(&ServerMessage::List { list }).await;
+                if let Ok(list) = rx.await {
+                    self.send(&ServerMessage::List { list }).await;
+                }
 
                 return Ok(Loop::Stop);
             }
@@ -150,37 +151,37 @@ impl Session {
                 player_meta,
                 lobby_meta,
             } if (1..=MAX_PLAYERS).contains(&capacity) && self.pid.is_none() => {
-                let pid = rand::random();
-                self.pid = Some(pid);
-
-                let lid = LobbyId {
-                    gid,
-                    lid: rand::random(),
-                };
+                let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::HostLobby {
                     sender: self.msg_sender.clone(),
                     initiator: self.real_ip,
-                    lid: lid.clone(),
-                    master: pid,
+                    gid,
                     lobby_meta,
                     capacity,
                     listed,
-                    pid,
                     player_meta,
+                    tx,
                 });
+
+                if let Ok(pid) = rx.await {
+                    self.pid = Some(pid?);
+                }
             }
             ClientMessage::Join { lid, player_meta } if self.pid.is_none() => {
-                let pid = rand::random();
-                self.pid = Some(pid);
+                let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::JoinLobby {
                     sender: self.msg_sender.clone(),
                     ip: self.real_ip,
-                    pid,
                     lid: lid.clone(),
                     player_meta,
+                    tx,
                 });
+
+                if let Ok(pid) = rx.await {
+                    self.pid = Some(pid?);
+                }
             }
             ClientMessage::PassCandidate {
                 to,
@@ -311,8 +312,7 @@ impl Session {
                         warn!("boot to the face for {}: {}", self.real_ip, code);
                     }
 
-                    let bye = ServerMessage::Disconnected { reason };
-                    self.send(&bye).await;
+                    self.send(&ServerMessage::Disconnected { reason }).await;
 
                     break;
                 }
