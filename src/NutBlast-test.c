@@ -265,6 +265,7 @@ int main(int argc, char* argv[]) {
         } else if (IsKeyPressed(KEY_J)) {
             NutBlast_Disconnect();
             NutBlast_Join(existing_lobby);
+            existing_lobby = 0;
         } else if (IsKeyPressed(KEY_K)) {
             NutBlast_Disconnect();
         } else if (!NutBlast_IsConnecting() && GetTime() >= next_search) {
