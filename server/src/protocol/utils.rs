@@ -72,6 +72,18 @@ impl Metadata {
     pub fn can_add(&self, key: &str) -> bool {
         self.0.contains_key(key) || self.0.len() < Self::MAX_FIELDS
     }
+
+    pub fn truncated(&self) -> Metadata {
+        const MAX_ENTRY_SIZE: usize = 128;
+
+        Metadata(
+            self.0
+                .iter()
+                .filter(|(k, v)| k.len() + v.len() < MAX_ENTRY_SIZE)
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
+    }
 }
 
 fn deserialize_metadata<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>

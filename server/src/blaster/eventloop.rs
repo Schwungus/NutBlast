@@ -214,7 +214,7 @@ impl BlasterEventLoop {
                             lid: lid.lid,
                             max: lobby.capacity,
                             players: lobby.players.len(),
-                            metadata: lobby.metadata.clone(),
+                            metadata: lobby.metadata.truncated(),
                         })
                         .take(limit.clamp(1, LOBBY_LISTING_CAP));
 
