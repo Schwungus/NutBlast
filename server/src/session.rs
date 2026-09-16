@@ -24,6 +24,8 @@ use crate::{
     tokens::TokenBucket,
 };
 
+const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
+
 pub struct Session {
     blaster: Blaster,
     real_ip: IpAddr,
@@ -68,6 +70,9 @@ impl Session {
 
     async fn handle_next_websocket_message(&mut self) -> Result<Loop, Kick> {
         tokio::select! {
+            _ = tokio::time::sleep(IDLE_TIMEOUT) => {
+                return Ok(Loop::Stop);
+            }
             Some(msg) = self.ws_receiver.next() => {
                 match msg {
                     Ok(msg) => {
@@ -295,7 +300,6 @@ impl Session {
     }
 
     pub async fn mainloop(mut self) {
-        const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
         let created_at = Instant::now();
 
         loop {
@@ -314,7 +318,7 @@ impl Session {
                 }
             }
 
-            if self.pid.is_none() && Instant::now().duration_since(created_at) > IDLE_TIMEOUT {
+            if self.pid.is_none() && Instant::now().duration_since(created_at) >= IDLE_TIMEOUT {
                 break;
             }
         }

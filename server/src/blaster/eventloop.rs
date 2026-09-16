@@ -65,7 +65,6 @@ impl BlasterEventLoop {
     fn insert_player(
         &mut self,
         sender: TokioSender,
-        ip: IpAddr,
         pid: BasicId,
         lid: LobbyId,
         player_metadata: Metadata,
@@ -101,7 +100,6 @@ impl BlasterEventLoop {
                 lid: lid.clone(),
                 metadata: player_metadata.clone(),
                 sender,
-                ip,
                 birth,
                 metadata_budget: TokenBucket::new_metadata(),
             },
@@ -295,7 +293,7 @@ impl BlasterEventLoop {
                     self.gid_lobbies.insert(lid.gid.clone(), set);
                 }
 
-                self.insert_player(sender, initiator, pid, lid, player_meta);
+                self.insert_player(sender, pid, lid, player_meta);
             }
             BlasterOperation::JoinLobby {
                 ip,
@@ -320,7 +318,7 @@ impl BlasterEventLoop {
                     return;
                 }
 
-                self.insert_player(sender, ip, pid, lid, player_meta);
+                self.insert_player(sender, pid, lid, player_meta);
             }
             BlasterOperation::SetCapacity {
                 initiator,

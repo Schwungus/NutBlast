@@ -63,7 +63,6 @@ impl Lobby {
 
 #[derive(Clone)]
 struct Player {
-    ip: IpAddr,
     lid: LobbyId,
     metadata: Metadata,
     sender: TokioSender,
