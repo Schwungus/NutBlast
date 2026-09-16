@@ -182,7 +182,7 @@ pub enum BlasterOperation {
         ip: IpAddr,
         gid: GameId,
         limit: usize,
-        tx: oneshot::Sender<Vec<LobbyListing>>,
+        tx: oneshot::Sender<Result<Vec<LobbyListing>, Kick>>,
     },
     HostLobby {
         initiator: IpAddr,

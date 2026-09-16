@@ -139,7 +139,7 @@ impl Session {
                 });
 
                 if let Ok(list) = rx.await {
-                    self.send(&ServerMessage::List { list }).await;
+                    self.send(&ServerMessage::List { list: list? }).await;
                 }
 
                 return Ok(Loop::Stop);

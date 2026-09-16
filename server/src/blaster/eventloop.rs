@@ -188,37 +188,37 @@ impl BlasterEventLoop {
     pub fn recv(&mut self, msg: BlasterOperation) {
         match msg {
             BlasterOperation::ListLobbies { ip, gid, limit, tx } => {
-                if self.cap_ip(ip).is_err() {
-                    return;
-                }
+                let _ = tx.send((|| {
+                    self.cap_ip(ip)?;
 
-                let list = self
-                    .gid_lobbies
-                    .get(&gid)
-                    .cloned()
-                    .unwrap_or(HashSet::new());
+                    let list = self
+                        .gid_lobbies
+                        .get(&gid)
+                        .cloned()
+                        .unwrap_or_else(HashSet::new);
 
-                let list = list
-                    .into_iter()
-                    .filter_map(|lid| {
-                        let lid = LobbyId {
-                            lid,
-                            gid: gid.clone(),
-                        };
+                    let list = list
+                        .into_iter()
+                        .filter_map(|lid| {
+                            let lid = LobbyId {
+                                lid,
+                                gid: gid.clone(),
+                            };
 
-                        let lobby = self.lobbies.get(&lid)?;
-                        Some((lid, lobby))
-                    })
-                    .filter(|(_, lobby)| lobby.listed && !lobby.is_full())
-                    .map(|(lid, lobby)| LobbyListing {
-                        lid: lid.lid,
-                        max: lobby.capacity,
-                        players: lobby.players.len(),
-                        metadata: lobby.metadata.clone(),
-                    })
-                    .take(limit.clamp(1, LOBBY_LISTING_CAP));
+                            let lobby = self.lobbies.get(&lid)?;
+                            Some((lid, lobby))
+                        })
+                        .filter(|(_, lobby)| lobby.listed && !lobby.is_full())
+                        .map(|(lid, lobby)| LobbyListing {
+                            lid: lid.lid,
+                            max: lobby.capacity,
+                            players: lobby.players.len(),
+                            metadata: lobby.metadata.clone(),
+                        })
+                        .take(limit.clamp(1, LOBBY_LISTING_CAP));
 
-                let _ = tx.send(list.collect());
+                    Ok(list.collect())
+                })());
             }
             BlasterOperation::HostLobby {
                 initiator,
