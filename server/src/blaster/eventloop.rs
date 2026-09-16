@@ -27,8 +27,6 @@ const LOBBY_LISTING_CAP: usize = 32;
 const LISTED_LOBBIES_PER_GID: usize = 32;
 const LOBBIES_PER_IP: usize = 4;
 
-const FLUSH_MAX: usize = 10;
-
 const CHUD_THRESHOLD: usize = 2;
 const CHUD_LOBBY_TIMEOUT: Duration = Duration::from_mins(3);
 
@@ -67,7 +65,7 @@ impl BlasterEventLoop {
 
     fn insert_player(
         &mut self,
-        kick_me_now: mpsc::Sender<Kick>,
+        sender: mpsc::Sender<ServerMessage>,
         ip: IpAddr,
         pid: BasicId,
         lid: LobbyId,
@@ -103,8 +101,7 @@ impl BlasterEventLoop {
             Player {
                 lid: lid.clone(),
                 metadata: player_metadata.clone(),
-                queue: Vec::new(),
-                kick_me_now,
+                sender,
                 ip,
                 birth,
                 metadata_budget: TokenBucket::new_metadata(),
@@ -231,7 +228,7 @@ impl BlasterEventLoop {
                 listed,
                 pid,
                 player_meta,
-                kick_me_now,
+                sender,
             } => {
                 if !self.cap_ip(initiator) {
                     return;
@@ -239,7 +236,7 @@ impl BlasterEventLoop {
 
                 if self.lobbies.contains_key(&lid) {
                     let reason = Kick::violation("lobby_exists", "Lobby already exists");
-                    let _ = kick_me_now.send(reason);
+                    let _ = sender.send(ServerMessage::Disconnected { reason });
                     return;
                 }
 
@@ -249,7 +246,7 @@ impl BlasterEventLoop {
 
                 if (listed && ip_has_listed) || iter.count() >= LOBBIES_PER_IP {
                     let reason = Kick::violation("rate_limited", "Lobbies per IP limit");
-                    let _ = kick_me_now.send(reason);
+                    let _ = sender.send(ServerMessage::Disconnected { reason });
                     return;
                 }
 
@@ -267,12 +264,10 @@ impl BlasterEventLoop {
 
                     if count >= LISTED_LOBBIES_PER_GID {
                         let reason = Kick::violation("rate_limited", "Lobbies per GID limit");
-                        let _ = kick_me_now.send(reason);
+                        let _ = sender.send(ServerMessage::Disconnected { reason });
                         return;
                     }
                 }
-
-                info!("new lobby {lid:?}");
 
                 let now = Instant::now();
 
@@ -302,29 +297,32 @@ impl BlasterEventLoop {
                     self.gid_lobbies.insert(lid.gid.clone(), set);
                 }
 
-                self.insert_player(kick_me_now, initiator, pid, lid, player_meta);
+                self.insert_player(sender, initiator, pid, lid, player_meta);
             }
             BlasterOperation::JoinLobby {
                 ip,
                 pid,
                 lid,
                 player_meta,
-                kick_me_now,
+                sender,
             } => {
                 if !self.cap_ip(ip) {
                     return;
                 }
 
                 let Some(lobby) = self.lobbies.get(&lid) else {
-                    let _ = kick_me_now.send(Kick::violation("lobby_not_found", "Lobby not found"));
+                    let reason = Kick::violation("lobby_not_found", "Lobby not found");
+                    let _ = sender.send(ServerMessage::Disconnected { reason });
                     return;
                 };
 
                 if lobby.is_full() {
-                    let _ = kick_me_now.send(Kick::violation("lobby_full", "Lobby is full"));
-                } else {
-                    self.insert_player(kick_me_now, ip, pid, lid, player_meta);
+                    let reason = Kick::violation("lobby_full", "Lobby is full");
+                    let _ = sender.send(ServerMessage::Disconnected { reason });
+                    return;
                 }
+
+                self.insert_player(sender, ip, pid, lid, player_meta);
             }
             BlasterOperation::SetCapacity {
                 initiator,
@@ -446,7 +444,8 @@ impl BlasterEventLoop {
                     && let Some(kickee) = self.players.get_mut(&kick_id)
                     && kickee.lid == lid
                 {
-                    kickee.kick(Kick::natural("kick", "Kicked by lobby's master"));
+                    let reason = Kick::natural("kick", "Kicked by lobby's master");
+                    let _ = kickee.send(ServerMessage::Disconnected { reason });
                 }
             }
             BlasterOperation::RemovePlayer { pid, reason } => {
@@ -483,15 +482,6 @@ impl BlasterEventLoop {
                 self.send_to_lobby(&lid, &left);
 
                 self.cleanup_lobbies();
-            }
-            BlasterOperation::FlushPlayerQueue { pid, tx } => {
-                if let Some(player) = self.players.get_mut(&pid) {
-                    let count = FLUSH_MAX.min(player.queue.len());
-
-                    for msg in player.queue.drain(..count) {
-                        let _ = tx.send(msg);
-                    }
-                }
             }
             BlasterOperation::Relay { from, to, msg } => {
                 if let Some(p_from) = self.players.get(&from)
@@ -530,7 +520,8 @@ impl BlasterEventLoop {
                     {
                         for pid in &lobby.players {
                             if let Some(player) = self.players.get_mut(pid) {
-                                player.kick(Kick::natural("inactive_lobby", "Inactive lobby"));
+                                let reason = Kick::natural("inactive_lobby", "Inactive lobby");
+                                player.send(ServerMessage::Disconnected { reason });
                             }
                         }
                     }

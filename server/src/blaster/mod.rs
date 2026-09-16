@@ -65,23 +65,14 @@ struct Player {
     ip: IpAddr,
     lid: LobbyId,
     metadata: Metadata,
-    queue: Vec<ServerMessage>,
-    kick_me_now: mpsc::Sender<Kick>,
+    sender: mpsc::Sender<ServerMessage>,
     birth: u128,
     metadata_budget: TokenBucket,
 }
 
 impl Player {
     fn send(&mut self, msg: ServerMessage) {
-        const QUEUE_CAP: usize = 120;
-
-        if matches!(msg, ServerMessage::Disconnected { .. }) || self.queue.len() < QUEUE_CAP {
-            self.queue.push(msg);
-        }
-    }
-
-    fn kick(&self, reason: Kick) {
-        let _ = self.kick_me_now.send(reason);
+        let _ = self.sender.send(msg);
     }
 }
 
@@ -161,13 +152,6 @@ pub enum BlasterOperation {
         initiator: BasicId,
         key: String,
     },
-    JoinLobby {
-        ip: IpAddr,
-        pid: BasicId,
-        lid: LobbyId,
-        player_meta: Metadata,
-        kick_me_now: mpsc::Sender<Kick>,
-    },
     Relay {
         from: BasicId,
         to: BasicId,
@@ -188,7 +172,14 @@ pub enum BlasterOperation {
         listed: bool,
         pid: BasicId,
         player_meta: Metadata,
-        kick_me_now: mpsc::Sender<Kick>,
+        sender: mpsc::Sender<ServerMessage>,
+    },
+    JoinLobby {
+        ip: IpAddr,
+        pid: BasicId,
+        lid: LobbyId,
+        player_meta: Metadata,
+        sender: mpsc::Sender<ServerMessage>,
     },
     KickPlayer {
         kicker: BasicId,
@@ -197,10 +188,6 @@ pub enum BlasterOperation {
     RemovePlayer {
         pid: BasicId,
         reason: Option<Kick>,
-    },
-    FlushPlayerQueue {
-        pid: BasicId,
-        tx: mpsc::Sender<ServerMessage>,
     },
     IntroduceSession {
         ip: IpAddr,

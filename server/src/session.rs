@@ -1,6 +1,6 @@
 use std::{
     net::IpAddr,
-    sync::mpsc,
+    sync::mpsc::{self, TryRecvError},
     time::{Duration, Instant},
 };
 
@@ -25,30 +25,30 @@ use crate::{
     tokens::TokenBucket,
 };
 
-const TICK_DELAY: Duration = Duration::from_millis(1000 / 60);
-
 pub struct Session {
     blaster: Blaster,
     real_ip: IpAddr,
-    receiver: SplitStream<WebSocketStream<TcpStream>>,
-    sender: SplitSink<WebSocketStream<TcpStream>, Message>,
+    ws_sender: SplitSink<WebSocketStream<TcpStream>, Message>,
+    ws_receiver: SplitStream<WebSocketStream<TcpStream>>,
+    msg_sender: mpsc::Sender<ServerMessage>,
+    msg_receiver: mpsc::Receiver<ServerMessage>,
     pid: Option<BasicId>,
     bye_reason: Option<Kick>,
     payloads_budget: TokenBucket,
     relays_budget: TokenBucket,
     bandwidth_budget: TokenBucket,
-    kick_me_now: (mpsc::Sender<Kick>, mpsc::Receiver<Kick>),
 }
 
 impl Session {
     pub fn new(
         blaster: Blaster,
         real_ip: IpAddr,
-        sender: SplitSink<WebSocketStream<TcpStream>, Message>,
-        receiver: SplitStream<WebSocketStream<TcpStream>>,
+        ws_sender: SplitSink<WebSocketStream<TcpStream>, Message>,
+        ws_receiver: SplitStream<WebSocketStream<TcpStream>>,
     ) -> Self {
+        let (msg_sender, msg_receiver) = mpsc::channel();
+
         Self {
-            kick_me_now: mpsc::channel(),
             payloads_budget: TokenBucket::new(30.0, 30.0, 60.0),
             relays_budget: TokenBucket::new(5.0, 5.0, 40.0),
             bandwidth_budget: TokenBucket::new(4096.0, 4096.0, 12288.0),
@@ -56,8 +56,10 @@ impl Session {
             bye_reason: None,
             blaster,
             real_ip,
-            sender,
-            receiver,
+            ws_sender,
+            ws_receiver,
+            msg_sender,
+            msg_receiver,
         }
     }
 
@@ -66,42 +68,39 @@ impl Session {
     }
 
     async fn handle_next_websocket_message(&mut self) -> Result<Loop, Kick> {
-        let result = tokio::select! {
-            msg = self.receiver.next() => {
-                self.accept_websocket_message(msg).await
-            }
-            _ = tokio::time::sleep(TICK_DELAY) => {
-                Ok(Loop::Continue)
-            }
-        };
+        const TICK_INTERVAL: Duration = Duration::from_millis(1000 / 60);
+        let mut result = Ok(Loop::Continue);
 
-        if let Ok(kick) = self.kick_me_now.1.try_recv() {
-            return Err(kick);
-        }
-
-        self.flush().await;
-        result
-    }
-
-    async fn accept_websocket_message(
-        &mut self,
-        msg: Option<Result<Message, TungError>>,
-    ) -> Result<Loop, Kick> {
-        match msg {
-            Some(Ok(msg)) => {
-                self.payloads_budget.try_take(1)?;
-                self.bandwidth_budget.try_take(msg.len())?;
-                return self.process_websocket_message(msg).await;
-            }
-            Some(Err(e)) => {
-                if !matches!(e, TungError::ConnectionClosed) {
-                    error!("{}: {}", self.real_ip, e);
+        if let Ok(Some(msg)) = tokio::time::timeout(TICK_INTERVAL, self.ws_receiver.next()).await {
+            match msg {
+                Ok(msg) => {
+                    self.payloads_budget.try_take(1)?;
+                    self.bandwidth_budget.try_take(msg.len())?;
+                    result = self.process_websocket_message(msg).await;
                 }
-            }
-            None => {}
+                Err(e) => {
+                    if !matches!(e, TungError::ConnectionClosed) {
+                        error!("{}: {}", self.real_ip, e);
+                    }
+
+                    return Ok(Loop::Stop);
+                }
+            };
         }
 
-        Ok(Loop::Stop)
+        loop {
+            let msg = match self.msg_receiver.try_recv() {
+                Ok(msg) => msg,
+                Err(TryRecvError::Empty) => return result,
+                Err(TryRecvError::Disconnected) => return Ok(Loop::Stop),
+            };
+
+            self.send(&msg).await;
+
+            if let ServerMessage::Disconnected { .. } = msg {
+                return Ok(Loop::Stop);
+            }
+        }
     }
 
     async fn process_websocket_message(&mut self, msg: Message) -> Result<Loop, Kick> {
@@ -162,7 +161,7 @@ impl Session {
                 };
 
                 self.execute(BlasterOperation::HostLobby {
-                    kick_me_now: self.kick_me_now.0.clone(),
+                    sender: self.msg_sender.clone(),
                     initiator: self.real_ip,
                     lid: lid.clone(),
                     master: pid,
@@ -178,7 +177,7 @@ impl Session {
                 self.pid = Some(pid);
 
                 self.execute(BlasterOperation::JoinLobby {
-                    kick_me_now: self.kick_me_now.0.clone(),
+                    sender: self.msg_sender.clone(),
                     ip: self.real_ip,
                     pid,
                     lid: lid.clone(),
@@ -297,25 +296,8 @@ impl Session {
             }
         };
 
-        if let Err(err) = self.sender.send(Message::text(s)).await {
+        if let Err(err) = self.ws_sender.send(Message::text(s)).await {
             error!("send to {}: {}", self.real_ip, err);
-        }
-    }
-
-    async fn flush(&mut self) {
-        let Some(pid) = self.pid.to_owned() else {
-            return;
-        };
-
-        let (tx, rx) = mpsc::channel();
-        self.execute(BlasterOperation::FlushPlayerQueue { pid, tx });
-
-        for msg in rx {
-            self.send(&msg).await;
-
-            if let ServerMessage::Disconnected { .. } = msg {
-                break;
-            }
         }
     }
 
@@ -334,7 +316,6 @@ impl Session {
 
                     let bye = ServerMessage::Disconnected { reason };
                     self.send(&bye).await;
-                    self.flush().await;
 
                     break;
                 }
@@ -354,7 +335,7 @@ impl Session {
 
         info!("bye, {}!", self.real_ip);
 
-        if let Ok(mut ws) = self.receiver.reunite(self.sender) {
+        if let Ok(mut ws) = self.ws_receiver.reunite(self.ws_sender) {
             let _ = ws.close(None).await;
         }
     }
