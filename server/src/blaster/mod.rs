@@ -111,11 +111,11 @@ impl Blaster {
     }
 
     pub fn introduce_session(&self, ip: IpAddr) -> Option<SessionHandle> {
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = mpsc::channel();
 
         self.execute(BlasterOperation::IntroduceSession { ip, tx });
 
-        if let Ok(true) = tokio::task::block_in_place(|| rx.blocking_recv()) {
+        if let Ok(true) = tokio::task::block_in_place(|| rx.recv()) {
             return Some(SessionHandle {
                 blaster: self.clone(),
                 ip,
@@ -211,7 +211,7 @@ pub enum BlasterOperation {
     },
     IntroduceSession {
         ip: IpAddr,
-        tx: oneshot::Sender<bool>,
+        tx: mpsc::Sender<bool>,
     },
     Prune,
     CloseSession {
