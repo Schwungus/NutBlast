@@ -96,7 +96,7 @@ impl BlasterEventLoop {
                 metadata: player_metadata.clone(),
                 sender,
                 birth,
-                metadata_budget: TokenBucket::new_metadata(),
+                metadata_budget: TokenBucket::new_metadata("player_metadata"),
             },
         );
 
@@ -214,7 +214,7 @@ impl BlasterEventLoop {
                 lobby_meta,
                 capacity,
                 listed,
-                player_meta,
+                player_metadata: player_meta,
                 sender,
                 tx,
             } => {
@@ -265,8 +265,13 @@ impl BlasterEventLoop {
                             listed,
                             idle_since: Some(now),
                             created_at: now,
-                            alterations_budget: TokenBucket::new(1.0, 2.0, 2.0),
-                            metadata_budget: TokenBucket::new_metadata(),
+                            alterations_budget: TokenBucket::new(
+                                "lobby_alterations",
+                                1.0,
+                                2.0,
+                                2.0,
+                            ),
+                            metadata_budget: TokenBucket::new_metadata("lobby_metadata"),
                         },
                     );
 
@@ -288,7 +293,7 @@ impl BlasterEventLoop {
             BlasterOperation::JoinLobby {
                 ip,
                 lid,
-                player_meta,
+                player_metadata: player_meta,
                 sender,
                 tx,
             } => {
@@ -444,11 +449,15 @@ impl BlasterEventLoop {
                 }
             }
             BlasterOperation::RemovePlayer { pid, reason } => {
-                let Some(Player { lid, .. }) = self.players.shift_remove(&pid) else {
+                let Some(player) = self.players.shift_remove(&pid) else {
                     return;
                 };
 
-                let Some(lobby) = self.lobbies.get_mut(&lid) else {
+                player.send(ServerMessage::Disconnected {
+                    reason: reason.clone(),
+                });
+
+                let Some(lobby) = self.lobbies.get_mut(&player.lid) else {
                     return;
                 };
 
@@ -464,11 +473,11 @@ impl BlasterEventLoop {
                     lobby.master = new;
 
                     let msg = ServerMessage::SetMaster { pid: lobby.master };
-                    self.send_to_lobby(&lid, &msg);
+                    self.send_to_lobby(&player.lid, &msg);
                 }
 
                 let left = ServerMessage::Left { pid, reason };
-                self.send_to_lobby(&lid, &left);
+                self.send_to_lobby(&player.lid, &left);
 
                 self.cleanup_lobbies();
             }

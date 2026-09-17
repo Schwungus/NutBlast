@@ -889,8 +889,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         }},
     {"Disconnected",
         [](const auto& obj) {
-            ::disconnection_reason = obj.at("reason");
-            ::time_to_die = true;
+            ::disconnection_reason = obj.at("reason"), ::time_to_die = true;
         }},
     {"SetListed",
         [](const auto& obj) {
@@ -1001,8 +1000,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
             const NutBlast_ID pid = obj.at("pid");
 
             if (::players.contains(pid)) {
-                const bool got_reason = obj.contains("reason") && !obj.at("reason").is_null();
-                ::on_player_left(pid, got_reason ? obj.at("reason") : ByeReason());
+                ::on_player_left(pid, ByeReason(obj.at("reason")));
                 ::players.erase(pid);
             }
         }},

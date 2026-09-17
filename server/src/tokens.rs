@@ -4,6 +4,7 @@ use crate::protocol::payloads::Kick;
 
 #[derive(Clone)]
 pub struct TokenBucket {
+    identifier: &'static str,
     tokens: f32,
     last_refill: Instant,
     rate: f32,
@@ -11,12 +12,13 @@ pub struct TokenBucket {
 }
 
 impl TokenBucket {
-    pub fn new_metadata() -> Self {
-        Self::new(4096.0, 8192.0, 8192.0)
+    pub fn new_metadata(identifier: &'static str) -> Self {
+        Self::new(identifier, 4096.0, 8192.0, 8192.0)
     }
 
-    pub fn new(rate: f32, max: f32, burst: f32) -> Self {
+    pub fn new(identifier: &'static str, rate: f32, max: f32, burst: f32) -> Self {
         Self {
+            identifier,
             tokens: burst,
             last_refill: Instant::now(),
             rate,
@@ -30,13 +32,22 @@ impl TokenBucket {
         let now = Instant::now();
         let dt = now.duration_since(self.last_refill).as_secs_f32();
         self.last_refill = now;
-        self.tokens = (self.tokens + dt * self.rate).min(self.max);
+
+        let replenished = (self.tokens + dt * self.rate).min(self.max);
+
+        if self.tokens <= self.max {
+            self.tokens = replenished;
+        }
 
         if self.tokens < count {
-            return Err(Kick::violation("rate_limited", "Bandwidth patrol!"));
+            return Err(Kick::violation(
+                "rate_limited",
+                format!("Bandwidth patrol! ({})", self.identifier),
+            ));
         }
 
         self.tokens -= count;
+
         Ok(())
     }
 }

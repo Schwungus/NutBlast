@@ -30,7 +30,7 @@ pub struct Session {
     msg_sender: TokioSender,
     msg_receiver: TokioReceiver,
     pid: Option<BasicId>,
-    bye_reason: Option<Kick>,
+    bye_reason: Kick,
     payloads_budget: TokenBucket,
     relays_budget: TokenBucket,
     bandwidth_budget: TokenBucket,
@@ -49,11 +49,11 @@ impl Session {
 
         Self {
             stop: false,
-            payloads_budget: TokenBucket::new(30.0, 30.0, 60.0),
-            relays_budget: TokenBucket::new(5.0, 5.0, 40.0),
-            bandwidth_budget: TokenBucket::new(4096.0, 4096.0, 12288.0),
+            payloads_budget: TokenBucket::new("payloads", 30.0, 30.0, 60.0),
+            relays_budget: TokenBucket::new("relays", 10.0, 10.0, 80.0),
+            bandwidth_budget: TokenBucket::new("kbps", 4096.0, 4096.0, 12288.0),
             pid: None,
-            bye_reason: None,
+            bye_reason: Kick::natural("ok", "Graceful disconnection"),
             blaster,
             real_ip,
             ws_sender,
@@ -160,7 +160,7 @@ impl Session {
                     lobby_meta,
                     capacity,
                     listed,
-                    player_meta,
+                    player_metadata: player_meta,
                     tx,
                 });
 
@@ -175,7 +175,7 @@ impl Session {
                     sender: self.msg_sender.clone(),
                     ip: self.real_ip,
                     lid: lid.clone(),
-                    player_meta,
+                    player_metadata: player_meta,
                     tx,
                 });
 
@@ -279,7 +279,6 @@ impl Session {
     fn relay(&mut self, to: BasicId, msg: ServerMessage) {
         if let Some(pid) = self.pid {
             if let Err(reason) = self.relays_budget.try_take(1) {
-                let reason = Some(reason);
                 self.execute(BlasterOperation::RemovePlayer { pid, reason });
             } else {
                 self.execute(BlasterOperation::Relay { from: pid, to, msg });
@@ -289,11 +288,11 @@ impl Session {
 
     async fn send(&mut self, value: &ServerMessage) {
         if let ServerMessage::Disconnected { reason } = value {
-            if let Kick::Violation { code, .. } = reason {
-                warn!("boot to the face for {}: {}", self.real_ip, code);
+            if let Kick::Violation { code, msg } = reason {
+                warn!("({code}) {}: {msg}", self.real_ip);
             }
 
-            self.bye_reason = Some(reason.clone());
+            self.bye_reason = reason.clone();
             self.stop = true;
         }
 

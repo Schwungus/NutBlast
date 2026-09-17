@@ -112,7 +112,7 @@ pub enum ServerMessage {
     },
     Left {
         pid: BasicId,
-        reason: Option<Kick>,
+        reason: Kick,
     },
     Candidate {
         from: BasicId,

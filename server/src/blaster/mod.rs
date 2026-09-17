@@ -29,7 +29,7 @@ impl Peer {
     fn new() -> Self {
         Self {
             session_count: PeerSessionCount::Some(1),
-            sessions_budget: TokenBucket::new(2.0, 3.0, 4.0),
+            sessions_budget: TokenBucket::new("sessions_per_ip", 2.0, 3.0, 4.0),
         }
     }
 
@@ -203,14 +203,14 @@ pub enum BlasterOperation {
         lobby_meta: Metadata,
         capacity: usize,
         listed: bool,
-        player_meta: Metadata,
+        player_metadata: Metadata,
         sender: TokioSender,
         tx: oneshot::Sender<Result<BasicId, Kick>>,
     },
     JoinLobby {
         ip: IpAddr,
         lid: LobbyId,
-        player_meta: Metadata,
+        player_metadata: Metadata,
         sender: TokioSender,
         tx: oneshot::Sender<Result<BasicId, Kick>>,
     },
@@ -220,7 +220,7 @@ pub enum BlasterOperation {
     },
     RemovePlayer {
         pid: BasicId,
-        reason: Option<Kick>,
+        reason: Kick,
     },
     IntroduceSession {
         ip: IpAddr,
