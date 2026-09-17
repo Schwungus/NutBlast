@@ -49,14 +49,8 @@ impl BlasterEventLoop {
         }
     }
 
-    fn send_to(&mut self, pid: BasicId, msg: ServerMessage) {
-        if let Some(player) = self.players.get_mut(&pid) {
-            player.send(msg);
-        }
-    }
-
-    fn send_to_lobby(&mut self, lid: &LobbyId, msg: &ServerMessage) {
-        for (_, player) in self.players.iter_mut() {
+    fn send_to_lobby(&self, lid: &LobbyId, msg: &ServerMessage) {
+        for (_, player) in self.players.iter() {
             if player.lid == *lid {
                 player.send(msg.clone());
             }
@@ -106,50 +100,40 @@ impl BlasterEventLoop {
             },
         );
 
-        self.send_to(pid, ServerMessage::SetListed { listed });
-        self.send_to(pid, ServerMessage::SetCapacity { capacity });
+        let Some(player) = self.players.get(&pid) else {
+            unreachable!();
+        };
+
+        player.send(ServerMessage::SetListed { listed });
+        player.send(ServerMessage::SetCapacity { capacity });
 
         for (key, value) in lobby_metadata.0 {
-            self.send_to(pid, ServerMessage::SetLobbyMeta { key, value });
+            player.send(ServerMessage::SetLobbyMeta { key, value });
         }
 
-        self.send_to(pid, ServerMessage::SetMaster { pid: master });
+        player.send(ServerMessage::SetMaster { pid: master });
 
-        self.send_to(
+        player.send(ServerMessage::Connected {
+            ice_servers: self.config.ice_servers.clone(),
+            lid: lid.lid,
             pid,
-            ServerMessage::Connected {
-                ice_servers: self.config.ice_servers.clone(),
-                lid: lid.lid,
-                pid,
-                birth,
-            },
-        );
+            birth,
+        });
 
         for other_id in &players {
-            if let Some(Player {
-                metadata: meta,
-                birth,
-                ..
-            }) = self.players.get(other_id).cloned()
-            {
-                self.send_to(
-                    pid,
-                    ServerMessage::Joined {
-                        pid: *other_id,
-                        metadata: meta,
-                        birth,
-                    },
-                );
-            }
+            if let Some(other_player) = self.players.get(other_id) {
+                player.send(ServerMessage::Joined {
+                    pid: *other_id,
+                    metadata: other_player.metadata.clone(),
+                    birth: other_player.birth,
+                });
 
-            self.send_to(
-                *other_id,
-                ServerMessage::Joined {
+                other_player.send(ServerMessage::Joined {
                     pid,
                     metadata: player_metadata.clone(),
                     birth,
-                },
-            );
+                });
+            }
         }
     }
 
@@ -179,7 +163,10 @@ impl BlasterEventLoop {
     fn cap_ip(&mut self, ip: IpAddr) -> Result<(), Kick> {
         let peer = self.peers.get_mut(&ip);
 
-        if !peer.map(|peer| peer.ops.take(1)).unwrap_or(false) {
+        if !peer
+            .map(|peer| peer.sessions_budget.try_take(1).is_ok())
+            .unwrap_or(false)
+        {
             return Err(Kick::violation("rate_limited", "Sessions per IP cap"));
         }
 
@@ -327,48 +314,56 @@ impl BlasterEventLoop {
                 capacity,
             } => {
                 if (1..=MAX_PLAYERS).contains(&capacity)
-                    && let Some(Player { lid, .. }) = self.players.get(&initiator).cloned()
-                    && let Some(lobby) = self.lobbies.get_mut(&lid)
+                    && let Some(player) = self.players.get(&initiator)
+                    && let Some(lobby) = self.lobbies.get_mut(&player.lid)
                     && lobby.master == initiator
-                    && lobby.alterations_budget.take(1)
+                    && player.try_take_from_budget(&mut lobby.alterations_budget, 1)
                 {
                     lobby.capacity = capacity;
 
                     let msg = ServerMessage::SetCapacity { capacity };
-                    self.send_to_lobby(&lid, &msg);
+                    self.send_to_lobby(&player.lid, &msg);
                 }
             }
             BlasterOperation::SetListed { initiator, listed } => {
-                if let Some(Player { lid, .. }) = self.players.get(&initiator).cloned()
-                    && let Some(lobby) = self.lobbies.get_mut(&lid)
+                if let Some(player) = self.players.get(&initiator)
+                    && let Some(lobby) = self.lobbies.get_mut(&player.lid)
                     && lobby.master == initiator
-                    && lobby.alterations_budget.take(1)
+                    && player.try_take_from_budget(&mut lobby.alterations_budget, 1)
                 {
                     lobby.listed = listed;
 
                     let msg = ServerMessage::SetListed { listed };
-                    self.send_to_lobby(&lid, &msg);
+                    self.send_to_lobby(&player.lid, &msg);
                 }
             }
             BlasterOperation::SetMaster {
-                initiator,
+                initiator: initiator_pid,
                 new_master,
             } => {
-                if new_master != initiator
-                    && let Some(Player { lid, .. }) = self.players.get(&new_master).cloned()
-                    && let Some(lobby) = self.lobbies.get_mut(&lid)
-                    && lobby.master == initiator
-                    && lobby.alterations_budget.take(1)
+                if new_master != initiator_pid
+                    && let Some(player) = self.players.get(&initiator_pid)
+                    && let Some(lobby) = self.lobbies.get_mut(&player.lid)
+                    && lobby.master == initiator_pid
+                    && self.players.get(&new_master).map(|x| x.lid.clone())
+                        == Some(player.lid.clone())
+                    && player.try_take_from_budget(&mut lobby.alterations_budget, 1)
                 {
                     lobby.master = new_master;
-                    self.send_to_lobby(&lid, &ServerMessage::SetMaster { pid: new_master });
+                    self.send_to_lobby(&player.lid, &ServerMessage::SetMaster { pid: new_master });
                 }
             }
             BlasterOperation::SetPlayerMeta { pid, key, value } => {
+                let size = key.len() + value.len();
+
                 let lid = if let Some(player) = self.players.get_mut(&pid)
                     && player.metadata.can_add(&key)
-                    && player.metadata_budget.take(key.len() + value.len())
                 {
+                    if let Err(reason) = player.metadata_budget.try_take(size) {
+                        player.boot(reason);
+                        return;
+                    }
+
                     player.metadata.0.insert(key.to_string(), value.to_string());
                     player.lid.clone()
                 } else {
@@ -401,11 +396,13 @@ impl BlasterEventLoop {
                 key,
                 value,
             } => {
-                if let Some(Player { lid, .. }) = self.players.get(&initiator).cloned()
-                    && let Some(lobby) = self.lobbies.get_mut(&lid)
+                let size = key.len() + value.len();
+
+                if let Some(player) = self.players.get(&initiator)
+                    && let Some(lobby) = self.lobbies.get_mut(&player.lid)
                     && lobby.master == initiator
                     && lobby.metadata.can_add(&key)
-                    && lobby.metadata_budget.take(key.len() + value.len())
+                    && player.try_take_from_budget(&mut lobby.metadata_budget, size)
                 {
                     lobby.metadata.0.insert(key.to_string(), value.to_string());
 
@@ -414,7 +411,7 @@ impl BlasterEventLoop {
                         value: value.to_string(),
                     };
 
-                    self.send_to_lobby(&lid, &msg);
+                    self.send_to_lobby(&player.lid, &msg);
                 }
             }
             BlasterOperation::EraseLobbyMeta { initiator, key } => {
@@ -478,10 +475,9 @@ impl BlasterEventLoop {
             BlasterOperation::Relay { from, to, msg } => {
                 if let Some(p_from) = self.players.get(&from)
                     && let Some(p_to) = self.players.get(&to)
+                    && p_from.lid == p_to.lid
                 {
-                    if p_from.lid == p_to.lid {
-                        self.send_to(to, msg);
-                    }
+                    p_to.send(msg);
                 }
             }
             BlasterOperation::IntroduceSession { ip, tx } => {

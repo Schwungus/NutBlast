@@ -24,10 +24,6 @@ impl TokenBucket {
         }
     }
 
-    pub fn take(&mut self, count: usize) -> bool {
-        self.try_take(count).is_ok()
-    }
-
     pub fn try_take(&mut self, count: usize) -> Result<(), Kick> {
         let count = count as f32;
 

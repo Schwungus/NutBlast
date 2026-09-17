@@ -195,19 +195,19 @@ impl Session {
                     mid,
                 };
 
-                self.relay(from, to, msg);
+                self.relay(to, msg);
             }
             ClientMessage::PassOffer {
                 to,
                 sdp: SdpString(sdp),
             } if let Some(from) = self.pid => {
-                self.relay(from, to, ServerMessage::Offer { from, sdp });
+                self.relay(to, ServerMessage::Offer { from, sdp });
             }
             ClientMessage::PassAnswer {
                 to,
                 sdp: SdpString(sdp),
             } if let Some(from) = self.pid => {
-                self.relay(from, to, ServerMessage::Answer { from, sdp });
+                self.relay(to, ServerMessage::Answer { from, sdp });
             }
             ClientMessage::SetListed { listed } if let Some(pid) = self.pid => {
                 self.execute(BlasterOperation::SetListed {
@@ -277,9 +277,14 @@ impl Session {
         Ok(Loop::Continue)
     }
 
-    fn relay(&mut self, from: BasicId, to: BasicId, msg: ServerMessage) {
-        if self.relays_budget.take(1) {
-            self.execute(BlasterOperation::Relay { from, to, msg });
+    fn relay(&mut self, to: BasicId, msg: ServerMessage) {
+        if let Some(pid) = self.pid {
+            if let Err(reason) = self.relays_budget.try_take(1) {
+                let reason = Some(reason);
+                self.execute(BlasterOperation::RemovePlayer { pid, reason });
+            } else {
+                self.execute(BlasterOperation::Relay { from: pid, to, msg });
+            }
         }
     }
 

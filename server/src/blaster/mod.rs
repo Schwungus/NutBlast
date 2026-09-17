@@ -22,14 +22,14 @@ enum PeerSessionCount {
 
 struct Peer {
     session_count: PeerSessionCount,
-    ops: TokenBucket,
+    sessions_budget: TokenBucket,
 }
 
 impl Peer {
     fn new() -> Self {
         Self {
             session_count: PeerSessionCount::Some(1),
-            ops: TokenBucket::new(2.0, 3.0, 4.0),
+            sessions_budget: TokenBucket::new(2.0, 3.0, 4.0),
         }
     }
 
@@ -71,8 +71,21 @@ struct Player {
 }
 
 impl Player {
-    fn send(&mut self, msg: ServerMessage) {
+    fn send(&self, msg: ServerMessage) {
         let _ = self.sender.try_send(msg);
+    }
+
+    fn boot(&self, reason: Kick) {
+        self.send(ServerMessage::Disconnected { reason });
+    }
+
+    fn try_take_from_budget(&self, budget: &mut TokenBucket, count: usize) -> bool {
+        if let Err(reason) = budget.try_take(count) {
+            self.boot(reason);
+            false
+        } else {
+            true
+        }
     }
 }
 
