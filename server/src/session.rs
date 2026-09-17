@@ -22,6 +22,7 @@ use crate::{
 };
 
 pub struct Session {
+    stop: bool,
     blaster: Blaster,
     real_ip: IpAddr,
     ws_sender: SplitSink<WebSocketStream<TcpStream>, Message>,
@@ -47,6 +48,7 @@ impl Session {
         let (msg_sender, msg_receiver) = tokio::sync::mpsc::channel(QUEUE_CAP);
 
         Self {
+            stop: false,
             payloads_budget: TokenBucket::new(30.0, 30.0, 60.0),
             relays_budget: TokenBucket::new(5.0, 5.0, 40.0),
             bandwidth_budget: TokenBucket::new(4096.0, 4096.0, 12288.0),
@@ -65,54 +67,51 @@ impl Session {
         self.blaster.execute(operation);
     }
 
-    async fn handle_next_websocket_message(&mut self) -> Result<Loop, Kick> {
+    async fn handle_next_websocket_message(&mut self) -> Result<(), Kick> {
         const IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
 
         tokio::select! {
             _ = tokio::time::sleep(IDLE_TIMEOUT) => {
-                if self.pid.is_none() {
-                    return Ok(Loop::Stop);
-                }
+                self.stop = self.pid.is_none();
             }
             Some(msg) = self.ws_receiver.next() => {
                 match msg {
                     Ok(msg) => {
                         self.payloads_budget.try_take(1)?;
                         self.bandwidth_budget.try_take(msg.len())?;
-                        return self.process_websocket_message(msg).await;
+                        self.process_websocket_message(msg).await?;
                     }
                     Err(e) => {
+                        self.stop = true;
+
                         if !matches!(e, TungError::ConnectionClosed) {
                             error!("{}: {}", self.real_ip, e);
                         }
-
-                        return Ok(Loop::Stop);
                     }
                 }
             }
             Some(msg) = self.msg_receiver.recv() => {
                 self.send(&msg).await;
-
-                if let ServerMessage::Disconnected { .. } = msg {
-                    return Ok(Loop::Stop);
-                }
             }
         }
 
-        Ok(Loop::Continue)
+        Ok(())
     }
 
-    async fn process_websocket_message(&mut self, msg: Message) -> Result<Loop, Kick> {
+    async fn process_websocket_message(&mut self, msg: Message) -> Result<(), Kick> {
         let json = match msg {
             Message::Text(text) => text.to_string(),
-            Message::Close(_) => return Ok(Loop::Stop),
+            Message::Close(_) => {
+                self.stop = true;
+                return Ok(());
+            }
             Message::Binary(_) => {
                 return Err(Kick::violation(
                     "binary_unsupported",
                     "Binary messages not supported",
                 ));
             }
-            _ => return Ok(Loop::Continue),
+            _ => return Ok(()),
         };
 
         let msg = match serde_json::from_str(&json) {
@@ -143,7 +142,7 @@ impl Session {
                     self.send(&ServerMessage::List { list: list? }).await;
                 }
 
-                return Ok(Loop::Stop);
+                self.stop = true;
             }
             ClientMessage::Host {
                 gid,
@@ -274,7 +273,7 @@ impl Session {
             }
         };
 
-        Ok(Loop::Continue)
+        Ok(())
     }
 
     fn relay(&mut self, to: BasicId, msg: ServerMessage) {
@@ -290,7 +289,12 @@ impl Session {
 
     async fn send(&mut self, value: &ServerMessage) {
         if let ServerMessage::Disconnected { reason } = value {
+            if let Kick::Violation { code, .. } = reason {
+                warn!("boot to the face for {}: {}", self.real_ip, code);
+            }
+
             self.bye_reason = Some(reason.clone());
+            self.stop = true;
         }
 
         let s = match serde_json::to_string(value) {
@@ -307,19 +311,9 @@ impl Session {
     }
 
     pub async fn mainloop(mut self) {
-        loop {
-            match self.handle_next_websocket_message().await {
-                Ok(Loop::Continue) => {}
-                Ok(Loop::Stop) => break,
-                Err(reason) => {
-                    if let Kick::Violation { ref code, .. } = reason {
-                        warn!("boot to the face for {}: {}", self.real_ip, code);
-                    }
-
-                    self.send(&ServerMessage::Disconnected { reason }).await;
-
-                    break;
-                }
+        while !self.stop {
+            if let Err(reason) = self.handle_next_websocket_message().await {
+                self.send(&ServerMessage::Disconnected { reason }).await;
             }
         }
 
@@ -330,9 +324,4 @@ impl Session {
             });
         }
     }
-}
-
-enum Loop {
-    Continue,
-    Stop,
 }
