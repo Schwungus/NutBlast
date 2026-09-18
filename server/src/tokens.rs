@@ -33,10 +33,8 @@ impl TokenBucket {
         let dt = now.duration_since(self.last_refill).as_secs_f32();
         self.last_refill = now;
 
-        let replenished = (self.tokens + dt * self.rate).min(self.max);
-
         if self.tokens <= self.max {
-            self.tokens = replenished;
+            self.tokens = (self.tokens + dt * self.rate).min(self.max);
         }
 
         if self.tokens < count {
