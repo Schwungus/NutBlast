@@ -39,7 +39,7 @@ impl TokenBucket {
 
         if self.tokens < count {
             return Err(Kick::violation(
-                "rate_limited",
+                format!("rate_limited.{}", self.identifier),
                 format!("Bandwidth patrol! ({})", self.identifier),
             ));
         }
