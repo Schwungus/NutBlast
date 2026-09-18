@@ -165,10 +165,13 @@ class Once {
 };
 
 struct ByeReason {
-    bool err = false;
-    std::string code = NUTBLAST_ERROR_OK, msg = "Graceful disconnection";
+    static const ByeReason OK;
 
-    ByeReason() {}
+    bool err = false;
+    std::string code, msg;
+
+    ByeReason(const std::string& code, const std::string& msg) : code(code), msg(msg) {}
+
     ByeReason(const nlohmann::json& obj)
         : err(obj.at("type") == "violation"), code(obj.at("code")), msg(obj.at("msg")) {}
 
@@ -176,6 +179,8 @@ struct ByeReason {
         return {.err = err, .code = code.c_str(), .msg = msg.c_str()};
     }
 };
+
+const ByeReason ByeReason::OK(NUTBLAST_ERROR_OK, "Graceful disconnection");
 
 struct Player : std::enable_shared_from_this<Player> {
     Once fire_join, init;
@@ -253,7 +258,7 @@ struct Message {
 static std::string gid = "";
 static NutBlast_ID pid = 0, lid = 0;
 static std::string nutblaster_address;
-static ByeReason disconnection_reason;
+static ByeReason disconnection_reason = ByeReason::OK;
 static int max_players = NUTBLAST_MAX_PLAYERS;
 
 static std::mutex globals_mutex;
@@ -270,7 +275,7 @@ static enum class Mode {
     List,
 } mode = Mode::Join;
 
-static bool hosting_a_listed_lobby = true, permission_to_cook = false, time_to_die = false;
+static bool lobby_listed = true, permission_to_cook = false, time_to_die = false;
 static std::uint64_t our_birth = 0;
 static std::size_t listing_limit = 0;
 
@@ -507,10 +512,8 @@ extern "C" void NutBlast_SetNutBlasterAddress(const char* address) {
 
 extern "C" void NutBlast_SetMaxPlayers(int max) {
     if (!max) // the "unspecified" value inside `NutBlast_HostOptions`
-        ::max_players = NUTBLAST_MAX_PLAYERS;
-    else if (max > 1 && max <= NUTBLAST_MAX_PLAYERS)
-        ::max_players = max;
-    else
+        max = NUTBLAST_MAX_PLAYERS;
+    else if (max < 2 || max > NUTBLAST_MAX_PLAYERS)
         return;
 
     ::ws_send({
@@ -520,8 +523,6 @@ extern "C" void NutBlast_SetMaxPlayers(int max) {
 }
 
 extern "C" void NutBlast_SetListed(bool listed) {
-    ::hosting_a_listed_lobby = listed;
-
     ::ws_send({
         {"type", "SetListed"},
         {"listed", listed},
@@ -529,7 +530,7 @@ extern "C" void NutBlast_SetListed(bool listed) {
 }
 
 extern "C" bool NutBlast_IsListed() {
-    return ::hosting_a_listed_lobby;
+    return ::lobby_listed;
 }
 
 static bool check_field(const char* type_title, const char* key, const char* value) {
@@ -625,7 +626,8 @@ static void join_pro() {
     ::ws_in.clear(), ::ws_out.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
 
-    ::master = 0, ::disconnection_reason = ByeReason(), ::permission_to_cook = false;
+    ::master = 0, ::permission_to_cook = false;
+    ::disconnection_reason = ByeReason::OK;
     ::blaster_ping.reset();
 
     for (auto& queue : recv_queues) {
@@ -658,7 +660,7 @@ static void join_pro() {
                 {"type", "Host"},
                 {"gid", ::gid},
                 {"capacity", ::max_players},
-                {"listed", ::hosting_a_listed_lobby},
+                {"listed", ::lobby_listed},
                 {"player_meta", ::player_meta},
                 {"lobby_meta", ::lobby_meta},
             });
@@ -717,7 +719,7 @@ extern "C" void NutBlast_Disconnect() {
 
     ::log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
     ::on_disconnected(::disconnection_reason); // TODO: maybe NOT fire this in the lobby-listing mode?
-    ::disconnection_reason = ByeReason();
+    ::disconnection_reason = ByeReason::OK;
 
     ::pid = 0, ::last_error = std::nullopt;
 }
@@ -754,8 +756,8 @@ extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
     } else if (!::init) {
         ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
     } else {
-        NutBlast_SetMaxPlayers(opts.max_players);
-        ::mode = Mode::Host, ::hosting_a_listed_lobby = !opts.unlisted;
+        ::mode = Mode::Host, ::lobby_listed = !opts.unlisted;
+        ::max_players = opts.max_players;
 
         ::log(NB_LogInfo, "Trying to host at: {}", ::nutblaster_address);
         join_pro();
@@ -893,7 +895,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         }},
     {"SetListed",
         [](const auto& obj) {
-            ::hosting_a_listed_lobby = obj.at("listed");
+            ::lobby_listed = obj.at("listed");
         }},
     {"SetCapacity",
         [](const auto& obj) {
@@ -1091,11 +1093,12 @@ extern "C" void NutBlast_Update() {
             // the first two peers may be able to reach one another, while the third peer may have trouble connecting to
             // either of them; and that would cut the triangular mesh down to a plain old angle.
             if (player->sdp_timeout.has_value() && NutBlast_TimeNS() >= *player->sdp_timeout) {
-                // only the newest player should disconnect. had to introduce this check because BOTH peers kept
-                // disconnecting :wilted_flower: each time
+                // only the newest player should disconnect. had to introduce this check because BOTH players kept
+                // disconnecting each time :wilted_flower:
                 if (::our_birth >= player->birth) {
-                    ::time_to_die = true;
-                    ::log(NB_LogError, "Humane disconnection");
+                    const auto full = std::format("Could not establish a P2P connection with player {}", id);
+                    ::disconnection_reason = ByeReason(NUTBLAST_ERROR_STUN_FAILED, full);
+                    NutBlast_Disconnect();
                     return;
                 }
             }
