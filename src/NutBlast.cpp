@@ -1096,9 +1096,18 @@ extern "C" void NutBlast_Update() {
                 // only the newest player should disconnect. had to introduce this check because BOTH players kept
                 // disconnecting each time :wilted_flower:
                 if (::our_birth >= player->birth) {
-                    const auto full = std::format("Could not establish a P2P connection with player {}", id);
-                    ::disconnection_reason = ByeReason(NUTBLAST_ERROR_STUN_FAILED, full);
+                    const std::string code = NUTBLAST_ERROR_STUN_FAILED;
+                    const auto msg = std::format("Could not establish a P2P connection with player {}", id);
+
+                    ::ws_send({
+                        {"type", "Leave"},
+                        {"code", code},
+                        {"msg", msg},
+                    });
+
+                    ::disconnection_reason = ByeReason(code, msg);
                     NutBlast_Disconnect();
+
                     return;
                 }
             }

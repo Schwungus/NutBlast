@@ -183,6 +183,12 @@ impl Session {
                     self.pid = Some(pid?);
                 }
             }
+            ClientMessage::Leave { code, msg } => {
+                if let Some(pid) = self.pid {
+                    let reason = Kick::Natural { code, msg };
+                    self.execute(BlasterOperation::RemovePlayer { pid, reason });
+                }
+            }
             ClientMessage::PassCandidate {
                 to,
                 candidate: CandidateString(candidate),

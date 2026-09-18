@@ -25,6 +25,10 @@ pub enum ClientMessage {
         lid: LobbyId,
         player_meta: Metadata,
     },
+    Leave {
+        code: String,
+        msg: String,
+    },
     SetListed {
         listed: bool,
     },
