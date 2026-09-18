@@ -717,7 +717,7 @@ extern "C" void NutBlast_Disconnect() {
         ::fire_ready.reset();
     }
 
-    ::log(NB_LogInfo, "NutBlaster out! ({})", ::disconnection_reason.msg);
+    ::log(NB_LogInfo, "NutBlaster out! {} ({})", ::disconnection_reason.msg, ::disconnection_reason.code);
     ::on_disconnected(::disconnection_reason); // TODO: maybe NOT fire this in the lobby-listing mode?
     ::disconnection_reason = ByeReason::OK;
 

@@ -90,7 +90,8 @@ static void on_player_joined(NutBlast_ID id) {
 }
 
 static void on_player_left(NutBlast_ID id, NutBlast_Reason reason) {
-    TraceLog(LOG_INFO, "Bye, %s! (%s)", NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME), reason.code);
+    const char* name = NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME);
+    TraceLog(LOG_INFO, "Bye, %s! %s (%s)", name, reason.msg, reason.code);
     TinyMapErase(&players, id);
 }
 
