@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     id::{BasicId, GameId, LobbyId},
-    protocol::utils::{CandidateString, FieldKey, FieldValue, Metadata, SdpString},
+    protocol::utils::{CandidateString, Capacity, FieldKey, FieldValue, Metadata, SdpString},
 };
 
 #[derive(Debug, Deserialize)]
@@ -15,7 +15,7 @@ pub enum ClientMessage {
     },
     Host {
         gid: GameId,
-        capacity: usize,
+        capacity: Capacity,
         listed: bool,
         player_meta: Metadata,
         lobby_meta: Metadata,
@@ -33,7 +33,7 @@ pub enum ClientMessage {
         listed: bool,
     },
     SetCapacity {
-        capacity: usize,
+        capacity: Capacity,
     },
     SetPlayerMeta {
         key: FieldKey,

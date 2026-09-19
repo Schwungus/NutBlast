@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize, de};
 
 const FIELD_NAME_MAX: usize = 255;
 const FIELD_VALUE_MAX: usize = 1023;
+const MAX_PLAYERS: usize = 16;
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct FieldKey(#[serde(deserialize_with = "deserialize_field_name")] pub String);
@@ -102,35 +103,6 @@ where
     Ok(meta.into_iter().map(|(k, v)| (k.0, v.0)).collect())
 }
 
-#[cfg(test)]
-mod tests {
-    use serde_json::Value;
-
-    use super::*;
-
-    fn unwrap_key(key: &str) {
-        serde_json::from_value::<FieldKey>(Value::String(key.to_string())).unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn field_name_lower_bound() {
-        unwrap_key("");
-    }
-
-    #[test]
-    #[should_panic]
-    fn field_name_upper_bound() {
-        unwrap_key(&"*".repeat(FIELD_NAME_MAX + 1));
-    }
-
-    #[test]
-    fn field_name_deserializes() {
-        unwrap_key("NutBlast.lobby.name");
-        unwrap_key("0");
-    }
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CandidateString(#[serde(deserialize_with = "validate_candidate")] pub String);
 
@@ -161,4 +133,40 @@ where
     }
 
     Ok(sdp)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Capacity(#[serde(deserialize_with = "validate_capacity")] pub usize);
+
+fn validate_capacity<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let capacity = usize::deserialize(deserializer)?;
+
+    if capacity < 2 || capacity >= MAX_PLAYERS {
+        return Err(de::Error::custom("invalid lobby capacity"));
+    }
+
+    Ok(capacity)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::*;
+
+    fn try_key(key: &str) -> Result<FieldKey, serde_json::Error> {
+        serde_json::from_value::<FieldKey>(Value::String(key.to_string()))
+    }
+
+    #[test]
+    fn field_name_deserializes() {
+        assert!(try_key("").is_err());
+        assert!(try_key(&"*".repeat(FIELD_NAME_MAX + 1)).is_err());
+
+        assert!(try_key("NutBlast.lobby.name").is_ok());
+        assert!(try_key("0").is_ok());
+    }
 }

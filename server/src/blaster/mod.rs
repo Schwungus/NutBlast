@@ -89,7 +89,7 @@ impl Player {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct Config {
     pub ice_servers: Vec<String>,
 }
@@ -240,11 +240,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn introduce_session_in_tokio_runtime() {
-        let config = Config {
-            ice_servers: vec![],
-        };
-
-        let blaster = Blaster::new(config);
+        let blaster = Blaster::new(Config::default());
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 
         let handle = blaster.introduce_session(ip);

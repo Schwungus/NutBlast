@@ -11,12 +11,11 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    MAX_PLAYERS,
     blaster::{Blaster, BlasterOperation, TokioReceiver, TokioSender},
     id::BasicId,
     protocol::{
         payloads::{ClientMessage, Kick, ServerMessage},
-        utils::{CandidateString, FieldKey, FieldValue, SdpString},
+        utils::{CandidateString, Capacity, FieldKey, FieldValue, SdpString},
     },
     tokens::TokenBucket,
 };
@@ -119,10 +118,8 @@ impl Session {
         };
 
         match msg {
-            ClientMessage::Ping => {
-                if self.pid.is_some() {
-                    self.send(&ServerMessage::Pong).await;
-                }
+            ClientMessage::Ping if self.pid.is_some() => {
+                self.send(&ServerMessage::Pong).await;
             }
             ClientMessage::List { gid, limit } if self.pid.is_none() => {
                 let (tx, rx) = oneshot::channel();
@@ -142,11 +139,11 @@ impl Session {
             }
             ClientMessage::Host {
                 gid,
-                capacity,
+                capacity: Capacity(capacity),
                 listed,
                 player_meta,
                 lobby_meta,
-            } if (1..=MAX_PLAYERS).contains(&capacity) && self.pid.is_none() => {
+            } if self.pid.is_none() => {
                 let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::HostLobby {
@@ -216,10 +213,9 @@ impl Session {
                     listed,
                 });
             }
-            ClientMessage::SetCapacity { capacity }
-                if (1..=MAX_PLAYERS).contains(&capacity)
-                    && let Some(pid) = self.pid =>
-            {
+            ClientMessage::SetCapacity {
+                capacity: Capacity(capacity),
+            } if let Some(pid) = self.pid => {
                 self.execute(BlasterOperation::SetCapacity {
                     initiator: pid,
                     capacity,

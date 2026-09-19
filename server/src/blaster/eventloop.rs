@@ -7,7 +7,6 @@ use std::{
 use indexmap::IndexMap;
 
 use crate::{
-    MAX_PLAYERS,
     blaster::{BlasterOperation, Config, Lobby, Peer, PeerSessionCount, Player, TokioSender},
     id::{BasicId, GameId, LobbyId},
     protocol::{
@@ -318,8 +317,7 @@ impl BlasterEventLoop {
                 initiator,
                 capacity,
             } => {
-                if (1..=MAX_PLAYERS).contains(&capacity)
-                    && let Some(player) = self.players.get(&initiator)
+                if let Some(player) = self.players.get(&initiator)
                     && let Some(lobby) = self.lobbies.get_mut(&player.lid)
                     && lobby.master == initiator
                     && player.try_take_from_budget(&mut lobby.alterations_budget, 1)

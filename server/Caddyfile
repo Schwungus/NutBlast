@@ -15,10 +15,10 @@ nutblast.schwung.us, nutblaster.schwung.us {
 			header_up X-Forwarded-For {remote_host}
 		}
 
-		redir https://github.com/Schwungus/NutBlast
+		redir https://github.com/Schwungus/NutBlast#nutblast
 	}
 }
 
 nutpunch.schwung.us, nutpuncher.schwung.us {
-	redir https://github.com/Schwungus/NutPunch
+	redir https://github.com/Schwungus/NutPunch#superseded-by-nutblast
 }
