@@ -92,6 +92,7 @@ impl Player {
 #[derive(Clone, Default, Deserialize)]
 pub struct Config {
     pub ice_servers: Vec<String>,
+    pub trust_reverse_proxy_xff: Option<bool>,
 }
 
 #[derive(Clone)]

@@ -33,6 +33,17 @@ async fn main() -> eyre::Result<()> {
     let addr = std::env::args().nth(1);
     let addr = addr.unwrap_or(String::from("127.0.0.1:36900"));
 
+    let trust_xff = config.trust_reverse_proxy_xff.unwrap_or(false);
+
+    if trust_xff {
+        warn!("blindly trusting the X-Forwarded-For header from reverse-proxy!!!");
+    } else {
+        warn!("ignoring the X-Forwarded-For HTTP header");
+        warn!(
+            "if NutBlaster is behind a reverse-proxy such as nginx, it will see every client's IP as the proxy's LAN address!"
+        );
+    }
+
     let listener = TcpListener::bind(&addr).await?;
     info!("listening on: ws://{}", addr);
 
@@ -49,12 +60,6 @@ async fn main() -> eyre::Result<()> {
     });
 
     while let Ok((stream, local_address)) = listener.accept().await {
-        const MAX: Option<usize> = Some(32 * 1024);
-
-        let config = WebSocketConfig::default()
-            .max_frame_size(MAX)
-            .max_message_size(MAX);
-
         let blaster = blaster.clone();
 
         tokio::spawn(async move {
@@ -62,8 +67,8 @@ async fn main() -> eyre::Result<()> {
             let mut session_handle = None;
 
             let hdr = |req: &Request, response: Response| {
-                // TODO: add a "trust reverse-proxy" opt-in flag for private deployments.
-                if let Some(xff) = req.headers().get("x-forwarded-for")
+                if trust_xff
+                    && let Some(xff) = req.headers().get("x-forwarded-for")
                     && let Ok(xff) = xff.to_str()
                     && let Some(client_ip) = xff.split(',').next()
                     // X-Forwarded-For can be a comma-separated list: "client, proxy1, proxy2". The first entry is the original client IP.
@@ -87,6 +92,12 @@ async fn main() -> eyre::Result<()> {
 
                 Ok(response)
             };
+
+            const MAX: Option<usize> = Some(32 * 1024);
+
+            let config = WebSocketConfig::default()
+                .max_frame_size(MAX)
+                .max_message_size(MAX);
 
             let accept = tokio_tungstenite::accept_hdr_async_with_config(stream, hdr, Some(config));
 
