@@ -5,20 +5,23 @@
 [header]: include/NutBlast.h
 [example]: src/NutBlast-test.c
 
-<img align="right" alt="An explosive peanut sign." src=".github/assets/nutblast256.png">
+<img align="right" alt="An explosive peanut sign." width="30%" src=".github/assets/nutblast256.png">
 
-NutBlast is a library that enables **peer-to-peer multiplayer** in games using **WebSockets/WebRTC**. The client is written in C++, has C bindings, and works on Windows, Linux, _and_ **Emscripten**!
+NutBlast is a library that enables **peer-to-peer multiplayer** in **Web** and **Desktop** games by the use of WebRTC and WebSockets. The client library is written in C++, has C bindings, and is proven to work under Windows, Linux, and **Emscripten**!
 
-Based on [libdatachannel](https://github.com/paullouisageneau/libdatachannel). Comes with a public server-instance for out-of-the-box integration.
+A **free** public signalling server is available for out-of-the-box integration. Just install the client library and play!
 
-:heavy_check_mark: [Schwungus](https://github.com/Schwungus)-certified.
+(The spiritual successor of the desktop-only [NutPunch](https://github.com/Schwungus/NutPunch).)
 
-The spiritual successor of the desktop-only [NutPunch](https://github.com/Schwungus/NutPunch).
+## Games powered by NutBlast
+
+- [**Klawiatura**](https://github.com/toggins/Klawiatura) (aka **Mario Together**) - Mario Forever with rollback netcode!
+- Send a PR to add your game to this list!
 
 ## Troubleshooting
 
 > [!NOTE]
-> Due to its high susceptibility to abuse, the public NutBlaster instance does not provide a [TURN](https://en.wikipedia.org/wiki/Traversal_Using_Relays_around_NAT) service.
+> Due to its high susceptibility to abuse, the public NutBlaster instance does **not** provide a [TURN](https://en.wikipedia.org/wiki/Traversal_Using_Relays_around_NAT) service.
 
 If you're having **connectivity issues in a game powered by NutBlast**, please make sure (1) you aren't mangling your traffic (**disable [zapret](https://github.com/bol-van/zapret)**) and (2) **there is a direct route to your computer** from the public network. Using a proxy service for accessing the Web shouldn't interfere as long as **you aren't routing your game through it**.
 
@@ -28,7 +31,7 @@ You can **set up your VPN client to ignore NutBlast-powered games** rather than 
 
 This advice isn't guaranteed to fix your connectivity, but it's a good starting point for figuring out what exactly is wrong with your setup.
 
-## Introductory Lecture
+## Introductory lecture
 
 This library implements peer-to-peer networking, where **players directly communicate to each other** instead of completely relying on a server. It's a complex model, and it could be counterproductive to use if you don't know what you're doing.
 
@@ -71,7 +74,7 @@ add_executable(MyGame main.c) # your game's CMake target goes here
 target_link_libraries(MyGame PRIVATE NutBlast)
 ```
 
-## Basic Usage
+## Basic usage
 
 Simply `#include` the library's [main header, `NutBlast.h`][header], in your program:
 
@@ -88,9 +91,9 @@ int main(int argc, char* argv[]) {
     if (/* hosting */)
         NutBlast_Host((NutBlast_HostOptions){0});
     else
-        NutBlast_Join(1337);
+        NutBlast_Join(1337); // put a lobby ID from `NutBlast_FindLobbies` here
 
-    for (;;) { // your game's main loop goes here...
+    for (;;) { // in your game's mainloop:
         NutBlast_Update();
         NutBlast_SleepMS(1000 / 60);
     }
@@ -103,7 +106,14 @@ int main(int argc, char* argv[]) {
 
 If you ever get stuck, make sure to [RTFM](#introductory-lecture), and take another look at the [example code][example]. Don't forget to skim through [the main header][header] to find cool functions to use.
 
-## Random Notes
+## Due credit
+
+- The client library is heavily based on [`libdatachannel`](https://github.com/paullouisageneau/libdatachannel) & [`datachannel-wasm`](https://github.com/paullouisageneau/datachannel-wasm).
+- [`nlohmann/json`](https://github.com/nlohmann/json) is simply awesome.
+
+:heavy_check_mark: NutBlast is [Schwungus](https://github.com/Schwungus)-certified.
+
+## Random notes
 
 1. You can connect to a locally running instance of the NutBlaster by setting the NutBlaster address to [ws://localhost:36900](ws://localhost:36900). You can also set the `NUTBLAST_DEV_LOCALHOST` CMake variable to `ON` in your `CMakeCache.txt`; after rebuild, it'll replace the default NutBlaster address with the localhost one.
 2. TODO: document NutBlaster self-hosting & usage.
