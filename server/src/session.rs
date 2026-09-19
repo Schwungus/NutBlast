@@ -37,14 +37,10 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(
-        blaster: Blaster,
-        real_ip: IpAddr,
-        ws_sender: SplitSink<WebSocketStream<TcpStream>, Message>,
-        ws_receiver: SplitStream<WebSocketStream<TcpStream>>,
-    ) -> Self {
+    pub fn new(blaster: Blaster, real_ip: IpAddr, ws: WebSocketStream<TcpStream>) -> Self {
         const QUEUE_CAP: usize = 120;
 
+        let (ws_sender, ws_receiver) = ws.split();
         let (msg_sender, msg_receiver) = tokio::sync::mpsc::channel(QUEUE_CAP);
 
         Self {
@@ -315,18 +311,26 @@ impl Session {
         }
     }
 
-    pub async fn mainloop(mut self) {
+    pub async fn serve(mut self) {
+        info!("hi {}", self.real_ip);
+
         while !self.stop {
             if let Err(reason) = self.handle_next_websocket_message().await {
                 self.send(&ServerMessage::Disconnected { reason }).await;
             }
         }
+    }
+}
 
+impl Drop for Session {
+    fn drop(&mut self) {
         if let Some(pid) = self.pid {
             self.execute(BlasterOperation::RemovePlayer {
                 reason: self.bye_reason.clone(),
                 pid,
             });
         }
+
+        info!("bye {}", self.real_ip);
     }
 }

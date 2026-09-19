@@ -4,7 +4,6 @@ extern crate log;
 use std::{fs::File, io::BufReader, net::IpAddr, time::Duration};
 
 use color_eyre::eyre::{self, eyre};
-use futures_util::StreamExt as _;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::{
     handshake::server::{Request, Response},
@@ -98,20 +97,10 @@ async fn main() -> eyre::Result<()> {
 
             let accept = tokio_tungstenite::accept_hdr_async_with_config(stream, hdr, Some(config));
 
-            let (sender, receiver) = match accept.await {
-                Ok(ws) => {
-                    info!("hi {real_ip}");
-                    ws.split()
-                }
-                Err(e) => {
-                    error!("{}: {}", real_ip, e);
-                    return;
-                }
-            };
-
-            let session = Session::new(blaster.clone(), real_ip, sender, receiver);
-            session.mainloop().await;
-            info!("bye {real_ip}");
+            match accept.await {
+                Ok(ws) => Session::new(blaster.clone(), real_ip, ws).serve().await,
+                Err(e) => error!("{}: {}", real_ip, e),
+            }
         });
     }
 
