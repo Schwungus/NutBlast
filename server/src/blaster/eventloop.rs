@@ -8,10 +8,9 @@ use indexmap::IndexMap;
 
 use crate::{
     blaster::{BlasterOperation, Config, Lobby, Peer, PeerSessionCount, Player, TokioSender},
-    id::{BasicId, GameId, LobbyId},
     protocol::{
+        basic::{BasicId, GameId, LobbyId, Metadata},
         payloads::{Kick, LobbyListing, ServerMessage},
-        utils::Metadata,
     },
     tokens::TokenBucket,
 };
@@ -230,7 +229,7 @@ impl BlasterEventLoop {
 
                     let lid = LobbyId {
                         gid,
-                        lid: rand::random(),
+                        lid: BasicId::random(),
                     };
 
                     if listed && let Some(set) = self.gid_lobbies.get(&lid.gid) {
@@ -250,7 +249,7 @@ impl BlasterEventLoop {
                         }
                     }
 
-                    let pid = rand::random();
+                    let pid = BasicId::random();
                     let now = Instant::now();
 
                     self.lobbies.insert(
@@ -307,7 +306,7 @@ impl BlasterEventLoop {
                         return Err(Kick::violation("lobby_full", "Lobby is full"));
                     }
 
-                    let pid = rand::random();
+                    let pid = BasicId::random();
                     self.insert_player(sender, pid, lid, player_meta);
 
                     Ok(pid)

@@ -5,10 +5,9 @@ use serde::Deserialize;
 use tokio::sync::oneshot;
 
 use crate::{
-    id::{BasicId, GameId, LobbyId},
     protocol::{
+        basic::{BasicId, GameId, LobbyId, Metadata},
         payloads::{Kick, LobbyListing, ServerMessage},
-        utils::Metadata,
     },
     tokens::TokenBucket,
 };

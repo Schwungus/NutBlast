@@ -12,10 +12,9 @@ use tokio_tungstenite::{
 
 use crate::{
     blaster::{Blaster, BlasterOperation, TokioReceiver, TokioSender},
-    id::BasicId,
     protocol::{
+        basic::{BasicId, CandidateString, Capacity, FieldKey, FieldValue, SdpString},
         payloads::{ClientMessage, Kick, ServerMessage},
-        utils::{CandidateString, Capacity, FieldKey, FieldValue, SdpString},
     },
     tokens::TokenBucket,
 };

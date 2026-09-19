@@ -17,7 +17,6 @@ use crate::{
 };
 
 mod blaster;
-mod id;
 mod protocol;
 mod session;
 mod tokens;
