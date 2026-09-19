@@ -493,17 +493,17 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
     if (::nutblaster_address.empty())
         ::nutblaster_address = NUTBLAST_DEFAULT_SERVER;
 
-    ::gid = opts.game_id;
-    ::log(NB_LogInfo, "Playing \"{}\"", ::gid);
-
+    NutBlast_SetGameID(opts.game_id);
     ::max_chan = opts.max_channels ? opts.max_channels : 1;
 }
 
 extern "C" void NutBlast_SetGameID(const char* gid) {
-    if (gid)
+    if (gid) {
         ::gid = gid;
-    else
+        ::log(NB_LogInfo, "Playing \"{}\"", ::gid);
+    } else {
         ::log(NB_LogError, "game ID cannot be null");
+    }
 }
 
 extern "C" void NutBlast_SetNutBlasterAddress(const char* address) {
