@@ -47,7 +47,7 @@ static constexpr const bool WINDOSE =
 #include <errno.h>
 #endif
 
-static constexpr const size_t MAX_CHANNELS = 16;
+static constexpr const std::size_t MAX_CHANNELS = 16;
 
 using Metadata = std::unordered_map<std::string, std::string>;
 
@@ -774,7 +774,7 @@ extern "C" int NutBlast_GetMaxPlayers() {
 
 extern "C" const NutBlast_ID* NutBlast_ListPlayers() {
     static NutBlast_ID buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
-    size_t i = 0;
+    std::size_t i = 0;
 
     if (NutBlast_GetPlayerID())
         buf[i++] = NutBlast_GetPlayerID();
@@ -1163,42 +1163,33 @@ extern "C" void NutBlast_SetMaster(NutBlast_ID guy) {
     });
 }
 
-static void greatest_technician_thats_ever_lived(
-    NutBlast_ChannelID chan, NutBlast_ID pid, const char* msg, int size, bool reliable) {
-    if (!::players.contains(pid))
-        return;
-
-    if (!msg) {
+extern "C" void NutBlast_Send(NutBlast_SendOptions opts) {
+    if (!opts.data) {
         ::log(NB_LogError, "Cannot send a null message");
         return;
     }
 
-    const auto& player = ::players.at(pid);
+    if (opts.to == NutBlast_GetPlayerID() || !::players.contains(opts.to))
+        return;
 
-    if (size < 0)
-        size = (int)std::strlen(msg) + 1;
+    const auto& player = ::players.at(opts.to);
+    const auto& dc = opts.reliable ? player->reliable_dc : player->unreliable_dc;
 
-    rtc::binary buf(1 + size);
+    if (dc == nullptr)
+        return;
 
-    buf[0] = chan;
+    if (!opts.size)
+        opts.size = std::strlen(reinterpret_cast<const char*>(opts.data)) + 1;
 
-    for (size_t i = 0; i < size; i++)
-        buf[i + 1] = msg[i];
+    rtc::binary buf(1 + opts.size);
+    buf[0] = opts.channel;
+
+    for (std::size_t i = 0; i < opts.size; i++)
+        buf[i + 1] = reinterpret_cast<const std::uint8_t*>(opts.data)[i];
 
     try {
-        const auto& dc = reliable ? player->reliable_dc : player->unreliable_dc;
-
-        if (dc)
-            dc->send(buf);
+        dc->send(buf);
     } catch (const std::runtime_error&) {}
-}
-
-extern "C" void NutBlast_SendTo(NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size) {
-    greatest_technician_thats_ever_lived(chan, id, msg, size, false);
-}
-
-extern "C" void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID id, const char* msg, int size) {
-    greatest_technician_thats_ever_lived(chan, id, msg, size, true);
 }
 
 extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {

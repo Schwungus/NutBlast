@@ -163,6 +163,16 @@ typedef struct {
     NutBlast_ChannelID max_channels;
 } NutBlast_InitOptions;
 
+typedef struct {
+    NutBlast_ChannelID channel;
+    NutBlast_ID to;
+    const void* data;
+    /// Set to 0 to assume `msg` is a zero-terminated string.
+    size_t size;
+    /// Use the reliable datachannel?
+    bool reliable;
+} NutBlast_SendOptions;
+
 /// NutBlast needs to be initialized before you can use it. This is what you call to do the initialization.
 void NutBlast_Init(NutBlast_InitOptions);
 
@@ -223,15 +233,12 @@ void NutBlast_OnLobbyMetadataChanged(void (*)(NutBlast_FieldDiff));
 /// Returns true and copies the incoming message if there is a message waiting in the queue for the specified channel.
 bool NutBlast_NextMessage(NutBlast_ChannelID, NutBlast_Message*);
 
-/// Sends a null-terminated string to the specified player. Failures are silent. Delivery is not guaranteed.
-///
-/// Set `size` to -1 to assume `msg` is a zero-terminated string.
-void NutBlast_SendTo(NutBlast_ChannelID chan, NutBlast_ID player, const char* msg, int size);
-
-/// A reliable-delivery version of `NutBlast_SendTo`, which see.
-void NutBlast_SendReliablyTo(NutBlast_ChannelID chan, NutBlast_ID player, const char* msg, int size);
+/// Sends a binary message to the specified player.
+void NutBlast_Send(NutBlast_SendOptions);
 
 /// Call this every frame to send, receive, and process data from the NutBlaster and the players.
+///
+/// Callbacks registered using the `NutBlast_On*` functions are usually called at this exact point.
 void NutBlast_Update();
 
 /// Call this to flush the output queue.

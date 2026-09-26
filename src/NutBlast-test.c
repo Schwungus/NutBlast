@@ -142,14 +142,16 @@ static void send_our_position() {
     if (!p)
         return;
 
-    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
-        const NutBlast_ID id = *ptr;
+    static char buf[32] = "";
+    snprintf(buf, sizeof(buf), "%d:%d", p->x, p->y);
 
-        if (id != NutBlast_GetPlayerID()) {
-            static char buf[32] = "";
-            snprintf(buf, sizeof(buf), "%d:%d", p->x, p->y);
-            NutBlast_SendTo(CHAN_POS, id, buf, -1);
-        }
+    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
+        NutBlast_Send((NutBlast_SendOptions){
+            .channel = CHAN_POS,
+            .to = *ptr,
+            .data = buf,
+            .size = 0,
+        });
     }
 }
 
@@ -158,10 +160,12 @@ static void maybe_chat() {
         return;
 
     for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
-        const NutBlast_ID id = *ptr;
-
-        if (id != NutBlast_GetPlayerID())
-            NutBlast_SendReliablyTo(CHAN_CHAT, id, "Hello!", -1);
+        NutBlast_Send((NutBlast_SendOptions){
+            .channel = CHAN_CHAT,
+            .to = *ptr,
+            .data = "Hello!",
+            .reliable = true,
+        });
     }
 }
 
