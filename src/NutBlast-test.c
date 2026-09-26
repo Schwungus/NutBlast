@@ -64,7 +64,7 @@ typedef struct {
 } Player;
 
 static TinyMap players = {0};
-static NutBlast_ID existing_lobby = 0;
+static NutBlast_LobbyID existing_lobby = 0;
 
 static void reset() {
     FreeTinyMap(&players);
@@ -82,14 +82,14 @@ static void restart() {
     TinyMapPut(&players, NutBlast_GetPlayerID(), &us, sizeof(us));
 }
 
-static void on_player_joined(NutBlast_ID id) {
+static void on_player_joined(NutBlast_PlayerID id) {
     TraceLog(LOG_INFO, "Hi, %s!", NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME));
 
     Player p = {.x = -psize, .y = -psize, .color = GREEN};
     TinyMapPut(&players, id, &p, sizeof(p));
 }
 
-static void on_player_left(NutBlast_ID id, NutBlast_Reason reason) {
+static void on_player_left(NutBlast_PlayerID id, NutBlast_Reason reason) {
     const char* name = NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME);
     TraceLog(LOG_INFO, "Bye, %s! %s (%s)", name, reason.msg, reason.code);
     TinyMapErase(&players, id);
@@ -106,8 +106,8 @@ static void draw_gui() {
     const int fs = 28;
     int i = 0;
 
-    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
-        const NutBlast_ID id = *ptr;
+    for (const NutBlast_PlayerID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
+        const NutBlast_PlayerID id = *ptr;
         const char* name = NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME);
 
         if (name) {
@@ -145,7 +145,7 @@ static void send_our_position() {
     static char buf[32] = "";
     snprintf(buf, sizeof(buf), "%d:%d", p->x, p->y);
 
-    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
+    for (const NutBlast_PlayerID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
         NutBlast_Send((NutBlast_SendOptions){
             .channel = CHAN_POS,
             .to = *ptr,
@@ -159,7 +159,7 @@ static void maybe_chat() {
     if (!IsKeyPressed(KEY_T))
         return;
 
-    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
+    for (const NutBlast_PlayerID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
         NutBlast_Send((NutBlast_SendOptions){
             .channel = CHAN_CHAT,
             .to = *ptr,
@@ -173,8 +173,8 @@ static void maybe_kick() {
     if (!IsKeyPressed(KEY_L))
         return;
 
-    for (const NutBlast_ID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
-        const NutBlast_ID id = *ptr;
+    for (const NutBlast_PlayerID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
+        const NutBlast_PlayerID id = *ptr;
 
         if (id != NutBlast_GetPlayerID())
             NutBlast_Kick(id);
@@ -255,7 +255,7 @@ int main(int argc, char* argv[]) {
     NutBlast_OnPlayerLeft(on_player_left);
     NutBlast_OnLobbiesFound(on_lobbies_found);
 
-    static NutBlast_ID lid = 0;
+    static NutBlast_LobbyID lid = 0;
     ((char*)(&lid))[0] = 't';
     ((char*)(&lid))[1] = 'e';
     ((char*)(&lid))[2] = 's';

@@ -117,8 +117,8 @@ extern "C" uint64_t NutBlast_TimeNS() {
 }
 
 static rtc::Configuration rtc_config;
-static std::unordered_map<NutBlast_ID, std::vector<rtc::Candidate>> incoming_candidates;
-static std::unordered_map<NutBlast_ID, std::vector<rtc::Description>> incoming_offers;
+static std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Candidate>> incoming_candidates;
+static std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Description>> incoming_offers;
 
 class Pinger {
     std::uint64_t last_ping = 0, last_roundtrip = 0;
@@ -185,7 +185,7 @@ const ByeReason ByeReason::OK(NUTBLAST_ERROR_OK, "Graceful disconnection");
 struct Player : std::enable_shared_from_this<Player> {
     Once fire_join, init;
 
-    const NutBlast_ID pid;
+    const NutBlast_PlayerID pid;
     const std::uint64_t birth;
 
     Pinger pinger;
@@ -199,7 +199,7 @@ struct Player : std::enable_shared_from_this<Player> {
 
     std::optional<std::uint64_t> sdp_timeout = std::nullopt;
 
-    Player(NutBlast_ID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
+    Player(NutBlast_PlayerID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
 
     ~Player() {
         if (::incoming_offers.contains(pid))
@@ -248,15 +248,16 @@ struct Player : std::enable_shared_from_this<Player> {
 };
 
 struct Message {
-    NutBlast_ID from;
+    NutBlast_PlayerID from;
     std::vector<std::uint8_t> bytes;
 
     Message() = default;
-    Message(NutBlast_ID from, const std::vector<std::uint8_t>& bytes) : from(from), bytes(bytes) {}
+    Message(NutBlast_PlayerID from, const std::vector<std::uint8_t>& bytes) : from(from), bytes(bytes) {}
 };
 
 static std::string gid = "";
-static NutBlast_ID pid = 0, lid = 0;
+static NutBlast_PlayerID pid = 0;
+static NutBlast_LobbyID lid = 0;
 static std::string nutblaster_address;
 static ByeReason disconnection_reason = ByeReason::OK;
 static int max_players = NUTBLAST_MAX_PLAYERS;
@@ -279,8 +280,8 @@ static bool lobby_listed = true, permission_to_cook = false, time_to_die = false
 static std::uint64_t our_birth = 0;
 static std::size_t listing_limit = 0;
 
-static std::unordered_map<NutBlast_ID, std::shared_ptr<Player>> players;
-static NutBlast_ID master = 0;
+static std::unordered_map<NutBlast_PlayerID, std::shared_ptr<Player>> players;
+static NutBlast_PlayerID master = 0;
 
 static Pinger blaster_ping;
 static Once fire_ready;
@@ -316,11 +317,11 @@ template <typename... Args> class Callback {
 
 MakeCb(OnReady, on_ready);
 MakeCb(OnDisconnected, on_disconnected, NutBlast_Reason);
-MakeCb(OnPlayerJoined, on_player_joined, NutBlast_ID);
-MakeCb(OnPlayerLeft, on_player_left, NutBlast_ID, NutBlast_Reason);
+MakeCb(OnPlayerJoined, on_player_joined, NutBlast_PlayerID);
+MakeCb(OnPlayerLeft, on_player_left, NutBlast_PlayerID, NutBlast_Reason);
 MakeCb(OnLobbiesFound, on_lobbies_found, const NutBlast_Lobby*, size_t);
-MakeCb(OnMasterChanged, on_master_changed, NutBlast_ID);
-MakeCb(OnPlayerMetadataChanged, on_player_meta_changed, NutBlast_ID, NutBlast_FieldDiff);
+MakeCb(OnMasterChanged, on_master_changed, NutBlast_PlayerID);
+MakeCb(OnPlayerMetadataChanged, on_player_meta_changed, NutBlast_PlayerID, NutBlast_FieldDiff);
 MakeCb(OnLobbyMetadataChanged, on_lobby_meta_changed, NutBlast_FieldDiff);
 
 static void ws_send(const nlohmann::json& obj) {
@@ -569,7 +570,7 @@ freak_metadata(const char* type_title, const char* type_lower, Metadata& meta, c
     }
 }
 
-extern "C" const char* NutBlast_GetPlayerField(NutBlast_ID pid, const char* name) {
+extern "C" const char* NutBlast_GetPlayerField(NutBlast_PlayerID pid, const char* name) {
     if (!name)
         return nullptr;
 
@@ -736,7 +737,7 @@ extern "C" void NutBlast_FindLobbies(size_t limit) {
     }
 }
 
-extern "C" void NutBlast_Join(NutBlast_ID id) {
+extern "C" void NutBlast_Join(NutBlast_LobbyID id) {
     if (NutBlast_IsConnecting()) {
         ::log(NB_LogError, "You're already connected!");
     } else if (!::init) {
@@ -772,8 +773,8 @@ extern "C" int NutBlast_GetMaxPlayers() {
     return NutBlast_IsOnline() ? ::max_players : 0;
 }
 
-extern "C" const NutBlast_ID* NutBlast_ListPlayers() {
-    static NutBlast_ID buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
+extern "C" const NutBlast_PlayerID* NutBlast_ListPlayers() {
+    static NutBlast_PlayerID buf[NUTBLAST_MAX_PLAYERS + 1] = {0};
     std::size_t i = 0;
 
     if (NutBlast_GetPlayerID())
@@ -787,19 +788,19 @@ extern "C" const NutBlast_ID* NutBlast_ListPlayers() {
     return buf;
 }
 
-extern "C" NutBlast_ID NutBlast_GetPlayerID() {
+extern "C" NutBlast_PlayerID NutBlast_GetPlayerID() {
     return ::permission_to_cook ? ::pid : 0;
 }
 
-extern "C" NutBlast_ID NutBlast_GetLobbyID() {
+extern "C" NutBlast_LobbyID NutBlast_GetLobbyID() {
     return (NutBlast_IsOnline() && ::lid) ? ::lid : 0;
 }
 
-extern "C" NutBlast_ID NutBlast_GetMasterID() {
+extern "C" NutBlast_PlayerID NutBlast_GetMasterID() {
     return NutBlast_IsOnline() ? ::master : 0;
 }
 
-extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID pid) {
+extern "C" bool NutBlast_IsPlayerAlive(NutBlast_PlayerID pid) {
     if (!pid || !NutBlast_IsOnline())
         return false;
 
@@ -810,7 +811,7 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_ID pid) {
 }
 
 static void handle_offer_or_answer(const nlohmann::json& obj) {
-    const NutBlast_ID pid = obj.at("from");
+    const NutBlast_PlayerID pid = obj.at("from");
     const auto& type = obj.at("type") == "Offer" ? "offer" : "answer";
 
     if (!::incoming_offers.contains(pid))
@@ -820,7 +821,7 @@ static void handle_offer_or_answer(const nlohmann::json& obj) {
 }
 
 static void handle_candidate(const nlohmann::json& obj) {
-    const NutBlast_ID& pid = obj.at("from");
+    const NutBlast_PlayerID pid = obj.at("from");
 
     if (!::incoming_candidates.contains(pid))
         ::incoming_candidates.insert({pid, {}});
@@ -910,7 +911,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         }},
     {"SetPlayerMeta",
         [](const auto& obj) {
-            const NutBlast_ID pid = obj.at("pid");
+            const NutBlast_PlayerID pid = obj.at("pid");
 
             if (!::players.contains(pid))
                 return;
@@ -938,7 +939,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         }},
     {"ErasePlayerMeta",
         [](const auto& obj) {
-            const NutBlast_ID pid = obj.at("pid");
+            const NutBlast_PlayerID pid = obj.at("pid");
 
             if (!::players.contains(pid))
                 return;
@@ -1001,12 +1002,12 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         }},
     {"Joined",
         [](const auto& obj) {
-            const NutBlast_ID id = obj.at("pid");
+            const NutBlast_PlayerID id = obj.at("pid");
             ::players.insert({id, std::make_shared<Player>(id, obj.at("meta"), obj.at("birth"))});
         }},
     {"Left",
         [](const auto& obj) {
-            const NutBlast_ID pid = obj.at("pid");
+            const NutBlast_PlayerID pid = obj.at("pid");
 
             if (::players.contains(pid)) {
                 ::on_player_left(pid, ByeReason(obj.at("reason")));
@@ -1147,7 +1148,7 @@ extern "C" void NutBlast_Update() {
     NutBlast_Flush();
 }
 
-extern "C" void NutBlast_Kick(NutBlast_ID guy) {
+extern "C" void NutBlast_Kick(NutBlast_PlayerID guy) {
     if (guy != 0 && guy != NutBlast_GetPlayerID()) {
         ::ws_send({
             {"type", "Kick"},
@@ -1156,7 +1157,7 @@ extern "C" void NutBlast_Kick(NutBlast_ID guy) {
     }
 }
 
-extern "C" void NutBlast_SetMaster(NutBlast_ID guy) {
+extern "C" void NutBlast_SetMaster(NutBlast_PlayerID guy) {
     ::ws_send({
         {"type", "SetMaster"},
         {"pid", guy},
@@ -1243,7 +1244,7 @@ extern "C" int NutBlast_ServerPing() {
     return NutBlast_IsOnline() ? ::blaster_ping.millis() : 0;
 }
 
-extern "C" int NutBlast_PlayerPing(NutBlast_ID pid) {
+extern "C" int NutBlast_PlayerPing(NutBlast_PlayerID pid) {
     if (!::players.contains(pid))
         return 0;
 
