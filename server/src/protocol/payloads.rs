@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::basic::{
-    BasicId, CandidateString, Capacity, FieldKey, FieldValue, GameId, LobbyId, Metadata, SdpString,
+use crate::{
+    blaster::IceServer,
+    protocol::basic::{
+        BasicId, CandidateString, Capacity, FieldKey, FieldValue, GameId, LobbyId, Metadata,
+        SdpString,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -77,7 +81,7 @@ pub enum ServerMessage {
         pid: BasicId,
         lid: BasicId,
         birth: u128,
-        ice_servers: Vec<String>,
+        ice_servers: Vec<IceServer>,
     },
     Disconnected {
         reason: Kick,

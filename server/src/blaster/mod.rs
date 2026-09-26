@@ -1,7 +1,7 @@
 use std::{collections::HashSet, net::IpAddr, sync::mpsc, time::Instant};
 
 use eventloop::BlasterEventLoop;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::{
@@ -88,9 +88,22 @@ impl Player {
     }
 }
 
+#[derive(Clone, Default, Deserialize, Serialize)]
+pub struct Credentials {
+    pub username: String,
+    pub credential: String,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+pub struct IceServer {
+    pub urls: String,
+    #[serde(flatten)]
+    pub creds: Option<Credentials>,
+}
+
 #[derive(Clone, Default, Deserialize)]
 pub struct Config {
-    pub ice_servers: Vec<String>,
+    pub ice_servers: Vec<IceServer>,
     pub trust_reverse_proxy_xff: Option<bool>,
 }
 

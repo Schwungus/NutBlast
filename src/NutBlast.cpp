@@ -882,9 +882,16 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
 
             ::log(NB_LogInfo, "ICE servers from NutBlaster:");
 
-            for (const auto& server : obj.at("ice_servers")) {
-                ::rtc_config.iceServers.emplace_back(server);
-                ::log(NB_LogInfo, "  {}", (std::string)server);
+            for (const auto& obj : obj.at("ice_servers")) {
+                rtc::IceServer ice_server(obj.at("urls"));
+
+                if (obj.contains("username")) {
+                    ice_server.username = obj.at("username");
+                    ice_server.password = obj.at("credential");
+                }
+
+                ::log(NB_LogInfo, "  {}", ice_server.hostname);
+                ::rtc_config.iceServers.push_back(std::move(ice_server));
             }
 
             ::permission_to_cook = true;

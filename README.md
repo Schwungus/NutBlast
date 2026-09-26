@@ -20,9 +20,6 @@ A **free** public signalling server is available for out-of-the-box integration.
 
 ## Troubleshooting
 
-> [!NOTE]
-> Due to its high susceptibility to abuse, the public NutBlaster instance does **not** provide a [TURN](https://en.wikipedia.org/wiki/Traversal_Using_Relays_around_NAT) service.
-
 If you're having **connectivity issues in a game powered by NutBlast**, please make sure (1) you aren't mangling your traffic (**disable [zapret](https://github.com/bol-van/zapret)**) and (2) **there is a direct route to your computer** from the public network. Using a proxy service for accessing the Web shouldn't interfere as long as **you aren't routing your game through it**.
 
 You can **set up your VPN client to ignore NutBlast-powered games** rather than route them through the target proxy server. For example, in [AmneziaVPN](https://amnezia.org), use the split tunneling feature to **exclude the game's binary from VPN routing**. Just follow this infographic from [**their split-tunneling docs**](https://docs.amnezia.org/documentation/instructions/vpn-split-tunneling#split-tunneling-by-apps-on-windows):
