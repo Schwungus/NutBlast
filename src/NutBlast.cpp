@@ -881,8 +881,6 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
             ::pid = obj.at("pid"), ::lid = obj.at("lid"), ::our_birth = obj.at("birth");
             ::log(NB_LogInfo, "You are ID={}", ::pid);
 
-            ::log(NB_LogInfo, "ICE servers from NutBlaster:");
-
             for (const auto& obj : obj.at("ice_servers")) {
                 rtc::IceServer ice_server(obj.at("urls"));
 
@@ -891,7 +889,6 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
                     ice_server.password = obj.at("credential");
                 }
 
-                ::log(NB_LogInfo, "  {}", ice_server.hostname);
                 ::rtc_config.iceServers.push_back(std::move(ice_server));
             }
 
