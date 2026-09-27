@@ -36,8 +36,8 @@ FetchContent_Declare(json
     OVERRIDE_FIND_PACKAGE
     EXCLUDE_FROM_ALL)
 
+FetchContent_MakeAvailable(json)
 list(APPEND NB_LIBS nlohmann_json::nlohmann_json)
-list(APPEND NB_DEPS json)
 
 set(USE_SYSTEM_JSON ON CACHE INTERNAL "")
 set(USE_SYSTEM_SRTP OFF CACHE INTERNAL "")
@@ -56,25 +56,17 @@ set(MBEDTLS_TARGET_PREFIX "" CACHE INTERNAL "")
 set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/mbedtls.h CACHE INTERNAL "")
 
 if(EMSCRIPTEN)
-    #FetchContent_Declare(datachannel-wasm
-    #    SOURCE_DIR /home/nonk/Sources/datachannel-wasm
-    #    EXCLUDE_FROM_ALL)
-
     FetchContent_Declare(datachannel-wasm
         GIT_REPOSITORY https://github.com/paullouisageneau/datachannel-wasm.git
         GIT_TAG v0.4.0
         EXCLUDE_FROM_ALL)
 
+    FetchContent_MakeAvailable(datachannel-wasm)
     list(APPEND NB_LIBS datachannel-wasm)
-    list(APPEND NB_DEPS datachannel-wasm)
-
-    target_compile_options(NutBlast PUBLIC -O3) # the emscripten manual recommends this
-    target_link_options(NutBlast PUBLIC -sASYNCIFY)
 else()
     FetchContent_Declare(MbedTLS
         URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
         URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
-        OVERRIDE_FIND_PACKAGE
         EXCLUDE_FROM_ALL)
 
     FetchContent_MakeAvailable(MbedTLS)
@@ -85,11 +77,10 @@ else()
         GIT_TAG v0.24.6
         EXCLUDE_FROM_ALL)
 
+    FetchContent_MakeAvailable(datachannel)
     list(APPEND NB_LIBS datachannel-static)
-    list(APPEND NB_DEPS datachannel)
 endif()
 
-FetchContent_MakeAvailable(${NB_DEPS})
 target_link_libraries(NutBlast PRIVATE ${NB_LIBS})
 
 if(NUTBLAST_BUILD_TEST)
@@ -116,8 +107,14 @@ if(NUTBLAST_BUILD_TEST)
     target_link_libraries(NutBlast-lobbyist PRIVATE NutBlast)
 
     if(EMSCRIPTEN)
-        target_link_options(NutBlast-test PRIVATE -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8 -sNO_DISABLE_EXCEPTION_CATCHING)
-        target_link_options(NutBlast-lobbyist PRIVATE -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8)
+        target_link_options(NutBlast-test PRIVATE
+            -sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU32,HEAPU8
+            -sNO_DISABLE_EXCEPTION_CATCHING
+            -sASYNCIFY)
+
+        target_link_options(NutBlast-lobbyist PRIVATE
+            -sEXPORTED_RUNTIME_METHODS=HEAPU32,HEAPU8
+            -sEXPORTED_FUNCTIONS=_main,_malloc,_free)
     endif()
 endif()
 

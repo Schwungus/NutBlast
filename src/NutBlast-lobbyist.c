@@ -4,6 +4,10 @@
 
 #include <NutBlast.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 static void on_lobbies_found(const NutBlast_Lobby* list, size_t count) {
     printf("\n");
 
@@ -22,6 +26,19 @@ static void on_lobbies_found(const NutBlast_Lobby* list, size_t count) {
     fflush(stdout);
 }
 
+static const int fps = 10;
+static const size_t lobbies_count = 10;
+static int timer = 0;
+
+void mainloop() {
+    NutBlast_Update();
+
+    if (timer++ >= 5 * fps) {
+        NutBlast_FindLobbies(lobbies_count);
+        timer = 0;
+    }
+}
+
 int main(int argc, char* argv[]) {
     NutBlast_Init((NutBlast_InitOptions){
         .game_id = argc > 2 ? argv[2] : "NutBlast Test",
@@ -30,23 +47,19 @@ int main(int argc, char* argv[]) {
     if (argc > 1)
         NutBlast_SetNutBlasterAddress(argv[1]);
 
-    static const size_t LIMOZ = 10;
     NutBlast_OnLobbiesFound(on_lobbies_found);
-    NutBlast_FindLobbies(LIMOZ);
+    NutBlast_FindLobbies(lobbies_count);
 
-    int timer = 0;
-
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop(mainloop, 10, false);
+#else
     for (;;) {
-        NutBlast_Update();
-        NutBlast_SleepMS(100);
-
-        if (timer++ >= 50) {
-            NutBlast_FindLobbies(LIMOZ);
-            timer = 0;
-        }
+        mainloop();
+        NutBlast_SleepMS(1000 / fps);
     }
 
     NutBlast_Cleanup();
+#endif
 
     return EXIT_SUCCESS;
 }
