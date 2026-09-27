@@ -59,7 +59,7 @@ if(EMSCRIPTEN)
 
     FetchContent_Declare(datachannel-wasm
         GIT_REPOSITORY https://github.com/Schwungus/datachannel-wasm.git
-        GIT_TAG 8681bd3b8cd862ed05933db91d06235b75bcb9ce
+        GIT_TAG cc1d3cf07fd2606b96b85394de4092cde09df4a3
         EXCLUDE_FROM_ALL)
 
     list(APPEND NB_LIBS datachannel-wasm)
@@ -76,7 +76,7 @@ else()
 
     FetchContent_Declare(datachannel
         GIT_REPOSITORY https://github.com/Schwungus/libdatachannel.git
-        GIT_TAG e7e1dd80480749243577660a1a68d4d3b976d13f
+        GIT_TAG 5d4d2ea14850a396cf6823fa4d6a0e21988a22bf
         EXCLUDE_FROM_ALL)
 
     list(APPEND NB_LIBS datachannel-static)

@@ -249,10 +249,10 @@ struct Player : std::enable_shared_from_this<Player> {
 
 struct Message {
     NutBlast_PlayerID from;
-    std::vector<std::uint8_t> bytes;
+    rtc::binary bytes;
 
     Message() = default;
-    Message(NutBlast_PlayerID from, const std::vector<std::uint8_t>& bytes) : from(from), bytes(bytes) {}
+    Message(NutBlast_PlayerID from, const rtc::binary& bytes) : from(from), bytes(bytes) {}
 };
 
 static std::string gid = "";
@@ -410,7 +410,7 @@ void Player::engage() {
         auto& queue = ::recv_queues[chan];
 
         std::lock_guard<std::mutex> lock(queue.mutex);
-        std::vector<std::uint8_t> buf(bytes.begin() + 1, bytes.end());
+        rtc::binary buf(bytes.begin() + 1, bytes.end());
         queue.messages.emplace_back(id, std::move(buf));
     };
 
@@ -1180,10 +1180,10 @@ extern "C" void NutBlast_Send(NutBlast_SendOptions opts) {
         opts.size = std::strlen(reinterpret_cast<const char*>(opts.data)) + 1;
 
     rtc::binary buf(1 + opts.size);
-    buf[0] = opts.channel;
+    buf[0] = rtc::byte(opts.channel);
 
     for (std::size_t i = 0; i < opts.size; i++)
-        buf[i + 1] = reinterpret_cast<const std::uint8_t*>(opts.data)[i];
+        buf[i + 1] = rtc::byte(reinterpret_cast<const std::uint8_t*>(opts.data)[i]);
 
     try {
         dc->send(buf);
