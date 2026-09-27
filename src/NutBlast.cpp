@@ -27,6 +27,7 @@
 #include <cstring>
 #include <deque>
 #include <format>
+#include <functional> // IWYU pragma: keep (datachannel-wasm forgot to #include ts)
 #include <optional>
 #include <string>
 #include <unordered_map>

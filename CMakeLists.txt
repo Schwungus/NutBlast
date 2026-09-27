@@ -10,6 +10,9 @@ option(NUTBLAST_DEV_LOCALHOST "Connect to ws://localhost:36900 by default?" OFF)
 set(NB_BUILD_SHARED_LIBS_ORIGINAL_VALUE ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 
+set(NB_CMAKE_SKIP_INSTALL_RULES_ORIGINAL_VALUE ${CMAKE_SKIP_INSTALL_RULES})
+set(CMAKE_SKIP_INSTALL_RULES ON)
+
 if(PROJECT_IS_TOP_LEVEL AND EMSCRIPTEN AND NUTBLAST_BUILD_TEST)
     set(CMAKE_EXECUTABLE_SUFFIX ".html")
     set(PLATFORM Web CACHE INTERNAL "")
@@ -47,9 +50,9 @@ set(USE_MBEDTLS ON CACHE INTERNAL "")
 set(ENABLE_PROGRAMS OFF CACHE INTERNAL "")
 set(ENABLE_TESTING OFF CACHE INTERNAL "")
 set(INSTALL_DEPS_LIBS OFF CACHE INTERNAL "")
-set(DATACHANNEL_POLLUTE_EXPORTED_RUNTIME_METHODS OFF CACHE INTERNAL "")
 set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE INTERNAL "")
 
+set(MBEDTLS_TARGET_PREFIX "" CACHE INTERNAL "")
 set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/mbedtls.h CACHE INTERNAL "")
 
 if(EMSCRIPTEN)
@@ -58,8 +61,8 @@ if(EMSCRIPTEN)
     #    EXCLUDE_FROM_ALL)
 
     FetchContent_Declare(datachannel-wasm
-        GIT_REPOSITORY https://github.com/Schwungus/datachannel-wasm.git
-        GIT_TAG cc1d3cf07fd2606b96b85394de4092cde09df4a3
+        GIT_REPOSITORY https://github.com/paullouisageneau/datachannel-wasm.git
+        GIT_TAG v0.4.0
         EXCLUDE_FROM_ALL)
 
     list(APPEND NB_LIBS datachannel-wasm)
@@ -74,13 +77,16 @@ else()
         OVERRIDE_FIND_PACKAGE
         EXCLUDE_FROM_ALL)
 
+    FetchContent_MakeAvailable(MbedTLS)
+    add_library(MbedTLS::MbedTLS ALIAS mbedtls)
+
     FetchContent_Declare(datachannel
-        GIT_REPOSITORY https://github.com/Schwungus/libdatachannel.git
-        GIT_TAG 5d4d2ea14850a396cf6823fa4d6a0e21988a22bf
+        GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
+        GIT_TAG v0.24.6
         EXCLUDE_FROM_ALL)
 
     list(APPEND NB_LIBS datachannel-static)
-    list(APPEND NB_DEPS MbedTLS datachannel)
+    list(APPEND NB_DEPS datachannel)
 endif()
 
 FetchContent_MakeAvailable(${NB_DEPS})
@@ -115,4 +121,5 @@ if(NUTBLAST_BUILD_TEST)
     endif()
 endif()
 
+set(CMAKE_SKIP_INSTALL_RULES ${NB_CMAKE_SKIP_INSTALL_RULES_ORIGINAL_VALUE})
 set(BUILD_SHARED_LIBS ${NB_BUILD_SHARED_LIBS_ORIGINAL_VALUE})
