@@ -42,7 +42,7 @@ jobs:
             compiler: Emscripten
 
     env:
-      CACHE_BUST: 1
+      CACHE_BUST: 2
 
     steps:
       - name: Checkout
