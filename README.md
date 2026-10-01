@@ -7,9 +7,11 @@
 
 <img align="right" alt="An explosive peanut sign." width="30%" src=".github/assets/nutblast256.png">
 
-NutBlast is a library that enables **peer-to-peer multiplayer** in **Web** and **Desktop** games by the use of WebRTC and WebSockets. The client library is written in C++, has C bindings, and is proven to work under Windows, Linux, and **Emscripten**!
+NutBlast is a library that enables **peer-to-peer multiplayer** in **Web** and **Desktop** games by the use of WebRTC and WebSockets. The client library is written in C++, has C bindings, and is proven to work under Windows, Linux, and **HTML5**!
 
 A **free** public signalling server is available for out-of-the-box integration. Just install the client library and play!
+
+The client is [verified to compile under the latest versions of MSVC, GCC, and Emscripten](https://github.com/Schwungus/NutBlast/actions/workflows/verify-this-builds.yml).
 
 (The spiritual successor of the desktop-only [NutPunch](https://github.com/Schwungus/NutPunch).)
 
