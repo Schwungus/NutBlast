@@ -43,7 +43,6 @@ jobs:
 
     env:
       CACHE_BUST: 1
-      SCCACHE_GHA_ENABLED: true
 
     steps:
       - name: Checkout
@@ -69,9 +68,6 @@ jobs:
         with:
           arch: ${{ matrix.name == 'Win32' && 'x86' || 'x64' }}
 
-      - name: Cache build artifacts
-        uses: mozilla-actions/sccache-action@v0.0.11
-
       - name: Cache deps
         uses: actions/cache@v6
         with:
@@ -90,10 +86,7 @@ jobs:
           ${{ matrix.name == 'HTML5' && 'emcmake ' || '' }} cmake \
             -G Ninja -S . -B build \
             -D CMAKE_BUILD_TYPE=Release \
-            -D CMAKE_C_COMPILER_LAUNCHER=sccache \
-            -D CMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -D NUTBLAST_BUILD_TEST=ON
 
       - name: Build
-        run: |
-          cmake --build build --target NutBlast-test
+        run: cmake --build build --target NutBlast-test
