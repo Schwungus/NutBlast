@@ -878,34 +878,15 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
     {"Connected",
         [](const auto& obj) {
             ::rtc_config.iceServers.clear();
+#ifndef __EMSCRIPTEN__
+            ::rtc_config.iceTransportPolicy = rtc::TransportPolicy::All;
+#endif
 
             ::pid = obj.at("pid"), ::lid = obj.at("lid"), ::our_birth = obj.at("birth");
             ::log(NB_LogInfo, "You are ID={}", ::pid);
 
-            for (const auto& obj : obj.at("ice_servers")) {
-                rtc::IceServer ice_server(obj.at("urls"));
-
-                if (obj.contains("username")) {
-                    ice_server.username = obj.at("username");
-                    ice_server.password = obj.at("credential");
-                }
-
-                const std::string& kind = obj.at("kind");
-
-                if (kind == "Stun")
-                    ice_server.type = rtc::IceServer::Type::Stun;
-                else
-                    ice_server.type = rtc::IceServer::Type::Turn;
-
-                if (kind == "TurnUdp")
-                    ice_server.relayType = rtc::IceServer::RelayType::TurnUdp;
-                else if (kind == "TurnTcp")
-                    ice_server.relayType = rtc::IceServer::RelayType::TurnTcp;
-                else if (kind == "TurnTls")
-                    ice_server.relayType = rtc::IceServer::RelayType::TurnTls;
-
-                ::rtc_config.iceServers.push_back(ice_server);
-            }
+            for (const auto& url : obj.at("ice_servers"))
+                ::rtc_config.iceServers.emplace_back((std::string)url);
 
             ::permission_to_cook = true;
         }},
