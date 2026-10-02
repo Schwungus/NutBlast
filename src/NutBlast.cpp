@@ -39,6 +39,10 @@
 
 #include <NutBlast.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/val.h>
+#endif
+
 static constexpr const bool WINDOSE =
 #ifdef _WIN32
     true;
@@ -879,7 +883,7 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
         [](const auto& obj) {
             ::rtc_config.iceServers.clear();
 #ifndef __EMSCRIPTEN__
-            ::rtc_config.iceTransportPolicy = rtc::TransportPolicy::All;
+            ::rtc_config.iceTransportPolicy = rtc::TransportPolicy::All; // rtc::TransportPolicy::Relay
 #endif
 
             ::pid = obj.at("pid"), ::lid = obj.at("lid"), ::our_birth = obj.at("birth");
@@ -1255,21 +1259,54 @@ extern "C" bool NutBlast_IsReady() {
     return true;
 }
 
+#ifdef __EMSCRIPTEN__
+struct IdMember {
+    typedef int rtc::PeerConnection::* type;
+    friend type get(IdMember);
+};
+
+template <typename Tag, typename Tag::type M> struct Rob {
+    friend typename Tag::type get(Tag) {
+        return M;
+    }
+};
+
+template struct Rob<IdMember, &rtc::PeerConnection::mId>;
+#endif
+
 extern "C" bool NutBlast_IsPlayerRelayed(NutBlast_PlayerID pid) {
     if (!NutBlast_IsOnline() || !::players.contains(pid))
         return false;
 
-#ifdef __EMSCRIPTEN__
-    return false; // FIXME: stub until datachannel-wasm exposes the necessary APIs
-#else
     const auto& player = ::players.at(pid);
-    rtc::Candidate local, remote;
 
-    if (!player->pc->getSelectedCandidatePair(&local, &remote))
+#ifdef __EMSCRIPTEN__
+    const int id = (*player->pc).*get(IdMember());
+    const auto js = emscripten::val::global("WEBRTC")["peerConnectionsMap"][id];
+
+    if (js.isUndefined() || js.isNull())
         return false;
 
-    const bool local_is_turn = local.candidate().find("typ relay") != std::string::npos;
-    const bool remote_is_turn = remote.candidate().find("typ relay") != std::string::npos;
+    const auto pair = js["__selectedCandidatePair"];
+
+    if (pair.isUndefined() || pair.isNull())
+        return false;
+
+    const auto local_type = pair["localType"].as<std::string>();
+    const auto remote_type = pair["remoteType"].as<std::string>();
+
+    return local_type == "relay" || remote_type == "relay";
+#else
+    rtc::Candidate local_c, remote_c;
+
+    if (!player->pc->getSelectedCandidatePair(&local_c, &remote_c))
+        return false;
+
+    const auto local = local_c.candidate();
+    const auto remote = remote_c.candidate();
+
+    const bool local_is_turn = local.find("typ relay") != std::string::npos;
+    const bool remote_is_turn = remote.find("typ relay") != std::string::npos;
 
     return local_is_turn || remote_is_turn;
 #endif

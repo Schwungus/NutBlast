@@ -63,6 +63,10 @@ if(EMSCRIPTEN)
 
     FetchContent_MakeAvailable(datachannel-wasm)
     list(APPEND NB_LIBS datachannel-wasm)
+
+    set(MONKE ${CMAKE_CURRENT_SOURCE_DIR}/src/monke.js)
+    set_target_properties(NutBlast PROPERTIES INTERFACE_LINK_DEPENDS ${MONKE})
+    target_link_options(NutBlast PUBLIC "SHELL:--bind" "SHELL:--post-js ${MONKE}")
 else()
     FetchContent_Declare(MbedTLS
         URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
