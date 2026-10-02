@@ -890,7 +890,21 @@ static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> re
                     ice_server.password = obj.at("credential");
                 }
 
-                ::rtc_config.iceServers.push_back(std::move(ice_server));
+                const std::string& kind = obj.at("kind");
+
+                if (kind == "Stun")
+                    ice_server.type = rtc::IceServer::Type::Stun;
+                else
+                    ice_server.type = rtc::IceServer::Type::Turn;
+
+                if (kind == "TurnUdp")
+                    ice_server.relayType = rtc::IceServer::RelayType::TurnUdp;
+                else if (kind == "TurnTcp")
+                    ice_server.relayType = rtc::IceServer::RelayType::TurnTcp;
+                else if (kind == "TurnTls")
+                    ice_server.relayType = rtc::IceServer::RelayType::TurnTls;
+
+                ::rtc_config.iceServers.push_back(ice_server);
             }
 
             ::permission_to_cook = true;

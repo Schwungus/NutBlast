@@ -88,23 +88,42 @@ impl Player {
     }
 }
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Credentials {
     pub username: String,
     pub credential: String,
 }
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
+pub enum IceServerKind {
+    Stun,
+    TurnUdp,
+    TurnTcp,
+    TurnTls,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct IceServer {
     pub urls: String,
+    pub kind: IceServerKind,
     #[serde(flatten)]
     pub creds: Option<Credentials>,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Config {
     pub ice_servers: Vec<IceServer>,
     pub trust_reverse_proxy_xff: Option<bool>,
+}
+
+impl Config {
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        Self {
+            ice_servers: vec![],
+            trust_reverse_proxy_xff: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -253,7 +272,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn introduce_session_in_tokio_runtime() {
-        let blaster = Blaster::new(Config::default());
+        let blaster = Blaster::new(Config::empty());
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 
         let handle = blaster.introduce_session(ip);
