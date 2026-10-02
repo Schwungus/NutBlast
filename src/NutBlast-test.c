@@ -111,7 +111,8 @@ static void draw_gui() {
         const char* name = NutBlast_GetPlayerField(id, NUTBLAST_FIELD_PLAYER_NAME);
 
         if (name) {
-            const char* fmt = TextFormat("%s (%dms)", name, NutBlast_PlayerPing(id));
+            const char* relayed = NutBlast_IsPlayerRelayed(id) ? "[R] " : "";
+            const char* fmt = TextFormat("%s%s (%dms)", relayed, name, NutBlast_PlayerPing(id));
             DrawText(fmt, GetScreenWidth() - MeasureText(fmt, fs) - 5, fs * i, fs, BLACK);
         }
 

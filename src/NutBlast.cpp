@@ -1255,6 +1255,26 @@ extern "C" bool NutBlast_IsReady() {
     return true;
 }
 
+extern "C" bool NutBlast_IsPlayerRelayed(NutBlast_PlayerID pid) {
+    if (!NutBlast_IsOnline() || !::players.contains(pid))
+        return false;
+
+#ifdef __EMSCRIPTEN__
+    return false; // FIXME: stub until datachannel-wasm exposes the necessary APIs
+#else
+    const auto& player = ::players.at(pid);
+    rtc::Candidate local, remote;
+
+    if (!player->pc->getSelectedCandidatePair(&local, &remote))
+        return false;
+
+    const bool local_is_turn = local.candidate().find("typ relay") != std::string::npos;
+    const bool remote_is_turn = remote.candidate().find("typ relay") != std::string::npos;
+
+    return local_is_turn || remote_is_turn;
+#endif
+}
+
 extern "C" int NutBlast_ServerPing() {
     return NutBlast_IsOnline() ? ::blaster_ping.millis() : 0;
 }

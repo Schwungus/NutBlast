@@ -298,6 +298,9 @@ const NutBlast_PlayerID* NutBlast_ListPlayers();
 /// Returns true if the specified player is in the lobby AND can be reached over the network, and false otherwise.
 bool NutBlast_IsPlayerAlive(NutBlast_PlayerID);
 
+/// Returns true if either side of the connection to the specified player is a TURN relay.
+bool NutBlast_IsPlayerRelayed(NutBlast_PlayerID);
+
 /// Returns player's metadata as a null-terminated string.
 const char* NutBlast_GetPlayerField(NutBlast_PlayerID player, const char* name);
 
