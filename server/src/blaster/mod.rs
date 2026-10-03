@@ -104,7 +104,8 @@ pub enum IceServerKind {
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct IceServer {
-    pub urls: String,
+    #[serde(rename(serialize = "urls"))] // TODO: rename to `hostname` on the client
+    pub hostname: String,
     pub kind: IceServerKind,
     #[serde(flatten)]
     pub creds: Option<Credentials>,

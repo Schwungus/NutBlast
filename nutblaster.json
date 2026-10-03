@@ -1,11 +1,11 @@
 {
     "ice_servers": [
         {
-            "urls": "stun1.l.google.com:19302",
+            "hostname": "stun1.l.google.com:19302",
             "kind": "Stun"
         },
         {
-            "urls": "stun2.l.google.com:19302",
+            "hostname": "stun2.l.google.com:19302",
             "kind": "Stun"
         }
     ]
