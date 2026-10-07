@@ -928,8 +928,11 @@ namespace {
                 ::pid = obj.at("pid"), ::lid = obj.at("lid"), ::our_birth = obj.at("birth");
                 log(NB_LogInfo, "You are ID={}", ::pid);
 
+                log(NB_LogInfo, "ICE servers from NutBlaster:");
+
                 for (const auto& obj : obj.at("ice_servers")) {
-                    rtc::IceServer ice_server(obj.at("urls"));
+                    const std::string& hostname = obj.at("urls");
+                    rtc::IceServer ice_server(hostname);
 
                     if (obj.contains("username")) {
                         ice_server.username = obj.at("username");
@@ -949,6 +952,8 @@ namespace {
                         ice_server.relayType = rtc::IceServer::RelayType::TurnTcp;
                     else if (kind == "TurnTls")
                         ice_server.relayType = rtc::IceServer::RelayType::TurnTls;
+
+                    log(NB_LogInfo, "  {} {}", kind == "Stun" ? "STUN" : "TURN", hostname);
 
                     ::rtc_config.iceServers.push_back(ice_server);
                 }
