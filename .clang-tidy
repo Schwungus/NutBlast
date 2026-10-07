@@ -2,6 +2,7 @@ Checks: [
     clang-analyzer-*,
     bugprone-*,
     -bugprone-easily-swappable-parameters, # unavoidable
+    -bugprone-unchecked-string-to-number-conversion, # warns on the only `sscanf` in the codebase
     -bugprone-throwing-static-initialization, # L: every `static` string is a warning but i'm not falling back to `const char*`!!!!
     performance-*,
     -performance-enum-size, # L: suggested fix is not portable across GCC/Clang/MSVC
