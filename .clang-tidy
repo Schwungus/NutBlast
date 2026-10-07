@@ -9,8 +9,6 @@ Checks: [
     -performance-enum-size, # suggested fix is not portable across GCC/Clang/MSVC
     portability-*,
     misc-*,
-    -misc-use-anonymous-namespace, # `static` achieves essentially the same
     -misc-non-private-member-variables-in-classes, # L: reports `struct` members should be private
-    -misc-use-internal-linkage,
     cppcoreguidelines-init-variables,
   ]

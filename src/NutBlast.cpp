@@ -61,11 +61,231 @@ namespace interval {
     constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second, sdp_timeout = 5 * ::ns::second;
 };
 
-template <typename T> static T copy_and_clear(T& obj) {
-    auto copy = obj;
-    obj.clear();
-    return copy;
-}
+namespace {
+    template <typename T> T copy_and_clear(T& obj) {
+        auto copy = obj;
+        obj.clear();
+        return copy;
+    }
+
+    class Pinger {
+        std::uint64_t last_ping = 0, last_roundtrip = 0;
+
+      public:
+        int millis() const {
+            return (int)last_roundtrip;
+        }
+
+        void reset() {
+            last_ping = last_roundtrip = 0;
+        }
+
+        void ping() {
+            last_ping = NutBlast_TimeNS();
+        }
+
+        void pong() {
+            if (last_ping)
+                last_roundtrip = (NutBlast_TimeNS() - last_ping) / (2 * ::ns::milli);
+        }
+    };
+
+    class Once {
+        bool f_fired = false;
+
+      public:
+        bool fired() const {
+            return f_fired;
+        }
+
+        void reset() {
+            f_fired = false;
+        }
+
+        explicit operator bool() {
+            if (f_fired) {
+                return false;
+            } else {
+                f_fired = true;
+                return true;
+            }
+        }
+    };
+
+    struct ByeReason {
+        static const ByeReason OK;
+
+        bool err = false;
+        std::string code, msg;
+
+        ByeReason(const std::string& code, const std::string& msg) : code(code), msg(msg) {}
+
+        ByeReason(const nlohmann::json& obj)
+            : err(obj.at("type") == "violation"), code(obj.at("code")), msg(obj.at("msg")) {}
+
+        operator NutBlast_Reason() const {
+            return {.err = err, .code = code.c_str(), .msg = msg.c_str()};
+        }
+    };
+
+    struct Player : std::enable_shared_from_this<Player> {
+        Once fire_join, init;
+
+        const NutBlast_PlayerID pid;
+        const std::uint64_t birth;
+
+        Pinger pinger;
+        Metadata meta;
+
+        std::shared_ptr<rtc::PeerConnection> pc = nullptr;
+        std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
+
+        std::vector<rtc::Candidate> outgoing_candidates;
+        std::mutex outgoing_candidates_mutex;
+
+        std::optional<std::uint64_t> sdp_timeout = std::nullopt;
+
+        Player(NutBlast_PlayerID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
+        ~Player();
+
+        void engage();
+
+        bool is_offerer() const {
+            return NutBlast_GetPlayerID() > pid;
+        }
+
+        bool is_online() const {
+            return unreliable_dc && reliable_dc && ping_dc;
+        }
+
+        void drain_incoming_offers_and_candidates();
+    };
+
+    struct Message {
+        NutBlast_PlayerID from;
+        rtc::binary bytes;
+
+        Message() = default;
+        Message(NutBlast_PlayerID from, const rtc::binary& bytes) : from(from), bytes(bytes) {}
+    };
+
+    template <typename... Args> class Callback {
+        void (*fn)(Args...) = nullptr;
+
+      public:
+        Callback() = default;
+
+        Callback& operator=(void (*fn)(Args...)) {
+            this->fn = fn;
+            return *this;
+        }
+
+        void operator()(const std::decay_t<Args>&... args) {
+            if (fn)
+                fn(args...);
+        }
+    };
+
+    class Ticker {
+        const std::uint64_t interval;
+        std::uint64_t last_tick = 0;
+
+      public:
+        Ticker(std::uint64_t interval) : interval(interval) {}
+
+        explicit operator bool() {
+            const std::uint64_t now = NutBlast_TimeNS();
+
+            if (!last_tick || now - last_tick >= interval) {
+                last_tick = now;
+                return true;
+            }
+
+            return false;
+        }
+    };
+} // namespace
+
+const ByeReason ByeReason::OK(NUTBLAST_ERROR_OK, "Graceful disconnection");
+
+namespace {
+    bool init = false;
+    std::optional<std::string> last_error = std::nullopt;
+
+    rtc::Configuration rtc_config;
+    std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Candidate>> incoming_candidates;
+    std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Description>> incoming_offers;
+
+    std::string gid = "";
+    NutBlast_PlayerID pid = 0;
+    NutBlast_LobbyID lid = 0;
+    std::string nutblaster_address;
+    ByeReason disconnection_reason = ByeReason::OK;
+    int max_players = NUTBLAST_MAX_PLAYERS;
+
+    std::mutex globals_mutex;
+
+    NutBlast_ChannelID max_chan = 1;
+    struct {
+        std::mutex mutex;
+        std::deque<Message> messages;
+    } recv_queues[MAX_CHANNELS];
+
+    enum class Mode {
+        Host,
+        Join,
+        List,
+    } mode = Mode::Join;
+
+    bool lobby_listed = true, permission_to_cook = false, time_to_die = false;
+    std::uint64_t our_birth = 0;
+    std::size_t listing_limit = 0;
+
+    std::unordered_map<NutBlast_PlayerID, std::shared_ptr<Player>> players;
+    NutBlast_PlayerID master = 0;
+
+    Pinger blaster_ping;
+    Once fire_ready;
+
+    std::shared_ptr<rtc::WebSocket> websocket = nullptr;
+    std::vector<nlohmann::json> ws_in, ws_out;
+
+    Metadata player_meta, lobby_meta;
+
+    void (*logger)(NutBlast_LogLevel, const char*) = nullptr;
+    NutBlast_LogLevel log_level = NB_LogInfo;
+
+    void log_to_stdout(NutBlast_LogLevel level, const char* line) {
+        std::fprintf(stdout, "NB[%s] %s\n", NutBlast_LogLevelToString(level), line);
+        std::fflush(stdout);
+    }
+
+    template <typename... Args>
+    inline void log(NutBlast_LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
+        const auto line = std::vformat(fmt.get(), std::make_format_args(args...));
+
+        if (level == NB_LogError)
+            ::last_error = line;
+
+        if (level >= ::log_level)
+            (::logger == nullptr ? log_to_stdout : ::logger)(level, line.c_str());
+    }
+
+    void ws_send(const nlohmann::json& obj) {
+        ::ws_out.emplace_back(obj);
+
+        if (!NutBlast_IsOnline())
+            return;
+
+        try {
+            for (const auto& obj : copy_and_clear(::ws_out))
+                ::websocket->send(obj.dump());
+        } catch (const std::runtime_error&) {
+            ::time_to_die = true;
+            return;
+        }
+    }
+} // namespace
 
 extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
     switch (level) {
@@ -85,177 +305,12 @@ extern "C" uint64_t NutBlast_TimeNS() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
 }
 
-class Pinger {
-    std::uint64_t last_ping = 0, last_roundtrip = 0;
-
-  public:
-    int millis() const {
-        return (int)last_roundtrip;
-    }
-
-    void reset() {
-        last_ping = last_roundtrip = 0;
-    }
-
-    void ping() {
-        last_ping = NutBlast_TimeNS();
-    }
-
-    void pong() {
-        if (last_ping)
-            last_roundtrip = (NutBlast_TimeNS() - last_ping) / (2 * ::ns::milli);
-    }
-};
-
-class Once {
-    bool f_fired = false;
-
-  public:
-    bool fired() const {
-        return f_fired;
-    }
-
-    void reset() {
-        f_fired = false;
-    }
-
-    explicit operator bool() {
-        if (f_fired) {
-            return false;
-        } else {
-            f_fired = true;
-            return true;
-        }
-    }
-};
-
-struct ByeReason {
-    static const ByeReason OK;
-
-    bool err = false;
-    std::string code, msg;
-
-    ByeReason(const std::string& code, const std::string& msg) : code(code), msg(msg) {}
-
-    ByeReason(const nlohmann::json& obj)
-        : err(obj.at("type") == "violation"), code(obj.at("code")), msg(obj.at("msg")) {}
-
-    operator NutBlast_Reason() const {
-        return {.err = err, .code = code.c_str(), .msg = msg.c_str()};
-    }
-};
-
-const ByeReason ByeReason::OK(NUTBLAST_ERROR_OK, "Graceful disconnection");
-
-struct Player : std::enable_shared_from_this<Player> {
-    Once fire_join, init;
-
-    const NutBlast_PlayerID pid;
-    const std::uint64_t birth;
-
-    Pinger pinger;
-    Metadata meta;
-
-    std::shared_ptr<rtc::PeerConnection> pc = nullptr;
-    std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
-
-    std::vector<rtc::Candidate> outgoing_candidates;
-    std::mutex outgoing_candidates_mutex;
-
-    std::optional<std::uint64_t> sdp_timeout = std::nullopt;
-
-    Player(NutBlast_PlayerID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
-    ~Player();
-
-    void engage();
-
-    bool is_offerer() const {
-        return NutBlast_GetPlayerID() > pid;
-    }
-
-    bool is_online() const {
-        return unreliable_dc && reliable_dc && ping_dc;
-    }
-
-    void drain_incoming_offers_and_candidates();
-};
-
-struct Message {
-    NutBlast_PlayerID from;
-    rtc::binary bytes;
-
-    Message() = default;
-    Message(NutBlast_PlayerID from, const rtc::binary& bytes) : from(from), bytes(bytes) {}
-};
-
-static bool init = false;
-static std::optional<std::string> last_error = std::nullopt;
-
-static rtc::Configuration rtc_config;
-static std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Candidate>> incoming_candidates;
-static std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Description>> incoming_offers;
-
-static std::string gid = "";
-static NutBlast_PlayerID pid = 0;
-static NutBlast_LobbyID lid = 0;
-static std::string nutblaster_address;
-static ByeReason disconnection_reason = ByeReason::OK;
-static int max_players = NUTBLAST_MAX_PLAYERS;
-
-static std::mutex globals_mutex;
-
-static NutBlast_ChannelID max_chan = 1;
-static struct {
-    std::mutex mutex;
-    std::deque<Message> messages;
-} recv_queues[MAX_CHANNELS];
-
-static enum class Mode {
-    Host,
-    Join,
-    List,
-} mode = Mode::Join;
-
-static bool lobby_listed = true, permission_to_cook = false, time_to_die = false;
-static std::uint64_t our_birth = 0;
-static std::size_t listing_limit = 0;
-
-static std::unordered_map<NutBlast_PlayerID, std::shared_ptr<Player>> players;
-static NutBlast_PlayerID master = 0;
-
-static Pinger blaster_ping;
-static Once fire_ready;
-
-static std::shared_ptr<rtc::WebSocket> websocket = nullptr;
-static std::vector<nlohmann::json> ws_in, ws_out;
-
-static Metadata player_meta, lobby_meta;
-
-static void (*logger)(NutBlast_LogLevel, const char*) = nullptr;
-static NutBlast_LogLevel log_level = NB_LogInfo;
-
 extern "C" void NutBlast_SetLogger(void (*cb)(NutBlast_LogLevel, const char*)) {
     ::logger = cb;
 }
 
 extern "C" void NutBlast_SetLogLevel(NutBlast_LogLevel level) {
     ::log_level = level;
-}
-
-static void log_to_stdout(NutBlast_LogLevel level, const char* line) {
-    std::fprintf(stdout, "NB[%s] %s\n", NutBlast_LogLevelToString(level), line);
-    std::fflush(stdout);
-}
-
-template <typename... Args>
-static inline void log(NutBlast_LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
-    const auto line = std::vformat(fmt.get(), std::make_format_args(args...));
-
-    if (level == NB_LogError)
-        ::last_error = line;
-
-    if (level >= ::log_level)
-        (::logger == nullptr ? log_to_stdout : ::logger)(level, line.c_str());
 }
 
 extern "C" const char* NutBlast_GetLastError() {
@@ -276,46 +331,31 @@ void Player::drain_incoming_offers_and_candidates() {
 
     if (::incoming_offers.contains(pid)) {
         for (const auto& offer : copy_and_clear(::incoming_offers.at(pid))) {
-            ::log(NB_LogTrace, "offer/answer from {}: {}", pid, static_cast<std::string>(offer));
+            log(NB_LogTrace, "offer/answer from {}: {}", pid, static_cast<std::string>(offer));
 
             try {
                 pc->setRemoteDescription(offer);
-                ::log(NB_LogTrace, "offer/answer accepted!");
+                log(NB_LogTrace, "offer/answer accepted!");
             } catch (...) { continue; }
         }
     }
 
     if (pc->remoteDescription().has_value() && ::incoming_candidates.contains(pid)) {
         for (const auto& candidate : copy_and_clear(::incoming_candidates.at(pid))) {
-            ::log(NB_LogTrace, "candidate from {}: {}", pid, static_cast<std::string>(candidate));
+            log(NB_LogTrace, "candidate from {}: {}", pid, static_cast<std::string>(candidate));
 
             try {
                 pc->addRemoteCandidate(candidate);
-                ::log(NB_LogTrace, "candidate accepted!");
+                log(NB_LogTrace, "candidate accepted!");
             } catch (...) { continue; }
         }
     }
 }
 
-template <typename... Args> class Callback {
-    void (*fn)(Args...) = nullptr;
-
-  public:
-    Callback() = default;
-
-    Callback& operator=(void (*fn)(Args...)) {
-        this->fn = fn;
-        return *this;
-    }
-
-    void operator()(const std::decay_t<Args>&... args) {
-        if (fn)
-            fn(args...);
-    }
-};
-
 #define MakeCb(name, ident, ...)                                                                                       \
-    static Callback<__VA_ARGS__> ident;                                                                                \
+    namespace {                                                                                                        \
+        Callback<__VA_ARGS__> ident;                                                                                   \
+    }                                                                                                                  \
                                                                                                                        \
     extern "C" void NutBlast_##name(void (*cb)(__VA_ARGS__)) {                                                         \
         ::ident = cb;                                                                                                  \
@@ -329,40 +369,6 @@ MakeCb(OnLobbiesFound, on_lobbies_found, const NutBlast_Lobby*, size_t);
 MakeCb(OnMasterChanged, on_master_changed, NutBlast_PlayerID);
 MakeCb(OnPlayerMetadataChanged, on_player_meta_changed, NutBlast_PlayerID, NutBlast_FieldDiff);
 MakeCb(OnLobbyMetadataChanged, on_lobby_meta_changed, NutBlast_FieldDiff);
-
-static void ws_send(const nlohmann::json& obj) {
-    ::ws_out.emplace_back(obj);
-
-    if (!NutBlast_IsOnline())
-        return;
-
-    try {
-        for (const auto& obj : copy_and_clear(::ws_out))
-            ::websocket->send(obj.dump());
-    } catch (const std::runtime_error&) {
-        ::time_to_die = true;
-        return;
-    }
-}
-
-class Ticker {
-    const std::uint64_t interval;
-    std::uint64_t last_tick = 0;
-
-  public:
-    Ticker(std::uint64_t interval) : interval(interval) {}
-
-    explicit operator bool() {
-        const std::uint64_t now = NutBlast_TimeNS();
-
-        if (!last_tick || now - last_tick >= interval) {
-            last_tick = now;
-            return true;
-        }
-
-        return false;
-    }
-};
 
 void Player::engage() {
     if (!init)
@@ -477,17 +483,17 @@ void Player::engage() {
 
 extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
     if (::init) {
-        ::log(NB_LogError, "Don't call `NutBlast_Init()` twice!");
+        log(NB_LogError, "Don't call `NutBlast_Init()` twice!");
         return;
     }
 
     if (!opts.game_id) {
-        ::log(NB_LogError, "`game_id` must be set!");
+        log(NB_LogError, "`game_id` must be set!");
         return;
     }
 
     if (opts.max_channels > MAX_CHANNELS) {
-        ::log(NB_LogError, "Expected up to {} channels, got {}", MAX_CHANNELS, opts.max_channels);
+        log(NB_LogError, "Expected up to {} channels, got {}", MAX_CHANNELS, opts.max_channels);
         return;
     }
 
@@ -495,10 +501,10 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
 
     rtc::Preload();
 
-    ::log(NB_LogInfo, ".-------------------------------------------------------------.");
-    ::log(NB_LogInfo, "| For troubleshooting multiplayer connectivity, please visit: |");
-    ::log(NB_LogInfo, "|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
-    ::log(NB_LogInfo, "'-------------------------------------------------------------'");
+    log(NB_LogInfo, ".-------------------------------------------------------------.");
+    log(NB_LogInfo, "| For troubleshooting multiplayer connectivity, please visit: |");
+    log(NB_LogInfo, "|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
+    log(NB_LogInfo, "'-------------------------------------------------------------'");
 
     if (::nutblaster_address.empty())
         ::nutblaster_address = NUTBLAST_DEFAULT_SERVER;
@@ -510,9 +516,9 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
 extern "C" void NutBlast_SetGameID(const char* gid) {
     if (gid) {
         ::gid = gid;
-        ::log(NB_LogInfo, "Playing \"{}\"", ::gid);
+        log(NB_LogInfo, "Playing \"{}\"", ::gid);
     } else {
-        ::log(NB_LogError, "game ID cannot be null");
+        log(NB_LogError, "game ID cannot be null");
     }
 }
 
@@ -543,41 +549,42 @@ extern "C" bool NutBlast_IsListed() {
     return ::lobby_listed;
 }
 
-static bool check_field(const char* type_title, const char* key, const char* value) {
-    if (!key || !key[0] || std::strlen(key) > NUTBLAST_FIELD_NAME_MAX) {
-        ::log(NB_LogError, "{} metadata: invalid key size", type_title);
-        return false;
+namespace {
+    bool check_field(const char* type_title, const char* key, const char* value) {
+        if (!key || !key[0] || std::strlen(key) > NUTBLAST_FIELD_NAME_MAX) {
+            log(NB_LogError, "{} metadata: invalid key size", type_title);
+            return false;
+        }
+
+        if (value && std::strlen(value) > NUTBLAST_FIELD_VALUE_MAX) {
+            log(NB_LogError, "{} metadata: invalid value size", type_title);
+            return false;
+        }
+
+        return true;
     }
 
-    if (value && std::strlen(value) > NUTBLAST_FIELD_VALUE_MAX) {
-        ::log(NB_LogError, "{} metadata: invalid value size", type_title);
-        return false;
+    void freak_metadata(const char* Type, const char* type, Metadata& meta, const char* key, const char* value) {
+        if (value == nullptr) {
+            meta.erase(key);
+
+            ::ws_send({
+                {"type", std::string("Erase") + Type + "Meta"},
+                {"key", key},
+            });
+        } else if (meta.size() >= NUTBLAST_MAX_FIELDS && !meta.contains(key)) {
+            log(NB_LogError, "Reached {} {} fields limit", NUTBLAST_MAX_FIELDS, type);
+        } else {
+            meta.insert_or_assign(key, value);
+
+            ::ws_send({
+                {"type", std::string("Set") + Type + "Meta"},
+                {"key", key},
+                {"value", value},
+            });
+        }
     }
-
-    return true;
-}
-
-static void
-freak_metadata(const char* type_title, const char* type_lower, Metadata& meta, const char* key, const char* value) {
-    if (value == nullptr) {
-        meta.erase(key);
-
-        ::ws_send({
-            {"type", std::string("Erase") + type_title + "Meta"},
-            {"key", key},
-        });
-    } else if (meta.size() >= NUTBLAST_MAX_FIELDS && !meta.contains(key)) {
-        ::log(NB_LogError, "Reached {} {} fields limit", NUTBLAST_MAX_FIELDS, type_lower);
-    } else {
-        meta.insert_or_assign(key, value);
-
-        ::ws_send({
-            {"type", std::string("Set") + type_title + "Meta"},
-            {"key", key},
-            {"value", value},
-        });
-    }
-}
+} // namespace
 
 extern "C" const char* NutBlast_GetPlayerField(NutBlast_PlayerID pid, const char* name) {
     if (!name)
@@ -629,79 +636,81 @@ extern "C" void NutBlast_PurgeMetadata() {
     ::player_meta.clear(), ::lobby_meta.clear();
 }
 
-static void join_pro() {
-    std::lock_guard<std::mutex> lock(::globals_mutex);
-    ::last_error = std::nullopt, ::pid = 0;
+namespace {
+    void join_pro() {
+        std::lock_guard<std::mutex> lock(::globals_mutex);
+        ::last_error = std::nullopt, ::pid = 0;
 
-    ::ws_in.clear(), ::ws_out.clear();
-    ::incoming_candidates.clear(), ::incoming_offers.clear();
+        ::ws_in.clear(), ::ws_out.clear();
+        ::incoming_candidates.clear(), ::incoming_offers.clear();
 
-    ::master = 0, ::permission_to_cook = false;
-    ::disconnection_reason = ByeReason::OK;
-    ::blaster_ping.reset();
+        ::master = 0, ::permission_to_cook = false;
+        ::disconnection_reason = ByeReason::OK;
+        ::blaster_ping.reset();
 
-    for (auto& queue : recv_queues) {
-        std::lock_guard<std::mutex> lock(queue.mutex);
-        queue.messages.clear();
-    }
+        for (auto& queue : recv_queues) {
+            std::lock_guard<std::mutex> lock(queue.mutex);
+            queue.messages.clear();
+        }
 
 #ifndef __EMSCRIPTEN__
-    rtc::WebSocketConfiguration conf;
+        rtc::WebSocketConfiguration conf;
 
 #ifndef _WIN32
-    conf.caCertificatePemFile = "/etc/ssl/certs/ca-certificates.crt";
+        conf.caCertificatePemFile = "/etc/ssl/certs/ca-certificates.crt";
 #endif
 #endif
 
-    ::websocket = std::make_shared<rtc::WebSocket>(
+        ::websocket = std::make_shared<rtc::WebSocket>(
 #ifndef __EMSCRIPTEN__
-        conf
+            conf
 #endif
-    );
+        );
 
-    ::websocket->onOpen([]() {
-        if (::mode == Mode::List) {
-            ::ws_send({
-                {"type", "List"},
-                {"gid", ::gid},
-                {"limit", ::listing_limit},
-            });
-        } else if (::mode == Mode::Host) {
-            ::ws_send({
-                {"type", "Host"},
-                {"gid", ::gid},
-                {"capacity", ::max_players},
-                {"listed", ::lobby_listed},
-                {"player_meta", ::player_meta},
-                {"lobby_meta", ::lobby_meta},
-            });
-        } else {
-            ::ws_send({
-                {"type", "Join"},
-                {"gid", ::gid},
-                {"lid", ::lid},
-                {"player_meta", ::player_meta},
-            });
-        }
-    });
+        ::websocket->onOpen([]() {
+            if (::mode == Mode::List) {
+                ::ws_send({
+                    {"type", "List"},
+                    {"gid", ::gid},
+                    {"limit", ::listing_limit},
+                });
+            } else if (::mode == Mode::Host) {
+                ::ws_send({
+                    {"type", "Host"},
+                    {"gid", ::gid},
+                    {"capacity", ::max_players},
+                    {"listed", ::lobby_listed},
+                    {"player_meta", ::player_meta},
+                    {"lobby_meta", ::lobby_meta},
+                });
+            } else {
+                ::ws_send({
+                    {"type", "Join"},
+                    {"gid", ::gid},
+                    {"lid", ::lid},
+                    {"player_meta", ::player_meta},
+                });
+            }
+        });
 
-    ::websocket->onMessage([](const auto& msg) {
-        if (!std::holds_alternative<rtc::string>(msg))
-            return;
+        ::websocket->onMessage([](const auto& msg) {
+            if (!std::holds_alternative<rtc::string>(msg))
+                return;
 
-        try {
-            auto obj = nlohmann::json::parse(std::get<std::string>(msg));
-            std::lock_guard<std::mutex> lock(::globals_mutex);
-            ::ws_in.emplace_back(obj);
-        } catch (const nlohmann::json::parse_error&) {}
-    });
+            try {
+                auto obj = nlohmann::json::parse(std::get<std::string>(msg));
+                std::lock_guard<std::mutex> lock(::globals_mutex);
+                ::ws_in.emplace_back(obj);
+            } catch (const nlohmann::json::parse_error&) {}
+        });
 
-    ::websocket->onClosed([]() {
-        ::time_to_die = true;
-    });
+        ::websocket->onClosed([]() {
+            ::time_to_die = true;
+        });
 
-    ::websocket->open(::nutblaster_address);
-}
+        ::websocket->open(::nutblaster_address);
+    }
+} // namespace
 
 extern "C" void NutBlast_Disconnect() {
     ::time_to_die = false;
@@ -728,7 +737,7 @@ extern "C" void NutBlast_Disconnect() {
         ::fire_ready.reset();
     }
 
-    ::log(NB_LogInfo, "NutBlaster out! {} ({})", ::disconnection_reason.msg, ::disconnection_reason.code);
+    log(NB_LogInfo, "NutBlaster out! {} ({})", ::disconnection_reason.msg, ::disconnection_reason.code);
     ::on_disconnected(::disconnection_reason); // TODO: maybe NOT fire this in the lobby-listing mode?
     ::disconnection_reason = ByeReason::OK;
 
@@ -737,40 +746,40 @@ extern "C" void NutBlast_Disconnect() {
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
     if (NutBlast_IsConnecting()) {
-        ::log(NB_LogError, "You're already connected!");
+        log(NB_LogError, "You're already connected!");
     } else if (!::init) {
-        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
+        log(NB_LogError, "You forgot to call `NutBlast_Init()`");
     } else {
         ::mode = Mode::List, ::listing_limit = limit;
-        ::log(NB_LogInfo, "Connecting to {}", ::nutblaster_address);
+        log(NB_LogInfo, "Connecting to {}", ::nutblaster_address);
         join_pro();
     }
 }
 
 extern "C" void NutBlast_Join(NutBlast_LobbyID id) {
     if (NutBlast_IsConnecting()) {
-        ::log(NB_LogError, "You're already connected!");
+        log(NB_LogError, "You're already connected!");
     } else if (!::init) {
-        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
+        log(NB_LogError, "You forgot to call `NutBlast_Init()`");
     } else if (!id) {
-        ::log(NB_LogError, "No lobby ID specified!");
+        log(NB_LogError, "No lobby ID specified!");
     } else {
         ::mode = Mode::Join, ::lid = id;
-        ::log(NB_LogInfo, "Trying to join '{}' at: {}", id, ::nutblaster_address);
+        log(NB_LogInfo, "Trying to join '{}' at: {}", id, ::nutblaster_address);
         join_pro();
     }
 }
 
 extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
     if (NutBlast_IsConnecting()) {
-        ::log(NB_LogError, "You're already connected!");
+        log(NB_LogError, "You're already connected!");
     } else if (!::init) {
-        ::log(NB_LogError, "You forgot to call `NutBlast_Init()`");
+        log(NB_LogError, "You forgot to call `NutBlast_Init()`");
     } else {
         ::mode = Mode::Host, ::lobby_listed = !opts.unlisted;
         ::max_players = opts.max_players;
 
-        ::log(NB_LogInfo, "Trying to host at: {}", ::nutblaster_address);
+        log(NB_LogInfo, "Trying to host at: {}", ::nutblaster_address);
         join_pro();
     }
 }
@@ -820,252 +829,258 @@ extern "C" bool NutBlast_IsPlayerAlive(NutBlast_PlayerID pid) {
     return ::players.contains(pid);
 }
 
-static void handle_offer_or_answer(const nlohmann::json& obj) {
-    const NutBlast_PlayerID pid = obj.at("from");
-    const auto& type = obj.at("type") == "Offer" ? "offer" : "answer";
+namespace {
+    void handle_offer_or_answer(const nlohmann::json& obj) {
+        const NutBlast_PlayerID pid = obj.at("from");
+        const auto& type = obj.at("type") == "Offer" ? "offer" : "answer";
 
-    if (!::incoming_offers.contains(pid))
-        ::incoming_offers.insert({pid, {}});
+        if (!::incoming_offers.contains(pid))
+            ::incoming_offers.insert({pid, {}});
 
-    ::incoming_offers.at(pid).emplace_back(obj.at("sdp"), type);
-}
+        ::incoming_offers.at(pid).emplace_back(obj.at("sdp"), type);
+    }
 
-static void handle_candidate(const nlohmann::json& obj) {
-    const NutBlast_PlayerID pid = obj.at("from");
+    void handle_candidate(const nlohmann::json& obj) {
+        const NutBlast_PlayerID pid = obj.at("from");
 
-    if (!::incoming_candidates.contains(pid))
-        ::incoming_candidates.insert({pid, {}});
+        if (!::incoming_candidates.contains(pid))
+            ::incoming_candidates.insert({pid, {}});
 
-    try {
-        auto& queue = ::incoming_candidates.at(pid);
-        queue.emplace_back(obj.at("candidate"), obj.at("mid"));
-    } catch (const std::invalid_argument&) { ::incoming_candidates.erase(pid); }
-}
+        try {
+            auto& queue = ::incoming_candidates.at(pid);
+            queue.emplace_back(obj.at("candidate"), obj.at("mid"));
+        } catch (const std::invalid_argument&) { ::incoming_candidates.erase(pid); }
+    }
+} // namespace
 
-struct LobbyInfo {
-    std::vector<std::pair<std::string, std::string>> fields;
-    std::vector<NutBlast_LobbyField> meta;
-};
+namespace {
+    struct LobbyInfo {
+        std::vector<std::pair<std::string, std::string>> fields;
+        std::vector<NutBlast_LobbyField> meta;
+    };
 
-static void handle_list(const nlohmann::json& obj) {
-    std::vector<NutBlast_Lobby> lobbies;
-    std::vector<LobbyInfo> tmp;
+    void handle_list(const nlohmann::json& obj) {
+        std::vector<NutBlast_Lobby> lobbies;
+        std::vector<LobbyInfo> tmp;
 
-    const auto& lobers = obj.at("list");
-    tmp.reserve(lobers.size());
+        const auto& lobers = obj.at("list");
+        tmp.reserve(lobers.size());
 
-    for (const auto& lober : lobers) {
-        tmp.push_back({});
+        for (const auto& lober : lobers) {
+            tmp.push_back({});
 
-        LobbyInfo& tlob = tmp.back();
+            LobbyInfo& tlob = tmp.back();
 
-        const auto& read_meta = lober.at("meta");
-        tlob.fields.reserve(read_meta.size());
+            const auto& read_meta = lober.at("meta");
+            tlob.fields.reserve(read_meta.size());
 
-        for (const auto& [key, value] : read_meta.items()) {
-            tlob.fields.push_back({key, value.get<std::string>()});
+            for (const auto& [key, value] : read_meta.items()) {
+                tlob.fields.push_back({key, value.get<std::string>()});
 
-            tlob.meta.push_back({
-                .key = tlob.fields.back().first.c_str(),
-                .value = tlob.fields.back().second.c_str(),
+                tlob.meta.push_back({
+                    .key = tlob.fields.back().first.c_str(),
+                    .value = tlob.fields.back().second.c_str(),
+                });
+            }
+
+            lobbies.push_back({
+                .id = lober.at("lid"),
+                .players = lober.at("players"),
+                .capacity = lober.at("max"),
+                .metadata = tlob.meta.data(),
+                .field_count = tlob.meta.size(),
             });
         }
 
-        lobbies.push_back({
-            .id = lober.at("lid"),
-            .players = lober.at("players"),
-            .capacity = lober.at("max"),
-            .metadata = tlob.meta.data(),
-            .field_count = tlob.meta.size(),
-        });
+        ::on_lobbies_found(lobbies.data(), lobbies.size());
     }
+} // namespace
 
-    ::on_lobbies_found(lobbies.data(), lobbies.size());
-}
-
-static const std::unordered_map<std::string, void (*)(const nlohmann::json&)> response_handlers{
-    {"Connected",
-        [](const auto& obj) {
-            ::rtc_config.iceServers.clear();
+namespace {
+    const std::unordered_map<std::string, void (*)(const nlohmann::json&)> response_handlers{
+        {"Connected",
+            [](const auto& obj) {
+                ::rtc_config.iceServers.clear();
 #ifndef __EMSCRIPTEN__
-            ::rtc_config.iceTransportPolicy = rtc::TransportPolicy::All; // rtc::TransportPolicy::Relay
+                ::rtc_config.iceTransportPolicy = rtc::TransportPolicy::All; // rtc::TransportPolicy::Relay
 #endif
 
-            ::pid = obj.at("pid"), ::lid = obj.at("lid"), ::our_birth = obj.at("birth");
-            ::log(NB_LogInfo, "You are ID={}", ::pid);
+                ::pid = obj.at("pid"), ::lid = obj.at("lid"), ::our_birth = obj.at("birth");
+                log(NB_LogInfo, "You are ID={}", ::pid);
 
-            for (const auto& obj : obj.at("ice_servers")) {
-                rtc::IceServer ice_server(obj.at("urls"));
+                for (const auto& obj : obj.at("ice_servers")) {
+                    rtc::IceServer ice_server(obj.at("urls"));
 
-                if (obj.contains("username")) {
-                    ice_server.username = obj.at("username");
-                    ice_server.password = obj.at("credential");
+                    if (obj.contains("username")) {
+                        ice_server.username = obj.at("username");
+                        ice_server.password = obj.at("credential");
+                    }
+
+                    const std::string& kind = obj.at("kind");
+
+                    if (kind == "Stun")
+                        ice_server.type = rtc::IceServer::Type::Stun;
+                    else
+                        ice_server.type = rtc::IceServer::Type::Turn;
+
+                    if (kind == "TurnUdp")
+                        ice_server.relayType = rtc::IceServer::RelayType::TurnUdp;
+                    else if (kind == "TurnTcp")
+                        ice_server.relayType = rtc::IceServer::RelayType::TurnTcp;
+                    else if (kind == "TurnTls")
+                        ice_server.relayType = rtc::IceServer::RelayType::TurnTls;
+
+                    ::rtc_config.iceServers.push_back(ice_server);
                 }
 
-                const std::string& kind = obj.at("kind");
+                ::permission_to_cook = true;
+            }},
+        {"Disconnected",
+            [](const auto& obj) {
+                ::disconnection_reason = obj.at("reason"), ::time_to_die = true;
+            }},
+        {"SetListed",
+            [](const auto& obj) {
+                ::lobby_listed = obj.at("listed");
+            }},
+        {"SetCapacity",
+            [](const auto& obj) {
+                ::max_players = obj.at("capacity");
+            }},
+        {"SetPlayerMeta",
+            [](const auto& obj) {
+                const NutBlast_PlayerID pid = obj.at("pid");
 
-                if (kind == "Stun")
-                    ice_server.type = rtc::IceServer::Type::Stun;
-                else
-                    ice_server.type = rtc::IceServer::Type::Turn;
+                if (!::players.contains(pid))
+                    return;
 
-                if (kind == "TurnUdp")
-                    ice_server.relayType = rtc::IceServer::RelayType::TurnUdp;
-                else if (kind == "TurnTcp")
-                    ice_server.relayType = rtc::IceServer::RelayType::TurnTcp;
-                else if (kind == "TurnTls")
-                    ice_server.relayType = rtc::IceServer::RelayType::TurnTls;
+                const auto& player = ::players.at(pid);
+                auto& meta = player->meta;
 
-                ::rtc_config.iceServers.push_back(ice_server);
-            }
+                const std::string key = obj.at("key"), new_value = obj.at("value");
+                std::optional<std::string> old_value;
 
-            ::permission_to_cook = true;
-        }},
-    {"Disconnected",
-        [](const auto& obj) {
-            ::disconnection_reason = obj.at("reason"), ::time_to_die = true;
-        }},
-    {"SetListed",
-        [](const auto& obj) {
-            ::lobby_listed = obj.at("listed");
-        }},
-    {"SetCapacity",
-        [](const auto& obj) {
-            ::max_players = obj.at("capacity");
-        }},
-    {"SetPlayerMeta",
-        [](const auto& obj) {
-            const NutBlast_PlayerID pid = obj.at("pid");
+                if (meta.contains(key))
+                    old_value = meta.at(key);
 
-            if (!::players.contains(pid))
-                return;
+                if (old_value != new_value) {
+                    meta.insert_or_assign(key, new_value);
 
-            const auto& player = ::players.at(pid);
-            auto& meta = player->meta;
+                    NutBlast_FieldDiff diff = {0};
+                    diff.name = key.c_str();
+                    diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
+                    diff.new_value = new_value.c_str();
 
-            const std::string key = obj.at("key"), new_value = obj.at("value");
-            std::optional<std::string> old_value;
+                    if (player->fire_join.fired())
+                        ::on_player_meta_changed(pid, diff);
+                }
+            }},
+        {"ErasePlayerMeta",
+            [](const auto& obj) {
+                const NutBlast_PlayerID pid = obj.at("pid");
 
-            if (meta.contains(key))
-                old_value = meta.at(key);
+                if (!::players.contains(pid))
+                    return;
 
-            if (old_value != new_value) {
-                meta.insert_or_assign(key, new_value);
+                auto& meta = ::players.at(pid)->meta;
+                const std::string key = obj.at("key");
 
-                NutBlast_FieldDiff diff = {0};
-                diff.name = key.c_str();
-                diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
-                diff.new_value = new_value.c_str();
-
-                if (player->fire_join.fired())
-                    ::on_player_meta_changed(pid, diff);
-            }
-        }},
-    {"ErasePlayerMeta",
-        [](const auto& obj) {
-            const NutBlast_PlayerID pid = obj.at("pid");
-
-            if (!::players.contains(pid))
-                return;
-
-            auto& meta = ::players.at(pid)->meta;
-            const std::string key = obj.at("key");
-
-            if (!meta.contains(key))
-                return;
-
-            NutBlast_FieldDiff diff = {0};
-            diff.name = key.c_str();
-            diff.old_value = meta.at(key).c_str();
-            diff.new_value = nullptr;
-
-            ::on_player_meta_changed(pid, diff);
-            meta.erase(key);
-        }},
-    {"SetLobbyMeta",
-        [](const auto& obj) {
-            const std::string key = obj.at("key"), new_value = obj.at("value");
-            std::optional<std::string> old_value;
-
-            if (::lobby_meta.contains(key))
-                old_value = ::lobby_meta.at(key);
-
-            if (old_value != new_value) {
-                ::lobby_meta.insert_or_assign(key, new_value);
+                if (!meta.contains(key))
+                    return;
 
                 NutBlast_FieldDiff diff = {0};
                 diff.name = key.c_str();
-                diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
-                diff.new_value = new_value.c_str();
+                diff.old_value = meta.at(key).c_str();
+                diff.new_value = nullptr;
+
+                ::on_player_meta_changed(pid, diff);
+                meta.erase(key);
+            }},
+        {"SetLobbyMeta",
+            [](const auto& obj) {
+                const std::string key = obj.at("key"), new_value = obj.at("value");
+                std::optional<std::string> old_value;
+
+                if (::lobby_meta.contains(key))
+                    old_value = ::lobby_meta.at(key);
+
+                if (old_value != new_value) {
+                    ::lobby_meta.insert_or_assign(key, new_value);
+
+                    NutBlast_FieldDiff diff = {0};
+                    diff.name = key.c_str();
+                    diff.old_value = old_value.has_value() ? old_value->c_str() : nullptr;
+                    diff.new_value = new_value.c_str();
+
+                    ::on_lobby_meta_changed(diff);
+                }
+            }},
+        {"EraseLobbyMeta",
+            [](const auto& obj) {
+                const std::string key = obj.at("key");
+
+                if (!::lobby_meta.contains(key))
+                    return;
+
+                NutBlast_FieldDiff diff = {0};
+                diff.name = key.c_str();
+                diff.old_value = ::lobby_meta.at(key).c_str();
+                diff.new_value = nullptr;
 
                 ::on_lobby_meta_changed(diff);
+                ::lobby_meta.erase(key);
+            }},
+        {"SetMaster",
+            [](const auto& obj) {
+                const auto old_master = ::master;
+                ::master = obj.at("pid");
+
+                if (old_master != ::master)
+                    ::on_master_changed(old_master);
+            }},
+        {"Joined",
+            [](const auto& obj) {
+                const NutBlast_PlayerID id = obj.at("pid");
+                ::players.insert({id, std::make_shared<Player>(id, obj.at("meta"), obj.at("birth"))});
+            }},
+        {"Left",
+            [](const auto& obj) {
+                const NutBlast_PlayerID pid = obj.at("pid");
+
+                if (::players.contains(pid)) {
+                    ::on_player_left(pid, ByeReason(obj.at("reason")));
+                    ::players.erase(pid);
+                }
+            }},
+        {"Offer", handle_offer_or_answer},
+        {"Answer", handle_offer_or_answer},
+        {"Candidate", handle_candidate},
+        {"List", handle_list},
+        {"Pong",
+            [](const auto&) {
+                ::blaster_ping.pong();
+            }},
+    };
+
+    void recv_stuff() {
+        std::lock_guard<std::mutex> lock(::globals_mutex);
+
+        for (const auto& obj : copy_and_clear(::ws_in)) {
+            try {
+                const std::string& type = obj.at("type");
+                const auto handler = response_handlers.find(type);
+
+                if (handler != response_handlers.end())
+                    handler->second(obj);
+            } catch (const nlohmann::json::out_of_range& e) {
+                log(NB_LogError, "Version mismatch between the NutBlast client library and the server: {}", e.what());
             }
-        }},
-    {"EraseLobbyMeta",
-        [](const auto& obj) {
-            const std::string key = obj.at("key");
-
-            if (!::lobby_meta.contains(key))
-                return;
-
-            NutBlast_FieldDiff diff = {0};
-            diff.name = key.c_str();
-            diff.old_value = ::lobby_meta.at(key).c_str();
-            diff.new_value = nullptr;
-
-            ::on_lobby_meta_changed(diff);
-            ::lobby_meta.erase(key);
-        }},
-    {"SetMaster",
-        [](const auto& obj) {
-            const auto old_master = ::master;
-            ::master = obj.at("pid");
-
-            if (old_master != ::master)
-                ::on_master_changed(old_master);
-        }},
-    {"Joined",
-        [](const auto& obj) {
-            const NutBlast_PlayerID id = obj.at("pid");
-            ::players.insert({id, std::make_shared<Player>(id, obj.at("meta"), obj.at("birth"))});
-        }},
-    {"Left",
-        [](const auto& obj) {
-            const NutBlast_PlayerID pid = obj.at("pid");
-
-            if (::players.contains(pid)) {
-                ::on_player_left(pid, ByeReason(obj.at("reason")));
-                ::players.erase(pid);
-            }
-        }},
-    {"Offer", handle_offer_or_answer},
-    {"Answer", handle_offer_or_answer},
-    {"Candidate", handle_candidate},
-    {"List", handle_list},
-    {"Pong",
-        [](const auto&) {
-            ::blaster_ping.pong();
-        }},
-};
-
-static void recv_stuff() {
-    std::lock_guard<std::mutex> lock(::globals_mutex);
-
-    for (const auto& obj : copy_and_clear(::ws_in)) {
-        try {
-            const std::string& type = obj.at("type");
-            const auto handler = response_handlers.find(type);
-
-            if (handler != response_handlers.end())
-                handler->second(obj);
-        } catch (const nlohmann::json::out_of_range& e) {
-            ::log(NB_LogError, "Version mismatch between the NutBlast client library and the server: {}", e.what());
         }
-    }
 
-    for (auto& [id, player] : ::players)
-        player->drain_incoming_offers_and_candidates();
-}
+        for (auto& [id, player] : ::players)
+            player->drain_incoming_offers_and_candidates();
+    }
+} // namespace
 
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat), pinger(interval::ping);
@@ -1150,7 +1165,7 @@ extern "C" void NutBlast_Update() {
 
     if (NutBlast_IsReady()) {
         if (::fire_ready && ::mode != Mode::List) {
-            ::log(NB_LogInfo, "NutBlast connected and ready!");
+            log(NB_LogInfo, "NutBlast connected and ready!");
             ::on_ready();
         }
 
@@ -1190,7 +1205,7 @@ extern "C" void NutBlast_SetMaster(NutBlast_PlayerID guy) {
 
 extern "C" void NutBlast_Send(NutBlast_SendOptions opts) {
     if (!opts.data) {
-        ::log(NB_LogError, "Cannot send a null message");
+        log(NB_LogError, "Cannot send a null message");
         return;
     }
 
@@ -1219,12 +1234,12 @@ extern "C" void NutBlast_Send(NutBlast_SendOptions opts) {
 
 extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
     if (!out) {
-        ::log(NB_LogError, "NutBlast_NextMessage called with null pointer");
+        log(NB_LogError, "NutBlast_NextMessage called with null pointer");
         return false;
     }
 
     if (chan >= ::max_chan) {
-        ::log(NB_LogError, "NutBlast_NextMessage called with channel {} out of {} max channels", chan, ::max_chan);
+        log(NB_LogError, "NutBlast_NextMessage called with channel {} out of {} max channels", chan, ::max_chan);
         return false;
     }
 
