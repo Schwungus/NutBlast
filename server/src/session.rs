@@ -44,7 +44,7 @@ impl Session {
         Self {
             stop: false,
             payloads_budget: TokenBucket::new("payloads", 30.0, 30.0, 60.0),
-            relays_budget: TokenBucket::new("relays", 10.0, 10.0, 80.0),
+            relays_budget: TokenBucket::new("relays", 20.0, 20.0, 80.0),
             bandwidth_budget: TokenBucket::new("kbps", 4096.0, 4096.0, 12288.0),
             pid: None,
             bye_reason: Kick::natural("ok", "Graceful disconnection"),
