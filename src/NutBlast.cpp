@@ -1292,18 +1292,20 @@ extern "C" bool NutBlast_IsReady() {
 }
 
 #ifdef __EMSCRIPTEN__
-struct IdMember {
-    typedef int rtc::PeerConnection::* type;
-    friend type get(IdMember);
-};
+namespace {
+    struct IdMember {
+        typedef int rtc::PeerConnection::* type;
+        friend type get(IdMember);
+    };
 
-template <typename Tag, typename Tag::type M> struct Rob {
-    friend typename Tag::type get(Tag) {
-        return M;
-    }
-};
+    template <typename Tag, typename Tag::type M> struct Rob {
+        friend typename Tag::type get(Tag) {
+            return M;
+        }
+    };
 
-template struct Rob<IdMember, &rtc::PeerConnection::mId>;
+    template struct Rob<IdMember, &rtc::PeerConnection::mId>;
+} // namespace
 #endif
 
 extern "C" bool NutBlast_IsPlayerRelayed(NutBlast_PlayerID pid) {
