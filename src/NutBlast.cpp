@@ -336,7 +336,9 @@ void Player::drain_incoming_offers_and_candidates() {
             try {
                 pc->setRemoteDescription(offer);
                 log(NB_LogTrace, "offer/answer accepted!");
-            } catch (...) { continue; }
+            } catch (...) {
+                continue;
+            }
         }
     }
 
@@ -347,7 +349,9 @@ void Player::drain_incoming_offers_and_candidates() {
             try {
                 pc->addRemoteCandidate(candidate);
                 log(NB_LogTrace, "candidate accepted!");
-            } catch (...) { continue; }
+            } catch (...) {
+                continue;
+            }
         }
     }
 }
@@ -701,7 +705,9 @@ namespace {
                 auto obj = nlohmann::json::parse(std::get<std::string>(msg));
                 std::lock_guard<std::mutex> lock(::globals_mutex);
                 ::ws_in.emplace_back(obj);
-            } catch (const nlohmann::json::parse_error&) {}
+            } catch (const nlohmann::json::parse_error& err) {
+                (void)err;
+            }
         });
 
         ::websocket->onClosed([]() {
@@ -721,7 +727,9 @@ extern "C" void NutBlast_Disconnect() {
 
         try {
             ::websocket->close();
-        } catch (const std::runtime_error&) {}
+        } catch (const std::runtime_error& err) {
+            (void)err;
+        }
     }
 
     for (auto& [id, player] : ::players)
@@ -849,7 +857,9 @@ namespace {
         try {
             auto& queue = ::incoming_candidates.at(pid);
             queue.emplace_back(obj.at("candidate"), obj.at("mid"));
-        } catch (const std::invalid_argument&) { ::incoming_candidates.erase(pid); }
+        } catch (const std::invalid_argument&) {
+            ::incoming_candidates.erase(pid);
+        }
     }
 } // namespace
 
@@ -1229,7 +1239,9 @@ extern "C" void NutBlast_Send(NutBlast_SendOptions opts) {
 
     try {
         dc->send(buf);
-    } catch (const std::runtime_error&) {}
+    } catch (const std::runtime_error& err) {
+        (void)err;
+    }
 }
 
 extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* out) {
@@ -1354,7 +1366,10 @@ extern "C" void NutBlast_SleepMS(int _ms) {
     struct timespec ts = {0};
     ts.tv_sec = ms / 1000, ts.tv_nsec = (ms % 1000) * (time_t)ns::milli;
     int res = 0;
-    do { res = nanosleep(&ts, &ts); } while (res && errno == EINTR);
+
+    do {
+        res = nanosleep(&ts, &ts);
+    } while (res && errno == EINTR);
 #endif
 }
 
