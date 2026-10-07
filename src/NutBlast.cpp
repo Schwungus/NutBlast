@@ -455,7 +455,7 @@ void Player::engage() {
         unreliable_dc->onMessage(on_msg);
 
         reliable_dc = pc->createDataChannel("reliable", {
-            .reliability = {.unordered = false, },
+            .reliability = {.unordered = false, .maxRetransmits = 2, },
         });
 
         reliable_dc->onMessage(on_msg);
@@ -719,6 +719,7 @@ namespace {
 } // namespace
 
 extern "C" void NutBlast_Disconnect() {
+    std::lock_guard<std::mutex> lock(::globals_mutex);
     ::time_to_die = false;
 
     if (::websocket) {
@@ -732,18 +733,27 @@ extern "C" void NutBlast_Disconnect() {
         }
     }
 
-    for (auto& [id, player] : ::players)
-        if (player && player->pc)
+    for (auto& [id, player] : ::players) {
+        if (!player)
+            continue;
+
+        if (player->unreliable_dc)
+            player->unreliable_dc->close();
+
+        if (player->reliable_dc)
+            player->reliable_dc->close();
+
+        if (player->ping_dc)
+            player->ping_dc->close();
+
+        if (player->pc)
             player->pc->close();
-
-    {
-        std::lock_guard<std::mutex> lock(::globals_mutex);
-
-        ::ws_in.clear(), ::ws_out.clear(), ::players.clear();
-        ::incoming_candidates.clear(), ::incoming_offers.clear();
-        ::websocket = nullptr, ::lid = 0;
-        ::fire_ready.reset();
     }
+
+    ::ws_in.clear(), ::ws_out.clear(), ::players.clear();
+    ::incoming_candidates.clear(), ::incoming_offers.clear();
+    ::websocket = nullptr, ::lid = 0;
+    ::fire_ready.reset();
 
     log(NB_LogInfo, "NutBlaster out! {} ({})", ::disconnection_reason.msg, ::disconnection_reason.code);
     ::on_disconnected(::disconnection_reason); // TODO: maybe NOT fire this in the lobby-listing mode?
