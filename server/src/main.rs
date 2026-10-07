@@ -101,7 +101,7 @@ async fn main() -> eyre::Result<()> {
             let accept = tokio_tungstenite::accept_hdr_async_with_config(stream, hdr, Some(config));
 
             match accept.await {
-                Ok(ws) => Session::new(blaster.clone(), real_ip, ws).serve().await,
+                Ok(ws) => Session::new(blaster, real_ip, ws).serve().await,
                 Err(e) => error!("{}: {}", real_ip, e),
             }
         });
