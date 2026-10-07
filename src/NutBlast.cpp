@@ -449,19 +449,20 @@ void Player::engage() {
 
     if (is_offerer()) {
         unreliable_dc = pc->createDataChannel("unreliable", {
-            .reliability = {.unordered = true, .maxRetransmits = 0, },
+            .reliability = { .unordered = true, .maxRetransmits = 0, },
         });
 
         unreliable_dc->onMessage(on_msg);
 
         reliable_dc = pc->createDataChannel("reliable", {
-            .reliability = {.unordered = false, .maxRetransmits = 2, },
+	        // don't repeat my mistake MIGUEL > If both maxPacketLifeTime or maxRetransmits are unset, the channel is reliable.
+            .reliability = { .unordered = false, },
         });
 
         reliable_dc->onMessage(on_msg);
 
         ping_dc = pc->createDataChannel("ping", {
-            .reliability = {.unordered = true, .maxRetransmits = 0, },
+            .reliability = { .unordered = true, .maxRetransmits = 0, },
         });
 
         ping_dc->onMessage(on_ping);
