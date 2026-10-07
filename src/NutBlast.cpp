@@ -43,12 +43,9 @@
 #include <emscripten/val.h>
 #endif
 
-static constexpr const bool WINDOSE =
 #ifdef _WIN32
-    true;
 #include <windows.h>
 #else
-    false;
 #include <errno.h>
 #endif
 
@@ -70,12 +67,6 @@ template <typename T> static T copy_and_clear(T& obj) {
     return copy;
 }
 
-static std::optional<std::string> last_error = std::nullopt;
-
-extern "C" const char* NutBlast_GetLastError() {
-    return ::last_error.has_value() ? ::last_error->c_str() : nullptr;
-}
-
 extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
     switch (level) {
     case NB_LogTrace:
@@ -89,41 +80,10 @@ extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
     return "";
 }
 
-static void (*logger)(NutBlast_LogLevel, const char*) = nullptr;
-static NutBlast_LogLevel log_level = NB_LogInfo;
-
-extern "C" void NutBlast_SetLogger(void (*cb)(NutBlast_LogLevel, const char*)) {
-    ::logger = cb;
-}
-
-extern "C" void NutBlast_SetLogLevel(NutBlast_LogLevel level) {
-    ::log_level = level;
-}
-
-static void log_to_stdout(NutBlast_LogLevel level, const char* line) {
-    std::fprintf(stdout, "NB[%s] %s\n", NutBlast_LogLevelToString(level), line);
-    std::fflush(stdout);
-}
-
-template <typename... Args>
-static inline void log(NutBlast_LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
-    const auto line = std::vformat(fmt.get(), std::make_format_args(args...));
-
-    if (level == NB_LogError)
-        ::last_error = line;
-
-    if (level >= ::log_level)
-        (::logger == nullptr ? log_to_stdout : ::logger)(level, line.c_str());
-}
-
 extern "C" uint64_t NutBlast_TimeNS() {
     const auto elapsed = std::chrono::high_resolution_clock::now().time_since_epoch();
     return std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
 }
-
-static rtc::Configuration rtc_config;
-static std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Candidate>> incoming_candidates;
-static std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Description>> incoming_offers;
 
 class Pinger {
     std::uint64_t last_ping = 0, last_roundtrip = 0;
@@ -205,14 +165,7 @@ struct Player : std::enable_shared_from_this<Player> {
     std::optional<std::uint64_t> sdp_timeout = std::nullopt;
 
     Player(NutBlast_PlayerID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
-
-    ~Player() {
-        if (::incoming_offers.contains(pid))
-            ::incoming_offers.erase(pid);
-
-        if (::incoming_candidates.contains(pid))
-            ::incoming_candidates.erase(pid);
-    }
+    ~Player();
 
     void engage();
 
@@ -224,32 +177,7 @@ struct Player : std::enable_shared_from_this<Player> {
         return unreliable_dc && reliable_dc && ping_dc;
     }
 
-    void drain_incoming_offers_and_candidates() {
-        if (!pc)
-            return;
-
-        if (::incoming_offers.contains(pid)) {
-            for (const auto& offer : copy_and_clear(::incoming_offers.at(pid))) {
-                ::log(NB_LogTrace, "offer/answer from {}: {}", pid, static_cast<std::string>(offer));
-
-                try {
-                    pc->setRemoteDescription(offer);
-                    ::log(NB_LogTrace, "offer/answer accepted!");
-                } catch (...) { continue; }
-            }
-        }
-
-        if (pc->remoteDescription().has_value() && ::incoming_candidates.contains(pid)) {
-            for (const auto& candidate : copy_and_clear(::incoming_candidates.at(pid))) {
-                ::log(NB_LogTrace, "candidate from {}: {}", pid, static_cast<std::string>(candidate));
-
-                try {
-                    pc->addRemoteCandidate(candidate);
-                    ::log(NB_LogTrace, "candidate accepted!");
-                } catch (...) { continue; }
-            }
-        }
-    }
+    void drain_incoming_offers_and_candidates();
 };
 
 struct Message {
@@ -259,6 +187,13 @@ struct Message {
     Message() = default;
     Message(NutBlast_PlayerID from, const rtc::binary& bytes) : from(from), bytes(bytes) {}
 };
+
+static bool init = false;
+static std::optional<std::string> last_error = std::nullopt;
+
+static rtc::Configuration rtc_config;
+static std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Candidate>> incoming_candidates;
+static std::unordered_map<NutBlast_PlayerID, std::vector<rtc::Description>> incoming_offers;
 
 static std::string gid = "";
 static NutBlast_PlayerID pid = 0;
@@ -295,6 +230,72 @@ static std::shared_ptr<rtc::WebSocket> websocket = nullptr;
 static std::vector<nlohmann::json> ws_in, ws_out;
 
 static Metadata player_meta, lobby_meta;
+
+static void (*logger)(NutBlast_LogLevel, const char*) = nullptr;
+static NutBlast_LogLevel log_level = NB_LogInfo;
+
+extern "C" void NutBlast_SetLogger(void (*cb)(NutBlast_LogLevel, const char*)) {
+    ::logger = cb;
+}
+
+extern "C" void NutBlast_SetLogLevel(NutBlast_LogLevel level) {
+    ::log_level = level;
+}
+
+static void log_to_stdout(NutBlast_LogLevel level, const char* line) {
+    std::fprintf(stdout, "NB[%s] %s\n", NutBlast_LogLevelToString(level), line);
+    std::fflush(stdout);
+}
+
+template <typename... Args>
+static inline void log(NutBlast_LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
+    const auto line = std::vformat(fmt.get(), std::make_format_args(args...));
+
+    if (level == NB_LogError)
+        ::last_error = line;
+
+    if (level >= ::log_level)
+        (::logger == nullptr ? log_to_stdout : ::logger)(level, line.c_str());
+}
+
+extern "C" const char* NutBlast_GetLastError() {
+    return ::last_error.has_value() ? ::last_error->c_str() : nullptr;
+}
+
+Player::~Player() {
+    if (::incoming_offers.contains(pid))
+        ::incoming_offers.erase(pid);
+
+    if (::incoming_candidates.contains(pid))
+        ::incoming_candidates.erase(pid);
+}
+
+void Player::drain_incoming_offers_and_candidates() {
+    if (!pc)
+        return;
+
+    if (::incoming_offers.contains(pid)) {
+        for (const auto& offer : copy_and_clear(::incoming_offers.at(pid))) {
+            ::log(NB_LogTrace, "offer/answer from {}: {}", pid, static_cast<std::string>(offer));
+
+            try {
+                pc->setRemoteDescription(offer);
+                ::log(NB_LogTrace, "offer/answer accepted!");
+            } catch (...) { continue; }
+        }
+    }
+
+    if (pc->remoteDescription().has_value() && ::incoming_candidates.contains(pid)) {
+        for (const auto& candidate : copy_and_clear(::incoming_candidates.at(pid))) {
+            ::log(NB_LogTrace, "candidate from {}: {}", pid, static_cast<std::string>(candidate));
+
+            try {
+                pc->addRemoteCandidate(candidate);
+                ::log(NB_LogTrace, "candidate accepted!");
+            } catch (...) { continue; }
+        }
+    }
+}
 
 template <typename... Args> class Callback {
     void (*fn)(Args...) = nullptr;
@@ -474,8 +475,6 @@ void Player::engage() {
     }
 }
 
-static bool init = false;
-
 extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
     if (::init) {
         ::log(NB_LogError, "Don't call `NutBlast_Init()` twice!");
@@ -483,7 +482,12 @@ extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
     }
 
     if (!opts.game_id) {
-        ::log(NB_LogError, "`NutBlast_Init()` requires `game_id` to be set!");
+        ::log(NB_LogError, "`game_id` must be set!");
+        return;
+    }
+
+    if (opts.max_channels > MAX_CHANNELS) {
+        ::log(NB_LogError, "Expected up to {} channels, got {}", MAX_CHANNELS, opts.max_channels);
         return;
     }
 
@@ -644,8 +648,9 @@ static void join_pro() {
 #ifndef __EMSCRIPTEN__
     rtc::WebSocketConfiguration conf;
 
-    if constexpr (!WINDOSE)
-        conf.caCertificatePemFile = "/etc/ssl/certs/ca-certificates.crt";
+#ifndef _WIN32
+    conf.caCertificatePemFile = "/etc/ssl/certs/ca-certificates.crt";
+#endif
 #endif
 
     ::websocket = std::make_shared<rtc::WebSocket>(
