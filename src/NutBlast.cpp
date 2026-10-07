@@ -58,7 +58,7 @@ namespace ns {
 };
 
 namespace interval {
-    constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second, sdp_timeout = 5 * ::ns::second;
+    constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second, sdp_timeout = 8 * ::ns::second;
 };
 
 namespace {
