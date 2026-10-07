@@ -154,7 +154,7 @@ namespace {
             return NutBlast_GetPlayerID() > pid;
         }
 
-        bool is_online() const {
+        bool is_ready() const {
             return unreliable_dc && reliable_dc && ping_dc;
         }
 
@@ -595,13 +595,11 @@ extern "C" const char* NutBlast_GetPlayerField(NutBlast_PlayerID pid, const char
     if (!name)
         return nullptr;
 
-    if (pid == NutBlast_GetPlayerID()) // could be 0 btw
+    // could be 0 == 0 btw: `NutBlast_GetPlayerID()` returns 0 until connected to a lobby
+    if (pid == NutBlast_GetPlayerID())
         return ::player_meta.contains(name) ? ::player_meta.at(name).c_str() : nullptr;
 
-    if (!NutBlast_IsOnline())
-        return nullptr;
-
-    if (!::players.contains(pid))
+    if (!NutBlast_IsPlayerInLobby(pid))
         return nullptr;
 
     const auto& player = ::players.at(pid);
@@ -838,14 +836,18 @@ extern "C" NutBlast_PlayerID NutBlast_GetMasterID() {
     return NutBlast_IsOnline() ? ::master : 0;
 }
 
-extern "C" bool NutBlast_IsPlayerAlive(NutBlast_PlayerID pid) {
+extern "C" bool NutBlast_IsPlayerInLobby(NutBlast_PlayerID pid) {
     if (!pid || !NutBlast_IsOnline())
         return false;
 
     if (pid == NutBlast_GetPlayerID())
         return true;
 
-    return ::players.contains(pid);
+    return ::players.contains(pid) && ::players.at(pid);
+}
+
+extern "C" bool NutBlast_IsConnectedToPlayer(NutBlast_PlayerID pid) {
+    return NutBlast_IsPlayerInLobby(pid) && (pid == NutBlast_GetPlayerID() || ::players.at(pid)->is_ready());
 }
 
 namespace {
@@ -977,7 +979,7 @@ namespace {
             [](const auto& obj) {
                 const NutBlast_PlayerID pid = obj.at("pid");
 
-                if (!::players.contains(pid))
+                if (!NutBlast_IsPlayerInLobby(pid) || pid == NutBlast_GetPlayerID())
                     return;
 
                 const auto& player = ::players.at(pid);
@@ -1005,7 +1007,7 @@ namespace {
             [](const auto& obj) {
                 const NutBlast_PlayerID pid = obj.at("pid");
 
-                if (!::players.contains(pid))
+                if (!NutBlast_IsPlayerInLobby(pid) || pid == NutBlast_GetPlayerID())
                     return;
 
                 auto& meta = ::players.at(pid)->meta;
@@ -1235,7 +1237,7 @@ extern "C" void NutBlast_Send(NutBlast_SendOptions opts) {
         return;
     }
 
-    if (opts.to == NutBlast_GetPlayerID() || !::players.contains(opts.to))
+    if (opts.to == NutBlast_GetPlayerID() || !NutBlast_IsConnectedToPlayer(opts.to))
         return;
 
     const auto& player = ::players.at(opts.to);
@@ -1301,7 +1303,7 @@ extern "C" bool NutBlast_IsReady() {
         return false;
 
     for (const auto& [id, player] : ::players)
-        if (!player->is_online())
+        if (!player->is_ready())
             return false;
 
     return true;
@@ -1324,8 +1326,8 @@ namespace {
 } // namespace
 #endif
 
-extern "C" bool NutBlast_IsPlayerRelayed(NutBlast_PlayerID pid) {
-    if (!NutBlast_IsOnline() || !::players.contains(pid))
+extern "C" bool NutBlast_IsPlayerConnectionRelayed(NutBlast_PlayerID pid) {
+    if (!NutBlast_IsPlayerInLobby(pid) || pid == NutBlast_GetPlayerID())
         return false;
 
     const auto& player = ::players.at(pid);
@@ -1367,11 +1369,12 @@ extern "C" int NutBlast_ServerPing() {
 }
 
 extern "C" int NutBlast_PlayerPing(NutBlast_PlayerID pid) {
-    if (!::players.contains(pid))
+    if (NutBlast_IsPlayerInLobby(pid) && pid != NutBlast_GetPlayerID()) {
+        const auto& player = ::players.at(pid);
+        return player->is_ready() ? player->pinger.millis() : 0;
+    } else {
         return 0;
-
-    const auto& player = ::players.at(pid);
-    return player->is_online() ? player->pinger.millis() : 0;
+    }
 }
 
 extern "C" void NutBlast_SleepMS(int _ms) {

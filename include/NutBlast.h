@@ -295,11 +295,14 @@ NutBlast_PlayerID NutBlast_GetMasterID();
 /// Returns a 0-terminated array of IDs of every reachable player in the lobby, including yourself.
 const NutBlast_PlayerID* NutBlast_ListPlayers();
 
-/// Returns true if the specified player is in the lobby AND can be reached over the network, and false otherwise.
-bool NutBlast_IsPlayerAlive(NutBlast_PlayerID);
+/// Returns true if the specified player is reported to be present in the lobby by the NutBlaster.
+bool NutBlast_IsPlayerInLobby(NutBlast_PlayerID);
+
+/// Returns true if the specified player is in the lobby AND can send & receive data with `NutBlast_Send`.
+bool NutBlast_IsConnectedToPlayer(NutBlast_PlayerID);
 
 /// Returns true if either side of the connection to the specified player is a TURN relay.
-bool NutBlast_IsPlayerRelayed(NutBlast_PlayerID);
+bool NutBlast_IsPlayerConnectionRelayed(NutBlast_PlayerID);
 
 /// Returns player's metadata as a null-terminated string.
 const char* NutBlast_GetPlayerField(NutBlast_PlayerID player, const char* name);
