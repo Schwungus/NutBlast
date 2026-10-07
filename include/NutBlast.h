@@ -263,7 +263,7 @@ void NutBlast_Join(NutBlast_LobbyID id);
 void NutBlast_Host(NutBlast_HostOptions opts);
 
 /// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
-void NutBlast_FindLobbies(size_t); // FIXME: use a `NutBlast_HostOptions`-like parameter instead
+void NutBlast_FindLobbies(size_t);
 
 /// Disconnects you from the lobby if you are in one, and resets the networking state.
 void NutBlast_Disconnect();
