@@ -117,8 +117,14 @@ impl Session {
         };
 
         match msg {
-            ClientMessage::Ping if self.pid.is_some() => {
-                self.send(&ServerMessage::Pong).await;
+            ClientMessage::Ping if let Some(pid) = self.pid => {
+                let (tx, rx) = oneshot::channel();
+
+                self.execute(BlasterOperation::AssemblePong { pid, tx });
+
+                if let Ok(msg) = rx.await {
+                    self.send(&msg).await;
+                }
             }
             ClientMessage::List { gid, limit } if self.pid.is_none() => {
                 let (tx, rx) = oneshot::channel();

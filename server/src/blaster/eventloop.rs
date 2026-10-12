@@ -549,6 +549,17 @@ impl BlasterEventLoop {
                     };
                 }
             }
+            BlasterOperation::AssemblePong { pid, tx } => {
+                let players = if let Some(Player { lid, .. }) = self.players.get(&pid)
+                    && let Some(Lobby { players, .. }) = self.lobbies.get(lid)
+                {
+                    players.iter().cloned().collect()
+                } else {
+                    vec![]
+                };
+
+                let _ = tx.send(ServerMessage::Pong { players });
+            }
         }
     }
 }

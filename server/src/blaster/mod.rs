@@ -189,6 +189,10 @@ pub type TokioSender = tokio::sync::mpsc::Sender<ServerMessage>;
 pub type TokioReceiver = tokio::sync::mpsc::Receiver<ServerMessage>;
 
 pub enum BlasterOperation {
+    AssemblePong {
+        pid: BasicId,
+        tx: oneshot::Sender<ServerMessage>,
+    },
     SetCapacity {
         initiator: BasicId,
         capacity: usize,

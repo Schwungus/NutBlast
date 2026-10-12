@@ -76,7 +76,9 @@ pub enum ClientMessage {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum ServerMessage {
-    Pong,
+    Pong {
+        players: Vec<BasicId>,
+    },
     Connected {
         pid: BasicId,
         lid: BasicId,

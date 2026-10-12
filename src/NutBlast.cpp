@@ -31,6 +31,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <rtc/rtc.hpp>
 #include <rtc/websocket.hpp>
@@ -1085,8 +1086,20 @@ namespace {
         {"Candidate", handle_candidate},
         {"List", handle_list},
         {"Pong",
-            [](const auto&) {
+            [](const auto& obj) {
                 ::blaster_ping.pong();
+
+                const std::unordered_set<NutBlast_PlayerID> players = obj.at("players");
+
+                std::erase_if(::players, [&players](const auto& pair) {
+                    const auto pid = pair.first;
+
+                    if (players.contains(pid))
+                        return false;
+
+                    ::on_player_left(pid, ByeReason::OK);
+                    return true;
+                });
             }},
     };
 
