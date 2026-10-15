@@ -28,6 +28,7 @@
 #include <deque>
 #include <format>
 #include <functional> // IWYU pragma: keep (datachannel-wasm forgot to #include ts)
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -140,9 +141,7 @@ namespace {
 
         std::shared_ptr<rtc::PeerConnection> pc = nullptr;
         std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
-
         std::vector<rtc::Candidate> outgoing_candidates;
-        std::mutex outgoing_candidates_mutex;
 
         std::optional<std::uint64_t> sdp_timeout = std::nullopt;
 
@@ -224,13 +223,14 @@ namespace {
     ByeReason disconnection_reason = ByeReason::OK;
     int max_players = NUTBLAST_MAX_PLAYERS;
 
-    std::mutex globals_mutex;
+    std::recursive_mutex globals_mutex;
+
+    std::lock_guard<std::recursive_mutex> lock_globals() {
+        return std::lock_guard<std::recursive_mutex>(::globals_mutex);
+    }
 
     NutBlast_ChannelID max_chan = 1;
-    struct {
-        std::mutex mutex;
-        std::deque<Message> messages;
-    } recv_queues[MAX_CHANNELS];
+    std::deque<Message> recv_queues[MAX_CHANNELS];
 
     enum class Mode {
         Host,
@@ -273,18 +273,8 @@ namespace {
     }
 
     void ws_send(const nlohmann::json& obj) {
+        const auto lock = lock_globals();
         ::ws_out.emplace_back(obj);
-
-        if (!NutBlast_IsOnline())
-            return;
-
-        try {
-            for (const auto& obj : copy_and_clear(::ws_out))
-                ::websocket->send(obj.dump());
-        } catch (const std::runtime_error&) {
-            ::time_to_die = true;
-            return;
-        }
     }
 } // namespace
 
@@ -406,7 +396,7 @@ void Player::engage() {
             return;
 
         auto state = self.lock();
-        std::lock_guard<std::mutex> lock(state->outgoing_candidates_mutex);
+        const auto lock = lock_globals();
         state->outgoing_candidates.emplace_back(candidate);
     });
 
@@ -424,11 +414,9 @@ void Player::engage() {
         if (chan >= ::max_chan)
             return;
 
-        auto& queue = ::recv_queues[chan];
-
-        std::lock_guard<std::mutex> lock(queue.mutex);
+        const auto lock = lock_globals();
         rtc::binary buf(bytes.begin() + 1, bytes.end());
-        queue.messages.emplace_back(id, std::move(buf));
+        ::recv_queues[chan].emplace_back(id, std::move(buf));
     };
 
     const auto on_ping = [=, self = weak_from_this()](const auto& msg) {
@@ -642,7 +630,6 @@ extern "C" void NutBlast_PurgeMetadata() {
 
 namespace {
     void join_pro() {
-        std::lock_guard<std::mutex> lock(::globals_mutex);
         ::last_error = std::nullopt, ::pid = 0;
 
         ::ws_in.clear(), ::ws_out.clear();
@@ -652,10 +639,8 @@ namespace {
         ::disconnection_reason = ByeReason::OK;
         ::blaster_ping.reset();
 
-        for (auto& queue : recv_queues) {
-            std::lock_guard<std::mutex> lock(queue.mutex);
-            queue.messages.clear();
-        }
+        for (auto& queue : recv_queues)
+            queue.clear();
 
 #ifndef __EMSCRIPTEN__
         rtc::WebSocketConfiguration conf;
@@ -703,7 +688,7 @@ namespace {
 
             try {
                 auto obj = nlohmann::json::parse(std::get<std::string>(msg));
-                std::lock_guard<std::mutex> lock(::globals_mutex);
+                const auto lock = lock_globals();
                 ::ws_in.emplace_back(obj);
             } catch (const nlohmann::json::parse_error& err) {
                 (void)err;
@@ -711,6 +696,7 @@ namespace {
         });
 
         ::websocket->onClosed([]() {
+            const auto lock = lock_globals();
             ::time_to_die = true;
         });
 
@@ -719,7 +705,8 @@ namespace {
 } // namespace
 
 extern "C" void NutBlast_Disconnect() {
-    std::lock_guard<std::mutex> lock(::globals_mutex);
+    const auto lock = lock_globals();
+
     ::time_to_die = false;
 
     if (::websocket) {
@@ -763,6 +750,8 @@ extern "C" void NutBlast_Disconnect() {
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
+    const auto lock = lock_globals();
+
     if (NutBlast_IsConnecting()) {
         log(NB_LogError, "You're already connected!");
     } else if (!::init) {
@@ -775,6 +764,8 @@ extern "C" void NutBlast_FindLobbies(size_t limit) {
 }
 
 extern "C" void NutBlast_Join(NutBlast_LobbyID id) {
+    const auto lock = lock_globals();
+
     if (NutBlast_IsConnecting()) {
         log(NB_LogError, "You're already connected!");
     } else if (!::init) {
@@ -783,12 +774,14 @@ extern "C" void NutBlast_Join(NutBlast_LobbyID id) {
         log(NB_LogError, "No lobby ID specified!");
     } else {
         ::mode = Mode::Join, ::lid = id;
-        log(NB_LogInfo, "Trying to join '{}' at: {}", id, ::nutblaster_address);
+        log(NB_LogInfo, "Trying to join '{}'", id);
         join_pro();
     }
 }
 
 extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
+    const auto lock = lock_globals();
+
     if (NutBlast_IsConnecting()) {
         log(NB_LogError, "You're already connected!");
     } else if (!::init) {
@@ -796,8 +789,7 @@ extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
     } else {
         ::mode = Mode::Host, ::lobby_listed = !opts.unlisted;
         ::max_players = opts.max_players;
-
-        log(NB_LogInfo, "Trying to host at: {}", ::nutblaster_address);
+        log(NB_LogInfo, "Trying to host");
         join_pro();
     }
 }
@@ -926,6 +918,7 @@ namespace {
             [](const auto& obj) {
                 ::rtc_config.iceServers.clear();
 #ifndef __EMSCRIPTEN__
+                ::rtc_config.enableIceUdpMux = true;
                 ::rtc_config.iceTransportPolicy = rtc::TransportPolicy::All; // rtc::TransportPolicy::Relay
 #endif
 
@@ -1104,7 +1097,7 @@ namespace {
     };
 
     void recv_stuff() {
-        std::lock_guard<std::mutex> lock(::globals_mutex);
+        const auto lock = lock_globals();
 
         for (const auto& obj : copy_and_clear(::ws_in)) {
             try {
@@ -1114,7 +1107,10 @@ namespace {
                 if (handler != response_handlers.end())
                     handler->second(obj);
             } catch (const nlohmann::json::out_of_range& e) {
-                log(NB_LogError, "Version mismatch between the NutBlast client library and the server: {}", e.what());
+                log(NB_LogError,
+                    "Communication error caused by a version mismatch between the NutBlast client library and the "
+                    "server: {}",
+                    e.what());
             }
         }
 
@@ -1126,7 +1122,20 @@ namespace {
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat), pinger(interval::ping);
 
-    if (!NutBlast_IsOnline() || ::mode == Mode::List)
+    if (!NutBlast_IsOnline())
+        return;
+
+    const auto lock = lock_globals();
+
+    try {
+        for (const auto& obj : copy_and_clear(::ws_out))
+            ::websocket->send(obj.dump());
+    } catch (const std::runtime_error&) {
+        ::time_to_die = true;
+        return;
+    }
+
+    if (::mode == Mode::List)
         return;
 
     if (pinger) {
@@ -1148,8 +1157,6 @@ extern "C" void NutBlast_Flush() {
 
     if (beater) {
         for (auto& [id, player] : ::players) {
-            std::lock_guard<std::mutex> lock(player->outgoing_candidates_mutex);
-
             for (const auto& candidate : copy_and_clear(player->outgoing_candidates)) {
                 ::ws_send({
                     {"type", "PassCandidate"},
@@ -1169,6 +1176,8 @@ extern "C" void NutBlast_Update() {
         NutBlast_Disconnect();
         return;
     }
+
+    const auto lock = lock_globals();
 
     if (::permission_to_cook) {
         for (auto& [id, player] : ::players) {
@@ -1286,15 +1295,15 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
         return false;
     }
 
+    const auto lock = lock_globals();
     auto& queue = ::recv_queues[chan];
-    std::lock_guard<std::mutex> lock(queue.mutex);
 
-    if (queue.messages.empty())
+    if (queue.empty())
         return false;
 
     static Message msg; // keeps the buffers valid between calls
-    msg = std::move(queue.messages.front());
-    queue.messages.pop_front();
+    msg = std::move(queue.front());
+    queue.pop_front();
 
     out->from = msg.from;
     out->data = (const char*)msg.bytes.data();
