@@ -1247,10 +1247,12 @@ extern "C" void NutBlast_Kick(NutBlast_PlayerID guy) {
 }
 
 extern "C" void NutBlast_SetMaster(NutBlast_PlayerID guy) {
-    ::ws_send({
-        {"type", "SetMaster"},
-        {"pid", guy},
-    });
+    if (guy != 0 && guy != NutBlast_GetPlayerID()) {
+        ::ws_send({
+            {"type", "SetMaster"},
+            {"pid", guy},
+        });
+    }
 }
 
 extern "C" void NutBlast_Send(NutBlast_SendOptions opts) {
