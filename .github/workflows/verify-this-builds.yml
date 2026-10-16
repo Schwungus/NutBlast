@@ -83,6 +83,8 @@ jobs:
           [[ "${{ matrix.name == 'HTML5' && '1' || '0' }}" == "1" ]] && \
             source "${{ github.workspace }}/emsdk-cache/emsdk-main/emsdk_env.sh"
 
+          GIT_PATH="$(command -v git)"
+
           ${{ matrix.name == 'HTML5' && 'emcmake ' || '' }} cmake \
             -G Ninja -S . -B build \
             -D CMAKE_BUILD_TYPE=Release \
