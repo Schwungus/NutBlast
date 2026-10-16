@@ -42,9 +42,14 @@ jobs:
             compiler: Emscripten
 
     env:
-      CACHE_BUST: 2
+      CACHE_BUST: 3
 
     steps:
+      - name: Add Git to PATH
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: echo "C:\Program Files\Git\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -82,8 +87,6 @@ jobs:
         run: |
           [[ "${{ matrix.name == 'HTML5' && '1' || '0' }}" == "1" ]] && \
             source "${{ github.workspace }}/emsdk-cache/emsdk-main/emsdk_env.sh"
-
-          GIT_PATH="$(command -v git)"
 
           ${{ matrix.name == 'HTML5' && 'emcmake ' || '' }} cmake \
             -G Ninja -S . -B build \
