@@ -66,6 +66,9 @@ typedef struct {
 static TinyMap players = {0};
 static NutBlast_LobbyID existing_lobby = 0;
 
+// an internal NutBlast variable exposed just for the sake of debugging. don't even think of using it in production!!!
+extern bool NutBlast_IgnoreICE;
+
 static void reset() {
     FreeTinyMap(&players);
 }
@@ -122,8 +125,13 @@ static void draw_gui() {
     if (existing_lobby)
         DrawText("Lobby found!", 0, 0, fs, GREEN);
 
+    if (NutBlast_IgnoreICE)
+        DrawText("-ICE", 0, fs, fs, RED);
+    else
+        DrawText("+ICE", 0, fs, fs, BLACK);
+
     DrawText("H to host, J to join, K to reset, P to ratelimit self", 0, GetScreenHeight() - fs * 2, fs, BLACK);
-    DrawText("T to chat (reliable), L to kick everyone", 0, GetScreenHeight() - fs * 1, fs, BLACK);
+    DrawText("T to chat (reliable), L to kick everyone, M to ignore ICE", 0, GetScreenHeight() - fs * 1, fs, BLACK);
 }
 
 static void move_our_rect() {
@@ -278,6 +286,9 @@ int main(int argc, char* argv[]) {
             NutBlast_FindLobbies(1);
             next_search = GetTime() + 3.0;
         }
+
+        if (IsKeyPressed(KEY_M))
+            NutBlast_IgnoreICE = !NutBlast_IgnoreICE;
 
         move_our_rect();
         send_our_position();

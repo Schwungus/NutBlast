@@ -60,7 +60,7 @@ namespace ns {
 };
 
 namespace interval {
-    constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second, sdp_timeout = 8 * ::ns::second;
+    constexpr const std::uint64_t beat = ::ns::second / 62, ping = ::ns::second, sdp_timeout = 5 * ::ns::second;
 };
 
 namespace {
@@ -144,6 +144,7 @@ namespace {
         std::vector<rtc::Candidate> outgoing_candidates;
 
         std::optional<std::uint64_t> sdp_timeout = std::nullopt;
+        int renegotiation_attempts = 0;
 
         Player(NutBlast_PlayerID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
         ~Player();
@@ -209,6 +210,8 @@ namespace {
 const ByeReason ByeReason::OK(NUTBLAST_ERROR_OK, "Graceful disconnection");
 
 namespace {
+    constexpr const int MAX_RENEGOTIATION_ATTEMPTS = 3;
+
     bool init = false;
     std::optional<std::string> last_error = std::nullopt;
 
@@ -273,11 +276,9 @@ namespace {
     }
 
     void ws_send(const nlohmann::json& obj) {
-        const auto lock = lock_globals();
-
         ::ws_out.emplace_back(obj);
 
-        if (NutBlast_IsOnline()) {
+        if (::websocket && ::websocket->isOpen()) {
             try {
                 for (const auto& obj : copy_and_clear(::ws_out))
                     ::websocket->send(obj.dump());
@@ -425,8 +426,8 @@ void Player::engage() {
         if (chan >= ::max_chan)
             return;
 
-        const auto lock = lock_globals();
         rtc::binary buf(bytes.begin() + 1, bytes.end());
+        const auto lock = lock_globals();
         ::recv_queues[chan].emplace_back(id, std::move(buf));
     };
 
@@ -556,6 +557,8 @@ extern "C" bool NutBlast_IsListed() {
 
 namespace {
     bool check_field(const char* type_title, const char* key, const char* value) {
+        const auto lock = lock_globals();
+
         if (!key || !key[0] || std::strlen(key) > NUTBLAST_FIELD_NAME_MAX) {
             log(NB_LogError, "{} metadata: invalid key size", type_title);
             return false;
@@ -570,6 +573,8 @@ namespace {
     }
 
     void freak_metadata(const char* Type, const char* type, Metadata& meta, const char* key, const char* value) {
+        const auto lock = lock_globals();
+
         if (value == nullptr) {
             meta.erase(key);
 
@@ -607,12 +612,16 @@ extern "C" const char* NutBlast_GetPlayerField(NutBlast_PlayerID pid, const char
 }
 
 extern "C" void NutBlast_SetPlayerField(const char* key, const char* value) {
+    const auto lock = lock_globals();
+
     if (check_field("Player", key, value))
         freak_metadata("Player", "player", ::player_meta, key, value);
 }
 
 extern "C" const char* NutBlast_GetLobbyField(const char* name) {
-    if (!name || !NutBlast_IsOnline())
+    const auto lock = lock_globals();
+
+    if (!name || !::websocket || !::websocket->isOpen())
         return nullptr;
 
     if (::lobby_meta.contains(name))
@@ -622,17 +631,13 @@ extern "C" const char* NutBlast_GetLobbyField(const char* name) {
 }
 
 extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
-    if (!check_field("Lobby", key, value))
+    const auto master = NutBlast_GetMasterID();
+
+    if (!master || master != NutBlast_GetPlayerID())
         return;
 
-    if (NutBlast_IsOnline()) {
-        const auto master = NutBlast_GetMasterID();
-
-        if (!master || master != NutBlast_GetPlayerID())
-            return;
-    }
-
-    freak_metadata("Lobby", "lobby", ::lobby_meta, key, value);
+    if (check_field("Lobby", key, value))
+        freak_metadata("Lobby", "lobby", ::lobby_meta, key, value);
 }
 
 extern "C" void NutBlast_PurgeMetadata() {
@@ -668,6 +673,8 @@ namespace {
         );
 
         ::websocket->onOpen([]() {
+            const auto lock = lock_globals();
+
             if (::mode == Mode::List) {
                 ::ws_send({
                     {"type", "List"},
@@ -829,15 +836,18 @@ extern "C" const NutBlast_PlayerID* NutBlast_ListPlayers() {
 }
 
 extern "C" NutBlast_PlayerID NutBlast_GetPlayerID() {
+    const auto lock = lock_globals();
     return ::permission_to_cook ? ::pid : 0;
 }
 
 extern "C" NutBlast_LobbyID NutBlast_GetLobbyID() {
-    return (NutBlast_IsOnline() && ::lid) ? ::lid : 0;
+    const auto lock = lock_globals();
+    return (::websocket && ::websocket->isOpen() && ::lid) ? ::lid : 0;
 }
 
 extern "C" NutBlast_PlayerID NutBlast_GetMasterID() {
-    return NutBlast_IsOnline() ? ::master : 0;
+    const auto lock = lock_globals();
+    return ::websocket && ::websocket->isOpen() ? ::master : 0;
 }
 
 extern "C" bool NutBlast_IsPlayerInLobby(NutBlast_PlayerID pid) {
@@ -847,6 +857,7 @@ extern "C" bool NutBlast_IsPlayerInLobby(NutBlast_PlayerID pid) {
     if (pid == NutBlast_GetPlayerID())
         return true;
 
+    const auto lock = lock_globals();
     return ::players.contains(pid) && ::players.at(pid);
 }
 
@@ -854,8 +865,15 @@ extern "C" bool NutBlast_IsConnectedToPlayer(NutBlast_PlayerID pid) {
     return NutBlast_IsPlayerInLobby(pid) && (pid == NutBlast_GetPlayerID() || ::players.at(pid)->is_ready());
 }
 
+extern "C" {
+    bool NutBlast_IgnoreICE = false;
+}
+
 namespace {
     void handle_offer_or_answer(const nlohmann::json& obj) {
+        if (NutBlast_IgnoreICE)
+            return;
+
         const NutBlast_PlayerID pid = obj.at("from");
         const auto& type = obj.at("type") == "Offer" ? "offer" : "answer";
 
@@ -866,6 +884,9 @@ namespace {
     }
 
     void handle_candidate(const nlohmann::json& obj) {
+        if (NutBlast_IgnoreICE)
+            return;
+
         const NutBlast_PlayerID pid = obj.at("from");
 
         if (!::incoming_candidates.contains(pid))
@@ -1106,37 +1127,14 @@ namespace {
                 });
             }},
     };
-
-    void recv_stuff() {
-        const auto lock = lock_globals();
-
-        for (const auto& obj : copy_and_clear(::ws_in)) {
-            try {
-                const std::string& type = obj.at("type");
-                const auto handler = response_handlers.find(type);
-
-                if (handler != response_handlers.end())
-                    handler->second(obj);
-            } catch (const nlohmann::json::out_of_range& e) {
-                log(NB_LogError,
-                    "Communication error caused by a version mismatch between the NutBlast client library and the "
-                    "server: {}",
-                    e.what());
-            }
-        }
-
-        for (auto& [id, player] : ::players)
-            player->drain_incoming_offers_and_candidates();
-    }
 } // namespace
 
 extern "C" void NutBlast_Flush() {
+    const auto lock = lock_globals();
     static Ticker beater(interval::beat), pinger(interval::ping);
 
-    if (!NutBlast_IsOnline() || ::mode == Mode::List)
+    if (!::websocket || !::websocket->isOpen() || ::mode == Mode::List)
         return;
-
-    const auto lock = lock_globals();
 
     if (pinger) {
         ::blaster_ping.ping();
@@ -1170,42 +1168,65 @@ extern "C" void NutBlast_Flush() {
 }
 
 extern "C" void NutBlast_Update() {
-    recv_stuff();
+    const auto lock = lock_globals();
+
+    for (const auto& obj : copy_and_clear(::ws_in)) {
+        try {
+            const std::string& type = obj.at("type");
+            const auto handler = response_handlers.find(type);
+
+            if (handler != response_handlers.end())
+                handler->second(obj);
+        } catch (const nlohmann::json::out_of_range& e) {
+            log(NB_LogError,
+                "Communication error caused by a version mismatch between the NutBlast client library and the "
+                "server: {}",
+                e.what());
+        }
+    }
+
+    for (auto& [id, player] : ::players)
+        player->drain_incoming_offers_and_candidates();
 
     if (::time_to_die) {
         NutBlast_Disconnect();
         return;
     }
 
-    const auto lock = lock_globals();
-
     if (::permission_to_cook) {
         for (auto& [id, player] : ::players) {
-            if (player->unreliable_dc != nullptr && player->unreliable_dc->isOpen())
+            if (player->unreliable_dc != nullptr && player->unreliable_dc->isOpen()) {
                 player->sdp_timeout = std::nullopt;
+                player->renegotiation_attempts = 0;
+            }
 
-            // nonk: i think it's a lot more humane to disconnect yourself and let others play, instead of kicking
-            // everyone who isn't connecting up properly. the latter approach would also NOT work for anyone that isn't
-            // the lobby's master: keep in mind that in a 3-peer scenario (or more, but let's assume a "triangle" mesh),
-            // the first two peers may be able to reach one another, while the third peer may have trouble connecting to
-            // either of them; and that would cut the triangular mesh down to a plain old angle.
             if (player->sdp_timeout.has_value() && NutBlast_TimeNS() >= *player->sdp_timeout) {
-                // only the newest player should disconnect. had to introduce this check because BOTH players kept
-                // disconnecting each time :wilted_flower:
-                if (::our_birth >= player->birth) {
-                    const std::string code = NUTBLAST_ERROR_STUN_FAILED;
-                    const auto msg = std::format("Could not establish a P2P connection with player {}", id);
+                // attempt to renegotiate a connection up to `MAX_RENEGOTIATION_ATTEMPTS` times. then disconnect to let
+                // others play in peace.
+                player->renegotiation_attempts += 1;
+                player->init.reset();
 
-                    ::ws_send({
-                        {"type", "Leave"},
-                        {"code", code},
-                        {"msg", msg},
-                    });
+                if (player->renegotiation_attempts > ::MAX_RENEGOTIATION_ATTEMPTS) {
+                    // only the newest player should disconnect. had to introduce this check because BOTH players kept
+                    // disconnecting each time :wilted_flower:
+                    if (::our_birth >= player->birth) {
+                        const std::string code = NUTBLAST_ERROR_STUN_FAILED;
+                        const auto msg = std::format("Could not establish a P2P connection with player {}", id);
 
-                    ::disconnection_reason = ByeReason(code, msg);
-                    NutBlast_Disconnect();
+                        ::ws_send({
+                            {"type", "Leave"},
+                            {"code", code},
+                            {"msg", msg},
+                        });
 
-                    return;
+                        ::disconnection_reason = ByeReason(code, msg);
+                        NutBlast_Disconnect();
+
+                        return;
+                    }
+                } else {
+                    log(NB_LogInfo, "Renegotiating with {} ({}/{})", player->pid, player->renegotiation_attempts,
+                        ::MAX_RENEGOTIATION_ATTEMPTS);
                 }
             }
 
@@ -1239,6 +1260,8 @@ extern "C" void NutBlast_Update() {
 
 extern "C" void NutBlast_Kick(NutBlast_PlayerID guy) {
     if (guy != 0 && guy != NutBlast_GetPlayerID()) {
+        const auto lock = lock_globals();
+
         ::ws_send({
             {"type", "Kick"},
             {"pid", guy},
@@ -1248,6 +1271,8 @@ extern "C" void NutBlast_Kick(NutBlast_PlayerID guy) {
 
 extern "C" void NutBlast_SetMaster(NutBlast_PlayerID guy) {
     if (guy != 0 && guy != NutBlast_GetPlayerID()) {
+        const auto lock = lock_globals();
+
         ::ws_send({
             {"type", "SetMaster"},
             {"pid", guy},
@@ -1315,15 +1340,19 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
 }
 
 extern "C" bool NutBlast_IsConnecting() {
+    const auto lock = lock_globals();
     return ::websocket != nullptr;
 }
 
 extern "C" bool NutBlast_IsOnline() {
+    const auto lock = lock_globals();
     return ::websocket && ::websocket->isOpen();
 }
 
 extern "C" bool NutBlast_IsReady() {
-    if (!NutBlast_IsOnline() || !::permission_to_cook)
+    const auto lock = lock_globals();
+
+    if (!::websocket || !::websocket->isOpen() || !::permission_to_cook)
         return false;
 
     for (const auto& [id, player] : ::players)
@@ -1389,7 +1418,7 @@ extern "C" bool NutBlast_IsPlayerConnectionRelayed(NutBlast_PlayerID pid) {
 }
 
 extern "C" int NutBlast_ServerPing() {
-    return NutBlast_IsOnline() ? ::blaster_ping.millis() : 0;
+    return ::websocket && ::websocket->isOpen() ? ::blaster_ping.millis() : 0;
 }
 
 extern "C" int NutBlast_PlayerPing(NutBlast_PlayerID pid) {

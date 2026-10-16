@@ -25,6 +25,7 @@ AllowShortLambdasOnASingleLine: Empty
 AlwaysBreakAfterReturnType: None
 IndentCaseBlocks: false
 IndentCaseLabels: false
+IndentExternBlock: Indent
 RemoveBracesLLVM: true
 InsertBraces: true
 ForEachMacros: [TINY_MAP_FOREACH]
