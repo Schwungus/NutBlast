@@ -274,7 +274,18 @@ namespace {
 
     void ws_send(const nlohmann::json& obj) {
         const auto lock = lock_globals();
+
         ::ws_out.emplace_back(obj);
+
+        if (NutBlast_IsOnline()) {
+            try {
+                for (const auto& obj : copy_and_clear(::ws_out))
+                    ::websocket->send(obj.dump());
+            } catch (const std::runtime_error&) {
+                ::time_to_die = true;
+                return;
+            }
+        }
     }
 } // namespace
 
@@ -1122,21 +1133,10 @@ namespace {
 extern "C" void NutBlast_Flush() {
     static Ticker beater(interval::beat), pinger(interval::ping);
 
-    if (!NutBlast_IsOnline())
+    if (!NutBlast_IsOnline() || ::mode == Mode::List)
         return;
 
     const auto lock = lock_globals();
-
-    try {
-        for (const auto& obj : copy_and_clear(::ws_out))
-            ::websocket->send(obj.dump());
-    } catch (const std::runtime_error&) {
-        ::time_to_die = true;
-        return;
-    }
-
-    if (::mode == Mode::List)
-        return;
 
     if (pinger) {
         ::blaster_ping.ping();
