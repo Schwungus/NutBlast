@@ -30,7 +30,7 @@ static const int fps = 10;
 static const size_t lobbies_count = 10;
 static int timer = 0;
 
-static void mainloop() {
+static void update() {
     NutBlast_Update();
 
     if (timer++ >= 5 * fps) {
@@ -51,10 +51,10 @@ int main(int argc, char* argv[]) {
     NutBlast_FindLobbies(lobbies_count);
 
 #ifdef __EMSCRIPTEN__
-    emscripten_set_main_loop(mainloop, 10, false);
+    emscripten_set_main_loop(update, fps, false);
 #else
     for (;;) {
-        mainloop();
+        update();
         NutBlast_SleepMS(1000 / fps);
     }
 
