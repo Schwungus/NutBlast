@@ -3,7 +3,7 @@ name: Release NutBlaster binaries
 on:
   workflow_dispatch:
   push:
-    branches: [production]
+    tags: [rolling]
     paths:
       - .github/workflows/release-nutblaster-binaries.yml
       - server/**.rs
@@ -54,18 +54,10 @@ jobs:
           pattern: release-*
           path: artifacts
 
-      - name: Bump the "rolling" tag
-        if: github.ref_name == 'production'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f rolling
-          git push origin rolling --force
-
       - name: Release binaries
         uses: softprops/action-gh-release@v3
         with:
-          draft: ${{ github.ref_name != 'production' }}
-          tag_name: ${{ github.ref_name == 'production' && 'rolling' || github.ref_name }}
-          prerelease: ${{ github.ref_name == 'production' }}
+          draft: ${{ github.ref_name != 'rolling' }}
+          tag_name: ${{ github.ref_name }}
+          prerelease: ${{ github.ref_name == 'rolling' }}
           files: target/release/nutblaster-v*
