@@ -38,8 +38,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <NutBlast.h>
-
 #ifdef __EMSCRIPTEN__
 #include <emscripten/val.h>
 #endif
@@ -49,6 +47,8 @@
 #else
 #include <errno.h>
 #endif
+
+#include "NutBlast.h"
 
 extern "C" {
     bool NutBlast_IgnoreICE = false;
