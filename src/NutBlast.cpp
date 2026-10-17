@@ -69,9 +69,16 @@ namespace {
         T value;
 
       public:
-        struct LockGuard {
+        class LockGuard {
             std::lock_guard<decltype(mutex)> lock;
             T& ref;
+
+          public:
+            LockGuard(T& ref, decltype(mutex)& mutex) : ref(ref), lock(mutex) {}
+
+            T& operator*() {
+                return ref;
+            }
 
             T* operator->() {
                 return &ref;
@@ -83,7 +90,7 @@ namespace {
         ~Locked() = default;
 
         LockGuard lock() {
-            return {.lock = std::lock_guard<decltype(mutex)>(mutex), .ref = value};
+            return LockGuard(value, mutex);
         }
     };
 
@@ -300,10 +307,10 @@ namespace {
 
         if (::websocket && ::websocket->isOpen()) {
             try {
-                for (const auto& obj : copy_and_clear(queue.ref))
+                for (const auto& obj : copy_and_clear(*queue))
                     ::websocket->send(obj.dump());
             } catch (const std::runtime_error&) {
-                ::time_to_die.lock().ref = true;
+                *::time_to_die.lock() = true;
                 return;
             }
         }
@@ -661,7 +668,7 @@ namespace {
         ::ws_in.lock()->clear(), ::ws_out.lock()->clear();
         ::incoming_candidates.clear(), ::incoming_offers.clear();
 
-        ::master = 0, ::permission_to_cook.lock().ref = false;
+        ::master = 0, *::permission_to_cook.lock() = false;
         ::disconnection_reason = ByeReason::OK;
         ::blaster_ping.reset();
 
@@ -717,7 +724,7 @@ namespace {
         });
 
         ::websocket->onClosed([]() {
-            ::time_to_die.lock().ref = true;
+            *::time_to_die.lock() = true;
         });
 
         ::websocket->open(::nutblaster_address);
@@ -725,7 +732,7 @@ namespace {
 } // namespace
 
 extern "C" void NutBlast_Disconnect() {
-    ::time_to_die.lock().ref = false;
+    *::time_to_die.lock() = false;
 
     if (::websocket) {
         ::websocket->onOpen(nullptr);
@@ -831,7 +838,7 @@ extern "C" const NutBlast_PlayerID* NutBlast_ListPlayers() {
 }
 
 extern "C" NutBlast_PlayerID NutBlast_GetPlayerID() {
-    return ::permission_to_cook.lock().ref ? ::pid : 0;
+    return *::permission_to_cook.lock() ? ::pid : 0;
 }
 
 extern "C" NutBlast_LobbyID NutBlast_GetLobbyID() {
@@ -974,11 +981,12 @@ namespace {
                     ::rtc_config.iceServers.push_back(ice_server);
                 }
 
-                ::permission_to_cook.lock().ref = true;
+                *::permission_to_cook.lock() = true;
             }},
         {"Disconnected",
             [](const auto& obj) {
-                ::disconnection_reason = obj.at("reason"), ::time_to_die.lock().ref = true;
+                ::disconnection_reason = obj.at("reason");
+                *::time_to_die.lock() = true;
             }},
         {"SetListed",
             [](const auto& obj) {
@@ -1143,7 +1151,7 @@ extern "C" void NutBlast_Flush() {
         for (auto& [id, player] : ::players) {
             auto lock = player->outgoing_candidates.lock();
 
-            for (const auto& candidate : copy_and_clear(lock.ref)) {
+            for (const auto& candidate : copy_and_clear(*lock)) {
                 ::ws_send({
                     {"type", "PassCandidate"},
                     {"to", id},
@@ -1156,7 +1164,7 @@ extern "C" void NutBlast_Flush() {
 }
 
 extern "C" void NutBlast_Update() {
-    for (const auto& obj : copy_and_clear(::ws_in.lock().ref)) {
+    for (const auto& obj : copy_and_clear(*::ws_in.lock())) {
         try {
             const std::string& type = obj.at("type");
             const auto handler = response_handlers.find(type);
@@ -1174,12 +1182,12 @@ extern "C" void NutBlast_Update() {
     for (auto& [id, player] : ::players)
         player->drain_incoming_offers_and_candidates();
 
-    if (::time_to_die.lock().ref) {
+    if (*::time_to_die.lock()) {
         NutBlast_Disconnect();
         return;
     }
 
-    if (::permission_to_cook.lock().ref) {
+    if (*::permission_to_cook.lock()) {
         for (auto& [id, player] : ::players) {
             if (player->unreliable_dc != nullptr && player->unreliable_dc->isOpen()) {
                 player->sdp_timeout = std::nullopt;
@@ -1304,15 +1312,14 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
         return false;
     }
 
-    auto lock = ::recv_queues[chan].lock();
-    auto& queue = lock.ref;
+    auto queue = ::recv_queues[chan].lock();
 
-    if (queue.empty())
+    if (queue->empty())
         return false;
 
     static Message msg; // keeps the buffers valid between calls
-    msg = std::move(queue.front());
-    queue.pop_front();
+    msg = std::move(queue->front());
+    queue->pop_front();
 
     out->from = msg.from;
     out->data = (const char*)msg.bytes.data();
@@ -1330,7 +1337,7 @@ extern "C" bool NutBlast_IsOnline() {
 }
 
 extern "C" bool NutBlast_IsReady() {
-    if (!::websocket || !::websocket->isOpen() || !::permission_to_cook.lock().ref)
+    if (!::websocket || !::websocket->isOpen() || !*::permission_to_cook.lock())
         return false;
 
     for (const auto& [id, player] : ::players)
