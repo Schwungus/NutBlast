@@ -59,7 +59,7 @@ set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/mbedtls.h CACHE INT
 if(EMSCRIPTEN)
     FetchContent_Declare(datachannel-wasm
         GIT_REPOSITORY https://github.com/paullouisageneau/datachannel-wasm.git
-        GIT_TAG v0.4.0
+        GIT_TAG f9200eb942f66ddbfecf088ce7122d095aca1c3e
         EXCLUDE_FROM_ALL)
 
     FetchContent_MakeAvailable(datachannel-wasm)
