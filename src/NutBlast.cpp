@@ -633,7 +633,7 @@ extern "C" const char* NutBlast_GetLobbyField(const char* name) {
 extern "C" void NutBlast_SetLobbyField(const char* key, const char* value) {
     const auto master = NutBlast_GetMasterID();
 
-    if (!master || master != NutBlast_GetPlayerID())
+    if (master != NutBlast_GetPlayerID())
         return;
 
     if (check_field("Lobby", key, value))
