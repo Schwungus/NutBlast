@@ -658,17 +658,13 @@ namespace {
         for (auto& queue : recv_queues)
             queue.clear();
 
-#ifndef __EMSCRIPTEN__
-        rtc::WebSocketConfiguration conf;
-
-#ifndef _WIN32
-        conf.caCertificatePemFile = "/etc/ssl/certs/ca-certificates.crt";
-#endif
-#endif
-
         ::websocket = std::make_shared<rtc::WebSocket>(
 #ifndef __EMSCRIPTEN__
-            conf
+            rtc::WebSocketConfiguration{
+#ifndef _WIN32
+                .caCertificatePemFile = "/etc/ssl/certs/ca-certificates.crt",
+#endif
+            }
 #endif
         );
 
