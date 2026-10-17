@@ -7,7 +7,7 @@ on:
     paths:
       - .github/workflows/deploy-nutblaster.yml
       - server/**.rs
-      - Cargo.lock
+      - Cargo.*
 
 concurrency:
   group: deploy-nutblaster

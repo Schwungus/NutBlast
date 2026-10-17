@@ -7,7 +7,7 @@ on:
     paths:
       - .github/workflows/release-nutblaster-binaries.yml
       - server/**.rs
-      - Cargo.lock
+      - Cargo.*
 
 concurrency:
   group: release-nutblaster-binaries
