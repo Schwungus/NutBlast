@@ -1,3 +1,4 @@
+LineEnding: LF
 ColumnLimit: 120
 IndentWidth: 4
 ContinuationIndentWidth: 4
@@ -5,7 +6,7 @@ AccessModifierOffset: -2
 UseTab: Never
 NamespaceIndentation: All
 AlignArrayOfStructures: None
-AlignAfterOpenBracket: false
+AlignAfterOpenBracket: DontAlign
 BreakBeforeBinaryOperators: All
 BreakBeforeBraces: Custom
 BreakAfterReturnType: Automatic
@@ -30,8 +31,9 @@ RemoveBracesLLVM: true
 InsertBraces: true
 ForEachMacros: [TINY_MAP_FOREACH]
 IncludeBlocks: Regroup
-IncludeIsMainRegex: "a{999}" # no main includes
-SortIncludes: CaseSensitive
+SortIncludes:
+  Enabled: true
+  IgnoreCase: false
 IncludeCategories:
   - Regex: "^<rtc/"
     Priority: 7
@@ -51,3 +53,6 @@ IncludeCategories:
     Priority: 40
   - Regex: ".*"
     Priority: 100
+---
+Language: C
+IndentExternBlock: NoIndent
