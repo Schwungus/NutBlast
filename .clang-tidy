@@ -9,5 +9,6 @@ Checks: [
     portability-*,
     misc-*,
     -misc-non-private-member-variables-in-classes, # L: reports `struct` members should be private
+    -misc-use-internal-linkage, # L: IT'S EVERYWHERE and i don't care
     cppcoreguidelines-init-variables,
   ]
