@@ -254,7 +254,7 @@ namespace {
     NutBlast_LobbyID lid = 0;
     std::string nutblaster_address;
     ByeReason disconnection_reason = ByeReason::OK;
-    int max_players = NUTBLAST_MAX_PLAYERS;
+    int max_players = 0;
 
     NutBlast_ChannelID max_chan = 1;
     Locked<std::deque<Message>> recv_queues[MAX_CHANNELS];
@@ -558,10 +558,10 @@ extern "C" void NutBlast_SetNutBlasterAddress(const char* address) {
 }
 
 extern "C" void NutBlast_SetMaxPlayers(int max) {
-    if (!max) // the "unspecified" value inside `NutBlast_HostOptions`
-        max = NUTBLAST_MAX_PLAYERS;
-    else if (max < 2 || max > NUTBLAST_MAX_PLAYERS)
+    if (max < 2 || max > NUTBLAST_MAX_PLAYERS)
         return;
+
+    ::max_players = max;
 
     ::ws_send({
         {"type", "SetCapacity"},
@@ -806,9 +806,11 @@ extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
         log(NB_LogError, "You're already connected!");
     } else if (!::init) {
         log(NB_LogError, "You forgot to call `NutBlast_Init()`");
+    } else if (opts.max_players && (opts.max_players < 2 || opts.max_players > NUTBLAST_MAX_PLAYERS)) {
+        log(NB_LogError, "Max player count specified but not in the range of 2-{}", NUTBLAST_MAX_PLAYERS);
     } else {
         ::mode = Mode::Host, ::lobby_listed = !opts.unlisted;
-        ::max_players = opts.max_players;
+        ::max_players = opts.max_players ? opts.max_players : NUTBLAST_MAX_PLAYERS;
         log(NB_LogInfo, "Trying to host");
         join_pro();
     }
