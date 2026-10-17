@@ -66,7 +66,7 @@ namespace NutBlast {
             return *this;
         }
 
-        void operator()(const std::decay_t<Args>&... args) {
+        void operator()(const Args&... args) {
             if (fn)
                 fn(args...);
         }
