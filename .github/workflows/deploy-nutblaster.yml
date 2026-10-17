@@ -1,4 +1,4 @@
-name: deploy nutblaster
+name: Deploy NutBlaster
 
 on:
   workflow_dispatch:
@@ -17,15 +17,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: checkout
+      - name: Checkout
         uses: actions/checkout@v7
 
-      - name: build
-        run: |
-          set -e
-          cargo build --release --locked
+      - name: Build
+        run: cargo build --release --locked
 
-      - name: copy binary
+      - name: Copy binary to the server
         uses: appleboy/scp-action@v1
         with:
           host: nutblast.schwung.us
@@ -35,7 +33,7 @@ jobs:
           target: /tmp
           strip_components: 2
 
-      - name: deploy
+      - name: Deploy
         uses: appleboy/ssh-action@v1
         with:
           host: nutblast.schwung.us
