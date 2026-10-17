@@ -64,6 +64,29 @@ namespace interval {
 };
 
 namespace {
+    template <typename T> class Locked {
+        std::mutex mutex;
+        T value;
+
+      public:
+        struct LockGuard {
+            std::lock_guard<decltype(mutex)> lock;
+            T& ref;
+
+            T* operator->() {
+                return &ref;
+            }
+        };
+
+        Locked() = default;
+        Locked(const T& value) : value(value) {}
+        ~Locked() = default;
+
+        LockGuard lock() {
+            return {.lock = std::lock_guard<decltype(mutex)>(mutex), .ref = value};
+        }
+    };
+
     template <typename T> T copy_and_clear(T& obj) {
         auto copy = obj;
         obj.clear();
@@ -141,7 +164,7 @@ namespace {
 
         std::shared_ptr<rtc::PeerConnection> pc = nullptr;
         std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
-        std::vector<rtc::Candidate> outgoing_candidates;
+        Locked<std::vector<rtc::Candidate>> outgoing_candidates;
 
         std::optional<std::uint64_t> sdp_timeout = std::nullopt;
         int renegotiation_attempts = 0;
@@ -226,14 +249,8 @@ namespace {
     ByeReason disconnection_reason = ByeReason::OK;
     int max_players = NUTBLAST_MAX_PLAYERS;
 
-    std::recursive_mutex globals_mutex;
-
-    std::lock_guard<std::recursive_mutex> lock_globals() {
-        return std::lock_guard<std::recursive_mutex>(::globals_mutex);
-    }
-
     NutBlast_ChannelID max_chan = 1;
-    std::deque<Message> recv_queues[MAX_CHANNELS];
+    Locked<std::deque<Message>> recv_queues[MAX_CHANNELS];
 
     enum class Mode {
         Host,
@@ -241,7 +258,9 @@ namespace {
         List,
     } mode = Mode::Join;
 
-    bool lobby_listed = true, permission_to_cook = false, time_to_die = false;
+    bool lobby_listed = true;
+    Locked<bool> permission_to_cook = false, time_to_die = false;
+
     std::uint64_t our_birth = 0;
     std::size_t listing_limit = 0;
 
@@ -252,7 +271,7 @@ namespace {
     Once fire_ready;
 
     std::shared_ptr<rtc::WebSocket> websocket = nullptr;
-    std::vector<nlohmann::json> ws_in, ws_out;
+    Locked<std::vector<nlohmann::json>> ws_in, ws_out;
 
     Metadata player_meta, lobby_meta;
 
@@ -276,14 +295,15 @@ namespace {
     }
 
     void ws_send(const nlohmann::json& obj) {
-        ::ws_out.emplace_back(obj);
+        auto queue = ::ws_out.lock();
+        queue->emplace_back(obj);
 
         if (::websocket && ::websocket->isOpen()) {
             try {
-                for (const auto& obj : copy_and_clear(::ws_out))
+                for (const auto& obj : copy_and_clear(queue.ref))
                     ::websocket->send(obj.dump());
             } catch (const std::runtime_error&) {
-                ::time_to_die = true;
+                ::time_to_die.lock().ref = true;
                 return;
             }
         }
@@ -408,8 +428,7 @@ void Player::engage() {
             return;
 
         auto state = self.lock();
-        const auto lock = lock_globals();
-        state->outgoing_candidates.emplace_back(candidate);
+        state->outgoing_candidates.lock()->emplace_back(candidate);
     });
 
     const auto on_msg = [=](const auto& variant) {
@@ -427,8 +446,7 @@ void Player::engage() {
             return;
 
         rtc::binary buf(bytes.begin() + 1, bytes.end());
-        const auto lock = lock_globals();
-        ::recv_queues[chan].emplace_back(id, std::move(buf));
+        ::recv_queues[chan].lock()->emplace_back(id, std::move(buf));
     };
 
     const auto on_ping = [=, self = weak_from_this()](const auto& msg) {
@@ -556,16 +574,14 @@ extern "C" bool NutBlast_IsListed() {
 }
 
 namespace {
-    bool check_field(const char* type_title, const char* key, const char* value) {
-        const auto lock = lock_globals();
-
+    bool check_field(const char* Type, const char* key, const char* value) {
         if (!key || !key[0] || std::strlen(key) > NUTBLAST_FIELD_NAME_MAX) {
-            log(NB_LogError, "{} metadata: invalid key size", type_title);
+            log(NB_LogError, "{} metadata: invalid key size", Type);
             return false;
         }
 
         if (value && std::strlen(value) > NUTBLAST_FIELD_VALUE_MAX) {
-            log(NB_LogError, "{} metadata: invalid value size", type_title);
+            log(NB_LogError, "{} metadata: invalid value size", Type);
             return false;
         }
 
@@ -573,8 +589,6 @@ namespace {
     }
 
     void freak_metadata(const char* Type, const char* type, Metadata& meta, const char* key, const char* value) {
-        const auto lock = lock_globals();
-
         if (value == nullptr) {
             meta.erase(key);
 
@@ -612,15 +626,11 @@ extern "C" const char* NutBlast_GetPlayerField(NutBlast_PlayerID pid, const char
 }
 
 extern "C" void NutBlast_SetPlayerField(const char* key, const char* value) {
-    const auto lock = lock_globals();
-
     if (check_field("Player", key, value))
         freak_metadata("Player", "player", ::player_meta, key, value);
 }
 
 extern "C" const char* NutBlast_GetLobbyField(const char* name) {
-    const auto lock = lock_globals();
-
     if (!name || !::websocket || !::websocket->isOpen())
         return nullptr;
 
@@ -648,15 +658,15 @@ namespace {
     void join_pro() {
         ::last_error = std::nullopt, ::pid = 0;
 
-        ::ws_in.clear(), ::ws_out.clear();
+        ::ws_in.lock()->clear(), ::ws_out.lock()->clear();
         ::incoming_candidates.clear(), ::incoming_offers.clear();
 
-        ::master = 0, ::permission_to_cook = false;
+        ::master = 0, ::permission_to_cook.lock().ref = false;
         ::disconnection_reason = ByeReason::OK;
         ::blaster_ping.reset();
 
         for (auto& queue : recv_queues)
-            queue.clear();
+            queue.lock()->clear();
 
         ::websocket = std::make_shared<rtc::WebSocket>(
 #ifndef __EMSCRIPTEN__
@@ -669,8 +679,6 @@ namespace {
         );
 
         ::websocket->onOpen([]() {
-            const auto lock = lock_globals();
-
             if (::mode == Mode::List) {
                 ::ws_send({
                     {"type", "List"},
@@ -702,16 +710,14 @@ namespace {
 
             try {
                 auto obj = nlohmann::json::parse(std::get<std::string>(msg));
-                const auto lock = lock_globals();
-                ::ws_in.emplace_back(obj);
+                ::ws_in.lock()->emplace_back(obj);
             } catch (const nlohmann::json::parse_error& err) {
                 (void)err;
             }
         });
 
         ::websocket->onClosed([]() {
-            const auto lock = lock_globals();
-            ::time_to_die = true;
+            ::time_to_die.lock().ref = true;
         });
 
         ::websocket->open(::nutblaster_address);
@@ -719,11 +725,10 @@ namespace {
 } // namespace
 
 extern "C" void NutBlast_Disconnect() {
-    const auto lock = lock_globals();
-
-    ::time_to_die = false;
+    ::time_to_die.lock().ref = false;
 
     if (::websocket) {
+        ::websocket->onOpen(nullptr);
         ::websocket->onClosed(nullptr);
         ::websocket->onMessage(nullptr);
 
@@ -751,7 +756,7 @@ extern "C" void NutBlast_Disconnect() {
             player->pc->close();
     }
 
-    ::ws_in.clear(), ::ws_out.clear(), ::players.clear();
+    ::ws_in.lock()->clear(), ::ws_out.lock()->clear(), ::players.clear();
     ::incoming_candidates.clear(), ::incoming_offers.clear();
     ::websocket = nullptr, ::lid = 0;
     ::fire_ready.reset();
@@ -764,8 +769,6 @@ extern "C" void NutBlast_Disconnect() {
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
-    const auto lock = lock_globals();
-
     if (NutBlast_IsConnecting()) {
         log(NB_LogError, "You're already connected!");
     } else if (!::init) {
@@ -778,8 +781,6 @@ extern "C" void NutBlast_FindLobbies(size_t limit) {
 }
 
 extern "C" void NutBlast_Join(NutBlast_LobbyID id) {
-    const auto lock = lock_globals();
-
     if (NutBlast_IsConnecting()) {
         log(NB_LogError, "You're already connected!");
     } else if (!::init) {
@@ -794,8 +795,6 @@ extern "C" void NutBlast_Join(NutBlast_LobbyID id) {
 }
 
 extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
-    const auto lock = lock_globals();
-
     if (NutBlast_IsConnecting()) {
         log(NB_LogError, "You're already connected!");
     } else if (!::init) {
@@ -832,17 +831,14 @@ extern "C" const NutBlast_PlayerID* NutBlast_ListPlayers() {
 }
 
 extern "C" NutBlast_PlayerID NutBlast_GetPlayerID() {
-    const auto lock = lock_globals();
-    return ::permission_to_cook ? ::pid : 0;
+    return ::permission_to_cook.lock().ref ? ::pid : 0;
 }
 
 extern "C" NutBlast_LobbyID NutBlast_GetLobbyID() {
-    const auto lock = lock_globals();
     return (::websocket && ::websocket->isOpen() && ::lid) ? ::lid : 0;
 }
 
 extern "C" NutBlast_PlayerID NutBlast_GetMasterID() {
-    const auto lock = lock_globals();
     return ::websocket && ::websocket->isOpen() ? ::master : 0;
 }
 
@@ -853,7 +849,6 @@ extern "C" bool NutBlast_IsPlayerInLobby(NutBlast_PlayerID pid) {
     if (pid == NutBlast_GetPlayerID())
         return true;
 
-    const auto lock = lock_globals();
     return ::players.contains(pid) && ::players.at(pid);
 }
 
@@ -895,9 +890,7 @@ namespace {
             ::incoming_candidates.erase(pid);
         }
     }
-} // namespace
 
-namespace {
     struct LobbyInfo {
         std::vector<std::pair<std::string, std::string>> fields;
         std::vector<NutBlast_LobbyField> meta;
@@ -938,13 +931,11 @@ namespace {
 
         ::on_lobbies_found(lobbies.data(), lobbies.size());
     }
-} // namespace
 
-namespace {
     const std::unordered_map<std::string, void (*)(const nlohmann::json&)> response_handlers{
         {"Connected",
             [](const auto& obj) {
-                ::rtc_config.iceServers.clear();
+                ::rtc_config = rtc::Configuration();
 #ifndef __EMSCRIPTEN__
                 ::rtc_config.enableIceUdpMux = true;
                 ::rtc_config.iceTransportPolicy = rtc::TransportPolicy::All; // rtc::TransportPolicy::Relay
@@ -983,11 +974,11 @@ namespace {
                     ::rtc_config.iceServers.push_back(ice_server);
                 }
 
-                ::permission_to_cook = true;
+                ::permission_to_cook.lock().ref = true;
             }},
         {"Disconnected",
             [](const auto& obj) {
-                ::disconnection_reason = obj.at("reason"), ::time_to_die = true;
+                ::disconnection_reason = obj.at("reason"), ::time_to_die.lock().ref = true;
             }},
         {"SetListed",
             [](const auto& obj) {
@@ -1126,7 +1117,6 @@ namespace {
 } // namespace
 
 extern "C" void NutBlast_Flush() {
-    const auto lock = lock_globals();
     static Ticker beater(interval::beat), pinger(interval::ping);
 
     if (!::websocket || !::websocket->isOpen() || ::mode == Mode::List)
@@ -1151,7 +1141,9 @@ extern "C" void NutBlast_Flush() {
 
     if (beater) {
         for (auto& [id, player] : ::players) {
-            for (const auto& candidate : copy_and_clear(player->outgoing_candidates)) {
+            auto lock = player->outgoing_candidates.lock();
+
+            for (const auto& candidate : copy_and_clear(lock.ref)) {
                 ::ws_send({
                     {"type", "PassCandidate"},
                     {"to", id},
@@ -1164,9 +1156,7 @@ extern "C" void NutBlast_Flush() {
 }
 
 extern "C" void NutBlast_Update() {
-    const auto lock = lock_globals();
-
-    for (const auto& obj : copy_and_clear(::ws_in)) {
+    for (const auto& obj : copy_and_clear(::ws_in.lock().ref)) {
         try {
             const std::string& type = obj.at("type");
             const auto handler = response_handlers.find(type);
@@ -1184,12 +1174,12 @@ extern "C" void NutBlast_Update() {
     for (auto& [id, player] : ::players)
         player->drain_incoming_offers_and_candidates();
 
-    if (::time_to_die) {
+    if (::time_to_die.lock().ref) {
         NutBlast_Disconnect();
         return;
     }
 
-    if (::permission_to_cook) {
+    if (::permission_to_cook.lock().ref) {
         for (auto& [id, player] : ::players) {
             if (player->unreliable_dc != nullptr && player->unreliable_dc->isOpen()) {
                 player->sdp_timeout = std::nullopt;
@@ -1256,8 +1246,6 @@ extern "C" void NutBlast_Update() {
 
 extern "C" void NutBlast_Kick(NutBlast_PlayerID guy) {
     if (guy != 0 && guy != NutBlast_GetPlayerID()) {
-        const auto lock = lock_globals();
-
         ::ws_send({
             {"type", "Kick"},
             {"pid", guy},
@@ -1267,8 +1255,6 @@ extern "C" void NutBlast_Kick(NutBlast_PlayerID guy) {
 
 extern "C" void NutBlast_SetMaster(NutBlast_PlayerID guy) {
     if (guy != 0 && guy != NutBlast_GetPlayerID()) {
-        const auto lock = lock_globals();
-
         ::ws_send({
             {"type", "SetMaster"},
             {"pid", guy},
@@ -1318,8 +1304,8 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
         return false;
     }
 
-    const auto lock = lock_globals();
-    auto& queue = ::recv_queues[chan];
+    auto lock = ::recv_queues[chan].lock();
+    auto& queue = lock.ref;
 
     if (queue.empty())
         return false;
@@ -1336,19 +1322,15 @@ extern "C" bool NutBlast_NextMessage(NutBlast_ChannelID chan, NutBlast_Message* 
 }
 
 extern "C" bool NutBlast_IsConnecting() {
-    const auto lock = lock_globals();
     return ::websocket != nullptr;
 }
 
 extern "C" bool NutBlast_IsOnline() {
-    const auto lock = lock_globals();
     return ::websocket && ::websocket->isOpen();
 }
 
 extern "C" bool NutBlast_IsReady() {
-    const auto lock = lock_globals();
-
-    if (!::websocket || !::websocket->isOpen() || !::permission_to_cook)
+    if (!::websocket || !::websocket->isOpen() || !::permission_to_cook.lock().ref)
         return false;
 
     for (const auto& [id, player] : ::players)
