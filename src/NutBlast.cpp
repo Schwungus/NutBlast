@@ -763,16 +763,23 @@ extern "C" void NutBlast_Disconnect() {
             player->pc->close();
     }
 
-    ::ws_in.lock()->clear(), ::ws_out.lock()->clear(), ::players.clear();
-    ::incoming_candidates.clear(), ::incoming_offers.clear();
-    ::websocket = nullptr, ::lid = 0;
+    ::ws_in.lock()->clear();
+    ::ws_out.lock()->clear();
+    ::players.clear();
+
+    ::incoming_candidates.clear();
+    ::incoming_offers.clear();
+
+    ::websocket = nullptr;
     ::fire_ready.reset();
 
     log(NB_LogInfo, "NutBlaster out! {} ({})", ::disconnection_reason.msg, ::disconnection_reason.code);
     ::on_disconnected(::disconnection_reason); // TODO: maybe NOT fire this in the lobby-listing mode?
     ::disconnection_reason = ByeReason::OK;
 
-    ::pid = 0, ::last_error = std::nullopt;
+    ::our_birth = ::listing_limit = ::max_players = 0;
+    ::pid = ::master = ::lid = 0;
+    ::last_error = std::nullopt;
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
