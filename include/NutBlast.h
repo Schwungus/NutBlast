@@ -23,6 +23,8 @@
 //
 // For more information, please refer to <https://unlicense.org>
 
+// clang-format Language: C
+
 #ifndef NUTBLAST_H
 #define NUTBLAST_H
 
