@@ -146,8 +146,8 @@ impl Session {
                 gid,
                 capacity: Capacity(capacity),
                 listed,
-                player_meta,
-                lobby_meta,
+                player_metadata,
+                lobby_metadata,
             } if self.pid.is_none() => {
                 let (tx, rx) = oneshot::channel();
 
@@ -155,10 +155,10 @@ impl Session {
                     sender: self.msg_sender.clone(),
                     initiator: self.real_ip,
                     gid,
-                    lobby_meta,
+                    lobby_metadata,
                     capacity,
                     listed,
-                    player_metadata: player_meta,
+                    player_metadata,
                     tx,
                 });
 
@@ -166,14 +166,17 @@ impl Session {
                     self.pid = Some(pid?);
                 }
             }
-            ClientMessage::Join { lid, player_meta } if self.pid.is_none() => {
+            ClientMessage::Join {
+                lid,
+                player_metadata,
+            } if self.pid.is_none() => {
                 let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::JoinLobby {
                     sender: self.msg_sender.clone(),
                     ip: self.real_ip,
                     lid: lid.clone(),
-                    player_metadata: player_meta,
+                    player_metadata,
                     tx,
                 });
 
@@ -226,7 +229,7 @@ impl Session {
                     capacity,
                 });
             }
-            ClientMessage::SetPlayerMeta {
+            ClientMessage::SetPlayerMetadata {
                 key: FieldKey(key),
                 value: FieldValue(value),
             } if let Some(pid) = self.pid => {
@@ -236,13 +239,15 @@ impl Session {
                     value: value.to_string(),
                 });
             }
-            ClientMessage::ErasePlayerMeta { key: FieldKey(key) } if let Some(pid) = self.pid => {
+            ClientMessage::ErasePlayerMetadata { key: FieldKey(key) }
+                if let Some(pid) = self.pid =>
+            {
                 self.execute(BlasterOperation::ErasePlayerMeta {
                     pid,
                     key: key.to_string(),
                 });
             }
-            ClientMessage::SetLobbyMeta {
+            ClientMessage::SetLobbyMetadata {
                 key: FieldKey(key),
                 value: FieldValue(value),
             } if let Some(pid) = self.pid => {
@@ -252,7 +257,9 @@ impl Session {
                     value: value.to_string(),
                 });
             }
-            ClientMessage::EraseLobbyMeta { key: FieldKey(key) } if let Some(pid) = self.pid => {
+            ClientMessage::EraseLobbyMetadata { key: FieldKey(key) }
+                if let Some(pid) = self.pid =>
+            {
                 self.execute(BlasterOperation::EraseLobbyMeta {
                     initiator: pid,
                     key: key.to_string(),
@@ -318,13 +325,10 @@ impl Session {
         while !self.stop {
             if let Err(reason) = self.handle_next_websocket_message().await {
                 self.send(&ServerMessage::Disconnected { reason }).await;
+                break;
             }
         }
-    }
-}
 
-impl Drop for Session {
-    fn drop(&mut self) {
         if let Some(pid) = self.pid {
             self.execute(BlasterOperation::RemovePlayer {
                 reason: self.bye_reason.clone(),

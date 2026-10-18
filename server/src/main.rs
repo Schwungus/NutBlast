@@ -103,7 +103,7 @@ async fn main() -> eyre::Result<()> {
             match accept.await {
                 Ok(ws) => Session::new(blaster, real_ip, ws).serve().await,
                 Err(e) => error!("{}: {}", real_ip, e),
-            }
+            };
         });
     }
 

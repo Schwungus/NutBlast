@@ -48,9 +48,9 @@ impl BlasterEventLoop {
     }
 
     fn send_to_lobby(&self, lid: &LobbyId, msg: &ServerMessage) {
-        for (_, player) in self.players.iter() {
-            if player.lid == *lid {
-                player.send(msg.clone());
+        if let Some(Lobby { players, .. }) = self.lobbies.get(lid).cloned() {
+            for id in players {
+                self.players.get(&id).map(|p| p.send(msg.clone()));
             }
         }
     }
@@ -109,8 +109,6 @@ impl BlasterEventLoop {
             player.send(ServerMessage::SetLobbyMeta { key, value });
         }
 
-        player.send(ServerMessage::SetMaster { pid: master });
-
         player.send(ServerMessage::Connected {
             ice_servers: self.config.ice_servers.clone(),
             lid: lid.lid,
@@ -133,29 +131,8 @@ impl BlasterEventLoop {
                 });
             }
         }
-    }
 
-    fn cleanup_lobbies(&mut self) {
-        let mut deletion = HashSet::new();
-
-        for (lid, lober) in self.lobbies.iter() {
-            if lober.players.len() == 0 {
-                info!("bye lober: {lid:?}");
-                deletion.insert(lid.clone());
-            }
-        }
-
-        for lid in deletion {
-            if let Some(set) = self.gid_lobbies.get_mut(&lid.gid) {
-                set.remove(&lid.lid);
-
-                if set.is_empty() {
-                    self.gid_lobbies.remove(&lid.gid);
-                }
-            }
-
-            self.lobbies.remove(&lid);
-        }
+        player.send(ServerMessage::SetMaster { pid: master });
     }
 
     fn cap_ip(&mut self, ip: IpAddr) -> Result<(), Kick> {
@@ -209,10 +186,10 @@ impl BlasterEventLoop {
             BlasterOperation::HostLobby {
                 initiator,
                 gid,
-                lobby_meta,
+                lobby_metadata,
                 capacity,
                 listed,
-                player_metadata: player_meta,
+                player_metadata,
                 sender,
                 tx,
             } => {
@@ -258,7 +235,7 @@ impl BlasterEventLoop {
                             initiator,
                             players: HashSet::new(),
                             master: pid,
-                            metadata: lobby_meta,
+                            metadata: lobby_metadata,
                             capacity,
                             listed,
                             idle_since: Some(now),
@@ -283,7 +260,7 @@ impl BlasterEventLoop {
                         self.gid_lobbies.insert(lid.gid.clone(), set);
                     }
 
-                    self.insert_player(sender, pid, lid, player_meta);
+                    self.insert_player(sender, pid, lid, player_metadata);
 
                     Ok(pid)
                 })());
@@ -308,7 +285,6 @@ impl BlasterEventLoop {
 
                     let pid = BasicId::random();
                     self.insert_player(sender, pid, lid, player_meta);
-
                     Ok(pid)
                 })());
             }
@@ -454,29 +430,42 @@ impl BlasterEventLoop {
                     reason: reason.clone(),
                 });
 
-                let Some(lobby) = self.lobbies.get_mut(&player.lid) else {
+                let master = if let Some(lobby) = self.lobbies.get_mut(&player.lid) {
+                    lobby.players.remove(&pid);
+
+                    if lobby.players.len() < CHUD_THRESHOLD && lobby.idle_since.is_none() {
+                        lobby.idle_since.replace(Instant::now());
+                    }
+
+                    if pid == lobby.master {
+                        if let Some(&new) = lobby.players.iter().next() {
+                            lobby.master = new;
+                        } else {
+                            lobby.master = BasicId::NULL;
+                        }
+                    }
+
+                    lobby.master
+                } else {
                     return;
                 };
 
-                lobby.players.remove(&pid);
+                if master.is_null() {
+                    info!("bye lober: {:?}", player.lid);
 
-                if lobby.players.len() < CHUD_THRESHOLD && lobby.idle_since.is_none() {
-                    lobby.idle_since.replace(Instant::now());
+                    if let Some(set) = self.gid_lobbies.get_mut(&player.lid.gid) {
+                        set.remove(&player.lid.lid);
+
+                        if set.is_empty() {
+                            self.gid_lobbies.remove(&player.lid.gid);
+                        }
+                    }
+
+                    self.lobbies.remove(&player.lid);
+                } else {
+                    self.send_to_lobby(&player.lid, &ServerMessage::Left { pid, reason });
+                    self.send_to_lobby(&player.lid, &ServerMessage::SetMaster { pid: master });
                 }
-
-                if pid == lobby.master
-                    && let Some(&new) = lobby.players.iter().next()
-                {
-                    lobby.master = new;
-
-                    let msg = ServerMessage::SetMaster { pid: lobby.master };
-                    self.send_to_lobby(&player.lid, &msg);
-                }
-
-                let left = ServerMessage::Left { pid, reason };
-                self.send_to_lobby(&player.lid, &left);
-
-                self.cleanup_lobbies();
             }
             BlasterOperation::Relay { from, to, msg } => {
                 if let Some(p_from) = self.players.get(&from)

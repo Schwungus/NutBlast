@@ -237,7 +237,7 @@ pub enum BlasterOperation {
     HostLobby {
         initiator: IpAddr,
         gid: GameId,
-        lobby_meta: Metadata,
+        lobby_metadata: Metadata,
         capacity: usize,
         listed: bool,
         player_metadata: Metadata,

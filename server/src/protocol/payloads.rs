@@ -20,13 +20,16 @@ pub enum ClientMessage {
         gid: GameId,
         capacity: Capacity,
         listed: bool,
-        player_meta: Metadata,
-        lobby_meta: Metadata,
+        #[serde(rename = "player_meta")]
+        player_metadata: Metadata,
+        #[serde(rename = "lobby_meta")]
+        lobby_metadata: Metadata,
     },
     Join {
         #[serde(flatten)]
         lid: LobbyId,
-        player_meta: Metadata,
+        #[serde(rename = "player_meta")]
+        player_metadata: Metadata,
     },
     Leave {
         code: String,
@@ -38,18 +41,22 @@ pub enum ClientMessage {
     SetCapacity {
         capacity: Capacity,
     },
-    SetPlayerMeta {
+    #[serde(rename = "SetPlayerMeta")]
+    SetPlayerMetadata {
         key: FieldKey,
         value: FieldValue,
     },
-    ErasePlayerMeta {
+    #[serde(rename = "ErasePlayerMeta")]
+    ErasePlayerMetadata {
         key: FieldKey,
     },
-    SetLobbyMeta {
+    #[serde(rename = "SetLobbyMeta")]
+    SetLobbyMetadata {
         key: FieldKey,
         value: FieldValue,
     },
-    EraseLobbyMeta {
+    #[serde(rename = "EraseLobbyMeta")]
+    EraseLobbyMetadata {
         key: FieldKey,
     },
     PassCandidate {

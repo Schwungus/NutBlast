@@ -10,6 +10,12 @@ const MAX_PLAYERS: usize = 16;
 pub struct BasicId(pub u64);
 
 impl BasicId {
+    pub const NULL: BasicId = BasicId(0);
+
+    pub fn is_null(&self) -> bool {
+        self.0 == Self::NULL.0
+    }
+
     pub fn random() -> Self {
         Self(rand::random())
     }
