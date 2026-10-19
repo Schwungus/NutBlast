@@ -222,7 +222,6 @@ static void on_lobbies_found(const NutBlast_Lobby* lobbies, size_t count) {
 static int nb_to_rl(NutBlast_LogLevel level) {
     switch (level) {
     case NB_LogTrace:
-        return LOG_TRACE;
     case NB_LogInfo:
         return LOG_INFO;
     case NB_LogError:
@@ -238,6 +237,7 @@ static void rl_logger(NutBlast_LogLevel level, const char* line) {
 
 int main(int argc, char* argv[]) {
     NutBlast_SetLogger(rl_logger);
+    NutBlast_SetLogLevel(NB_LogTrace);
 
     NutBlast_Init((NutBlast_InitOptions){
         .game_id = "NutBlast Test",
@@ -258,7 +258,7 @@ int main(int argc, char* argv[]) {
     NutBlast_SetPlayerField(NUTBLAST_FIELD_PLAYER_NAME, names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
     reset();
 
-    NutBlast_OnReady(restart);
+    NutBlast_OnArrived(restart);
     NutBlast_OnDisconnected(on_disconnected);
     NutBlast_OnPlayerJoined(on_player_joined);
     NutBlast_OnPlayerLeft(on_player_left);

@@ -200,7 +200,11 @@ int NutBlast_ServerPing();
 /// Returns the average round-trip time (in milliseconds) to the specified player.
 int NutBlast_PlayerPing(NutBlast_PlayerID);
 
-/// Registers a callback to fire as soon as `NutBlast_Ready()` signals you are ready for the first time.
+/// Registers a callback to fire as soon as you are confirmed to be a part of the lobby. P2P negotiation begins in the
+/// background right after this point.
+void NutBlast_OnArrived(void (*)());
+
+/// Registers a callback to fire as soon as `NutBlast_IsReady()` signals you are ready for the first time.
 void NutBlast_OnReady(void (*)());
 
 /// Registers a callback to fire when you are disconnected from the NutBlaster.

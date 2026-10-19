@@ -82,6 +82,7 @@ namespace NutBlast {
         NutBlast::ident = cb;                                                                                          \
     }
 
+MakeCb(OnArrived, on_arrived);
 MakeCb(OnReady, on_ready);
 MakeCb(OnDisconnected, on_disconnected, NutBlast_Reason);
 MakeCb(OnPlayerJoined, on_player_joined, NutBlast_PlayerID);
@@ -102,7 +103,7 @@ namespace NutBlast {
     };
 
     namespace interval {
-        constexpr const std::uint64_t beat = ns::second / 62, ping = ns::second, sdp_timeout = 5 * ns::second;
+        constexpr const std::uint64_t ping = ns::second, sdp_timeout = 8 * ns::second;
     };
 
     template <typename T> class Locked {
@@ -204,7 +205,7 @@ namespace NutBlast {
     const ByeReason ByeReason::OK(NUTBLAST_ERROR_OK, "Graceful disconnection");
 
     struct Player : std::enable_shared_from_this<Player> {
-        Once fire_join, init;
+        Once fire_join;
 
         const NutBlast_PlayerID pid;
         const std::uint64_t birth;
@@ -214,7 +215,6 @@ namespace NutBlast {
 
         std::shared_ptr<rtc::PeerConnection> pc = nullptr;
         std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
-        Locked<std::vector<rtc::Candidate>> outgoing_candidates;
 
         std::optional<std::uint64_t> sdp_timeout = std::nullopt;
         int renegotiation_attempts = 0;
@@ -222,7 +222,11 @@ namespace NutBlast {
         Player(NutBlast_PlayerID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
         ~Player();
 
-        void engage();
+        void renegotiate();
+
+        void reset_timeout() {
+            sdp_timeout = NutBlast_TimeNS() + interval::sdp_timeout;
+        }
 
         bool is_offerer() const {
             return NutBlast_GetPlayerID() > pid;
@@ -295,7 +299,7 @@ namespace NutBlast {
     NutBlast_PlayerID master = 0;
 
     Pinger server_pinger;
-    Once fire_ready;
+    Once fire_ready, fire_arrived;
 
     std::shared_ptr<rtc::WebSocket> websocket = nullptr;
     Locked<std::vector<nlohmann::json>> ws_in, ws_out;
@@ -692,7 +696,12 @@ namespace NutBlast {
         {"Joined",
             [](const auto& obj) {
                 const NutBlast_PlayerID id = obj.at("pid");
-                players.insert({id, std::make_shared<Player>(id, obj.at("meta"), obj.at("birth"))});
+
+                const auto player = std::make_shared<Player>(id, obj.at("meta"), obj.at("birth"));
+                players.insert({id, player});
+
+                if (player->is_offerer())
+                    player->renegotiate();
             }},
         {"Left",
             [](const auto& obj) {
@@ -822,23 +831,6 @@ extern "C" void NutBlast_Disconnect() {
         }
     }
 
-    for (auto& [id, player] : NutBlast::players) {
-        if (!player)
-            continue;
-
-        if (player->unreliable_dc)
-            player->unreliable_dc->close();
-
-        if (player->reliable_dc)
-            player->reliable_dc->close();
-
-        if (player->ping_dc)
-            player->ping_dc->close();
-
-        if (player->pc)
-            player->pc->close();
-    }
-
     NutBlast::ws_in.lock()->clear();
     NutBlast::ws_out.lock()->clear();
     NutBlast::players.clear();
@@ -848,6 +840,7 @@ extern "C" void NutBlast_Disconnect() {
 
     NutBlast::websocket = nullptr;
     NutBlast::fire_ready.reset();
+    NutBlast::fire_arrived.reset();
 
     const auto reason = NutBlast::disconnection_reason;
     NutBlast::disconnection_reason = NutBlast::ByeReason::OK;
@@ -963,16 +956,14 @@ extern "C" bool NutBlast_IsConnectedToPlayer(NutBlast_PlayerID pid) {
 }
 
 extern "C" void NutBlast_Flush() {
-    static NutBlast::Ticker beater(NutBlast::interval::beat), pinger(NutBlast::interval::ping);
+    static NutBlast::Ticker fire_ping(NutBlast::interval::ping);
 
     if (!NutBlast_IsOnline() || NutBlast::mode == NutBlast::Mode::List)
         return;
 
-    if (pinger) {
-        NutBlast::server_pinger.ping();
-
+    if (fire_ping) {
         for (auto& [id, player] : NutBlast::players) {
-            const auto dc = player->ping_dc.get();
+            const auto dc = player->ping_dc;
 
             if (dc && dc->isOpen()) {
                 player->pinger.ping();
@@ -980,24 +971,10 @@ extern "C" void NutBlast_Flush() {
             }
         }
 
+        NutBlast::server_pinger.ping();
         NutBlast::send({
             {"type", "Ping"},
         });
-    }
-
-    if (beater) {
-        for (auto& [id, player] : NutBlast::players) {
-            auto lock = player->outgoing_candidates.lock();
-
-            for (const auto& candidate : NutBlast::copy_and_clear(*lock)) {
-                NutBlast::send({
-                    {"type", "PassCandidate"},
-                    {"to", id},
-                    {"candidate", (rtc::string)candidate},
-                    {"mid", candidate.mid()},
-                });
-            }
-        }
     }
 }
 
@@ -1025,17 +1002,15 @@ extern "C" void NutBlast_Update() {
     }
 
     if (*NutBlast::permission_to_cook.lock()) {
+        if (NutBlast::fire_arrived)
+            NutBlast::on_arrived();
+
         for (auto& [id, player] : NutBlast::players) {
-            if (player->unreliable_dc != nullptr && player->unreliable_dc->isOpen()) {
+            if (player->unreliable_dc && player->unreliable_dc->isOpen()) {
                 player->sdp_timeout = std::nullopt;
                 player->renegotiation_attempts = 0;
-            }
-
-            if (player->sdp_timeout.has_value() && NutBlast_TimeNS() >= *player->sdp_timeout) {
-                // attempt to renegotiate a connection up to `MAX_RENEGOTIATION_ATTEMPTS` times. then disconnect to let
-                // others play in peace.
+            } else if (player->sdp_timeout.has_value() && NutBlast_TimeNS() >= *player->sdp_timeout) {
                 player->renegotiation_attempts += 1;
-                player->init.reset();
 
                 if (player->renegotiation_attempts > NutBlast::MAX_RENEGOTIATION_ATTEMPTS) {
                     // only the newest player should disconnect. had to introduce this check because BOTH players kept
@@ -1058,23 +1033,13 @@ extern "C" void NutBlast_Update() {
                 } else {
                     NutBlast::info("Renegotiating with {} ({}/{})", player->pid, player->renegotiation_attempts,
                         NutBlast::MAX_RENEGOTIATION_ATTEMPTS);
+
+                    if (player->is_offerer())
+                        player->renegotiate();
+                    else
+                        player->reset_timeout();
                 }
-            }
-
-            player->engage();
-        }
-    }
-
-    if (NutBlast_IsReady()) {
-        if (NutBlast::fire_ready && NutBlast::mode != NutBlast::Mode::List) {
-            NutBlast::info("NutBlast connected and ready!");
-            NutBlast::on_ready();
-        }
-
-        for (const auto& [id, player] : NutBlast::players) {
-            if (player->fire_join) {
-                NutBlast::on_player_joined(id);
-
+            } else if (player->fire_join) {
                 for (const auto& [key, value] : player->meta) {
                     NutBlast_FieldDiff diff = {0};
                     diff.name = key.c_str();
@@ -1082,8 +1047,15 @@ extern "C" void NutBlast_Update() {
                     diff.new_value = value.c_str();
                     NutBlast::on_player_meta_changed(id, diff);
                 }
+
+                NutBlast::on_player_joined(id);
             }
         }
+    }
+
+    if (NutBlast_IsReady() && NutBlast::fire_ready) {
+        NutBlast::info("NutBlast connected and ready!");
+        NutBlast::on_ready();
     }
 
     NutBlast_Flush();
@@ -1227,7 +1199,7 @@ extern "C" bool NutBlast_IsPlayerConnectionRelayed(NutBlast_PlayerID pid) {
 #else
     rtc::Candidate local_c, remote_c;
 
-    if (!player->pc->getSelectedCandidatePair(&local_c, &remote_c))
+    if (!player->pc || !player->pc->getSelectedCandidatePair(&local_c, &remote_c))
         return false;
 
     const auto local = local_c.candidate();
@@ -1329,14 +1301,13 @@ NutBlast::Player::~Player() {
 }
 
 void NutBlast::Player::drain_incoming_offers_and_candidates() {
-    if (!pc)
-        return;
-
     if (incoming_offers.contains(pid)) {
         for (const auto& offer : copy_and_clear(incoming_offers.at(pid))) {
             trace("offer/answer from {}: {}", pid, static_cast<std::string>(offer));
 
             try {
+                if (!is_offerer())
+                    renegotiate();
                 pc->setRemoteDescription(offer);
                 trace("offer/answer accepted!");
             } catch (...) {
@@ -1345,7 +1316,7 @@ void NutBlast::Player::drain_incoming_offers_and_candidates() {
         }
     }
 
-    if (pc->remoteDescription().has_value() && incoming_candidates.contains(pid)) {
+    if (pc && pc->remoteDescription().has_value() && incoming_candidates.contains(pid)) {
         for (const auto& candidate : copy_and_clear(incoming_candidates.at(pid))) {
             trace("candidate from {}: {}", pid, static_cast<std::string>(candidate));
 
@@ -1359,16 +1330,16 @@ void NutBlast::Player::drain_incoming_offers_and_candidates() {
     }
 }
 
-void NutBlast::Player::engage() {
-    if (!init)
-        return;
-
+void NutBlast::Player::renegotiate() {
     const auto id = this->pid;
-    sdp_timeout = NutBlast_TimeNS() + interval::sdp_timeout;
+    reset_timeout();
 
     pc = std::make_shared<rtc::PeerConnection>(rtc_config);
 
-    pc->onLocalDescription([=](const auto& desc) {
+    pc->onLocalDescription([id, self = weak_from_this()](const auto& desc) {
+        if (self.expired())
+            return;
+
         std::string type;
 
         if (desc.typeString() == "offer")
@@ -1385,15 +1356,19 @@ void NutBlast::Player::engage() {
         });
     });
 
-    pc->onLocalCandidate([self = weak_from_this()](const auto& candidate) {
+    pc->onLocalCandidate([id, self = weak_from_this()](const auto& candidate) {
         if (self.expired())
             return;
 
-        auto state = self.lock();
-        state->outgoing_candidates.lock()->emplace_back(candidate);
+        send({
+            {"type", "PassCandidate"},
+            {"to", id},
+            {"candidate", (rtc::string)candidate},
+            {"mid", candidate.mid()},
+        });
     });
 
-    const auto on_msg = [=](const auto& variant) {
+    const auto on_msg = [id](const auto& variant) {
         if (!std::holds_alternative<rtc::binary>(variant))
             return;
 
@@ -1411,7 +1386,7 @@ void NutBlast::Player::engage() {
         recv_queues[chan].lock()->emplace_back(id, std::move(buf));
     };
 
-    const auto on_ping = [=, self = weak_from_this()](const auto& msg) {
+    const auto on_ping = [self = weak_from_this()](const auto& msg) {
         if (self.expired() || !std::holds_alternative<rtc::string>(msg))
             return;
 
@@ -1448,7 +1423,7 @@ void NutBlast::Player::engage() {
 
         ping_dc->onMessage(on_ping);
     } else {
-        pc->onDataChannel([=, self = weak_from_this()](const auto& dc) {
+        pc->onDataChannel([on_msg, on_ping, self = weak_from_this()](const auto& dc) {
             if (self.expired())
                 return;
 
@@ -1456,7 +1431,6 @@ void NutBlast::Player::engage() {
 
             if (dc->label() == "reliable" || dc->label() == "unreliable") {
                 const bool reliable = (dc->label() == "reliable");
-
                 (reliable ? state->reliable_dc : state->unreliable_dc) = dc;
                 dc->onMessage(on_msg);
             } else {
