@@ -224,6 +224,14 @@ namespace NutBlast {
 
         void renegotiate();
 
+        void reset() {
+            pc.reset();
+            reliable_dc.reset();
+            unreliable_dc.reset();
+            ping_dc.reset();
+            reset_timeout();
+        }
+
         void reset_timeout() {
             sdp_timeout = NutBlast_TimeNS() + interval::sdp_timeout;
         }
@@ -350,7 +358,6 @@ namespace NutBlast {
                     websocket->send(obj.dump());
             } catch (const std::runtime_error&) {
                 *time_to_die.lock() = true;
-                return;
             }
         }
     }
@@ -993,9 +1000,6 @@ extern "C" void NutBlast_Update() {
         }
     }
 
-    for (auto& [id, player] : NutBlast::players)
-        player->drain_incoming_offers_and_candidates();
-
     if (*NutBlast::time_to_die.lock()) {
         NutBlast_Disconnect();
         return;
@@ -1006,13 +1010,27 @@ extern "C" void NutBlast_Update() {
             NutBlast::on_arrived();
 
         for (auto& [id, player] : NutBlast::players) {
+            if (player->fire_join) {
+                for (const auto& [key, value] : player->meta) {
+                    NutBlast_FieldDiff diff = {0};
+                    diff.name = key.c_str();
+                    diff.old_value = nullptr;
+                    diff.new_value = value.c_str();
+                    NutBlast::on_player_meta_changed(id, diff);
+                }
+
+                NutBlast::on_player_joined(id);
+            }
+
+            player->drain_incoming_offers_and_candidates();
+
             if (player->unreliable_dc && player->unreliable_dc->isOpen()) {
                 player->sdp_timeout = std::nullopt;
                 player->renegotiation_attempts = 0;
-            } else if (player->sdp_timeout.has_value() && NutBlast_TimeNS() >= *player->sdp_timeout) {
-                player->renegotiation_attempts += 1;
+            }
 
-                if (player->renegotiation_attempts > NutBlast::MAX_RENEGOTIATION_ATTEMPTS) {
+            if (player->sdp_timeout.has_value() && NutBlast_TimeNS() >= *player->sdp_timeout) {
+                if (++player->renegotiation_attempts > NutBlast::MAX_RENEGOTIATION_ATTEMPTS) {
                     // only the newest player should disconnect. had to introduce this check because BOTH players kept
                     // disconnecting each time :wilted_flower:
                     if (NutBlast::our_birth >= player->birth) {
@@ -1037,18 +1055,8 @@ extern "C" void NutBlast_Update() {
                     if (player->is_offerer())
                         player->renegotiate();
                     else
-                        player->reset_timeout();
+                        player->reset();
                 }
-            } else if (player->fire_join) {
-                for (const auto& [key, value] : player->meta) {
-                    NutBlast_FieldDiff diff = {0};
-                    diff.name = key.c_str();
-                    diff.old_value = nullptr;
-                    diff.new_value = value.c_str();
-                    NutBlast::on_player_meta_changed(id, diff);
-                }
-
-                NutBlast::on_player_joined(id);
             }
         }
     }
@@ -1302,15 +1310,25 @@ NutBlast::Player::~Player() {
 
 void NutBlast::Player::drain_incoming_offers_and_candidates() {
     if (incoming_offers.contains(pid)) {
+        const auto type = is_offerer() ? "answer" : "offer";
+
         for (const auto& offer : copy_and_clear(incoming_offers.at(pid))) {
-            trace("offer/answer from {}: {}", pid, static_cast<std::string>(offer));
+            if (!is_offerer())
+                renegotiate();
+
+            trace("{} from {}: {}", type, pid,
+#ifdef __EMSCRIPTEN__
+                static_cast<std::string>(offer)
+#else
+                offer.generateSdp("|")
+#endif
+            );
 
             try {
-                if (!is_offerer())
-                    renegotiate();
                 pc->setRemoteDescription(offer);
-                trace("offer/answer accepted!");
-            } catch (...) {
+                trace("{} accepted!", type);
+            } catch (const std::exception& ex) {
+                trace("{} skipped: {}", type, ex.what());
                 continue;
             }
         }
@@ -1323,7 +1341,8 @@ void NutBlast::Player::drain_incoming_offers_and_candidates() {
             try {
                 pc->addRemoteCandidate(candidate);
                 trace("candidate accepted!");
-            } catch (...) {
+            } catch (const std::exception& ex) {
+                trace("candidate skipped: {}", ex.what());
                 continue;
             }
         }
@@ -1411,8 +1430,7 @@ void NutBlast::Player::renegotiate() {
         unreliable_dc->onMessage(on_msg);
 
         reliable_dc = pc->createDataChannel("reliable", {
-	        // don't repeat my mistake MIGUEL > If both maxPacketLifeTime or maxRetransmits are unset, the channel is reliable.
-            .reliability = { .unordered = false, },
+            .reliability = { .unordered = false, .maxRetransmits = std::nullopt, },
         });
 
         reliable_dc->onMessage(on_msg);
