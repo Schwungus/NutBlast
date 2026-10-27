@@ -56,9 +56,9 @@ extern "C" {
 /// No error (i.e. graceful disconnect).
 #define NUTBLAST_ERROR_OK "ok"
 
-/// Establishing a P2P connection to one of the players using STUN has failed; disconnecting self so as not to hinder
-/// others' gameplay.
-#define NUTBLAST_ERROR_STUN_FAILED "humane_disconnection"
+/// Establishing a P2P connection to one of the players has failed; disconnecting self so as not to hinder others'
+/// gameplay.
+#define NUTBLAST_ERROR_ICE_FAILED "humane_disconnection"
 
 /// Sent a binary message to NutBlaster.
 #define NUTBLAST_ERROR_BINARY_UNSUPPORTED "binary_unsupported"

@@ -1016,7 +1016,7 @@ extern "C" void NutBlast_Update() {
                     // only the newest player should disconnect. had to introduce this check because BOTH players kept
                     // disconnecting each time :wilted_flower:
                     if (NutBlast::our_birth >= player->birth) {
-                        const std::string code = NUTBLAST_ERROR_STUN_FAILED;
+                        const std::string code = NUTBLAST_ERROR_ICE_FAILED;
                         const auto msg = std::format("Could not establish a P2P connection with player {}", id);
 
                         NutBlast::send({
