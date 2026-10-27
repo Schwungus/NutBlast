@@ -66,8 +66,8 @@ typedef struct {
 static TinyMap players = {0};
 static NutBlast_LobbyID existing_lobby = 0;
 
-// an internal NutBlast variable exposed just for the sake of debugging. don't even think of using it in production!!!
-extern bool NutBlast_IgnoreICE;
+extern bool NutBlast_DEBUG_IgnoreICE;
+extern void NutBlast_DEBUG_CloseConnection(NutBlast_PlayerID);
 
 static void reset() {
     FreeTinyMap(&players);
@@ -106,7 +106,7 @@ static void draw_players() {
 }
 
 static void draw_gui() {
-    const int fs = 28;
+    const int fs = 22;
     int i = 0;
 
     for (const NutBlast_PlayerID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
@@ -125,13 +125,16 @@ static void draw_gui() {
     if (existing_lobby)
         DrawText("Lobby found!", 0, 0, fs, GREEN);
 
-    if (NutBlast_IgnoreICE)
+    if (NutBlast_DEBUG_IgnoreICE)
         DrawText("-ICE", 0, fs, fs, RED);
     else
         DrawText("+ICE", 0, fs, fs, BLACK);
 
-    DrawText("H to host, J to join, K to reset, P to ratelimit self", 0, GetScreenHeight() - fs * 2, fs, BLACK);
-    DrawText("T to chat (reliable), L to kick everyone, M to ignore ICE", 0, GetScreenHeight() - fs * 1, fs, BLACK);
+    int y = GetScreenHeight() - fs * 2;
+    DrawText("H to host, J to join, K to reset, P to kys, O to cut off ICE", 0, y, fs, BLACK);
+
+    y += fs;
+    DrawText("T to chat (reliable), L to kick everyone, M to ignore incoming SDP", 0, y, fs, BLACK);
 }
 
 static void move_our_rect() {
@@ -285,10 +288,13 @@ int main(int argc, char* argv[]) {
         } else if (!NutBlast_IsConnecting() && GetTime() >= next_search) {
             NutBlast_FindLobbies(1);
             next_search = GetTime() + 3.0;
+        } else if (IsKeyPressed(KEY_O)) {
+            for (const NutBlast_PlayerID* ids = NutBlast_ListPlayers(); *ids; ids++)
+                NutBlast_DEBUG_CloseConnection(*ids);
         }
 
         if (IsKeyPressed(KEY_M))
-            NutBlast_IgnoreICE = !NutBlast_IgnoreICE;
+            NutBlast_DEBUG_IgnoreICE = !NutBlast_DEBUG_IgnoreICE;
 
         move_our_rect();
         send_our_position();

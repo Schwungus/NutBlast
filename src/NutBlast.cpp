@@ -51,7 +51,7 @@
 #include "NutBlast.h"
 
 extern "C" {
-    bool NutBlast_IgnoreICE = false;
+    bool NutBlast_DEBUG_IgnoreICE = false;
 }
 
 namespace NutBlast {
@@ -103,7 +103,7 @@ namespace NutBlast {
     };
 
     namespace interval {
-        constexpr const std::uint64_t ping = ns::second, sdp_timeout = 8 * ns::second;
+        constexpr const std::uint64_t ping = ns::second, sdp_timeout = 7 * ns::second;
     };
 
     template <typename T> class Locked {
@@ -216,7 +216,7 @@ namespace NutBlast {
         std::shared_ptr<rtc::PeerConnection> pc = nullptr;
         std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
 
-        std::optional<std::uint64_t> sdp_timeout = std::nullopt;
+        std::uint64_t sdp_timeout = 0;
         int renegotiation_attempts = 0;
 
         Player(NutBlast_PlayerID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
@@ -482,7 +482,7 @@ namespace NutBlast {
 #endif
 
     void handle_offer_or_answer(const nlohmann::json& obj) {
-        if (NutBlast_IgnoreICE)
+        if (NutBlast_DEBUG_IgnoreICE)
             return;
 
         const NutBlast_PlayerID pid = obj.at("from");
@@ -495,7 +495,7 @@ namespace NutBlast {
     }
 
     void handle_candidate(const nlohmann::json& obj) {
-        if (NutBlast_IgnoreICE)
+        if (NutBlast_DEBUG_IgnoreICE)
             return;
 
         const NutBlast_PlayerID pid = obj.at("from");
@@ -706,9 +706,7 @@ namespace NutBlast {
 
                 const auto player = std::make_shared<Player>(id, obj.at("meta"), obj.at("birth"));
                 players.insert({id, player});
-
-                if (player->is_offerer())
-                    player->renegotiate();
+                player->renegotiate();
             }},
         {"Left",
             [](const auto& obj) {
@@ -1024,12 +1022,7 @@ extern "C" void NutBlast_Update() {
 
             player->drain_incoming_offers_and_candidates();
 
-            if (player->unreliable_dc && player->unreliable_dc->isOpen()) {
-                player->sdp_timeout = std::nullopt;
-                player->renegotiation_attempts = 0;
-            }
-
-            if (player->sdp_timeout.has_value() && NutBlast_TimeNS() >= *player->sdp_timeout) {
+            if (NutBlast_TimeNS() >= player->sdp_timeout) {
                 if (++player->renegotiation_attempts > NutBlast::MAX_RENEGOTIATION_ATTEMPTS) {
                     // only the newest player should disconnect. had to introduce this check because BOTH players kept
                     // disconnecting each time :wilted_flower:
@@ -1416,10 +1409,13 @@ void NutBlast::Player::renegotiate() {
 
         const auto type = std::get<rtc::string>(msg);
 
-        if (type == "PING")
+        if (type == "PING") {
             state->ping_dc->send("PONG");
-        else if (type == "PONG")
+        } else if (type == "PONG") {
             state->pinger.pong();
+            state->renegotiation_attempts = 0;
+            state->reset_timeout();
+        }
     };
 
     if (is_offerer()) {
@@ -1457,4 +1453,9 @@ void NutBlast::Player::renegotiate() {
             }
         });
     }
+}
+
+extern "C" void NutBlast_DEBUG_CloseConnection(NutBlast_PlayerID id) {
+    if (NutBlast::players.contains(id))
+        NutBlast::players.at(id)->reset();
 }
