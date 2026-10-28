@@ -51,7 +51,7 @@
 #include "NutBlast.h"
 
 extern "C" {
-    bool NutBlast_DEBUG_IgnoreICE = false;
+    bool NutBlast_DEBUG_IgnoreSDP = false;
 }
 
 namespace NutBlast {
@@ -482,7 +482,7 @@ namespace NutBlast {
 #endif
 
     void handle_offer_or_answer(const nlohmann::json& obj) {
-        if (NutBlast_DEBUG_IgnoreICE)
+        if (NutBlast_DEBUG_IgnoreSDP)
             return;
 
         const NutBlast_PlayerID pid = obj.at("from");
@@ -495,7 +495,7 @@ namespace NutBlast {
     }
 
     void handle_candidate(const nlohmann::json& obj) {
-        if (NutBlast_DEBUG_IgnoreICE)
+        if (NutBlast_DEBUG_IgnoreSDP)
             return;
 
         const NutBlast_PlayerID pid = obj.at("from");

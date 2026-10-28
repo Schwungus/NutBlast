@@ -66,7 +66,7 @@ typedef struct {
 static TinyMap players = {0};
 static NutBlast_LobbyID existing_lobby = 0;
 
-extern bool NutBlast_DEBUG_IgnoreICE;
+extern bool NutBlast_DEBUG_IgnoreSDP;
 extern void NutBlast_DEBUG_CloseConnection(NutBlast_PlayerID);
 
 static void reset() {
@@ -106,7 +106,7 @@ static void draw_players() {
 }
 
 static void draw_gui() {
-    const int fs = 22;
+    const int fs = 20;
     int i = 0;
 
     for (const NutBlast_PlayerID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
@@ -125,13 +125,13 @@ static void draw_gui() {
     if (existing_lobby)
         DrawText("Lobby found!", 0, 0, fs, GREEN);
 
-    if (NutBlast_DEBUG_IgnoreICE)
-        DrawText("-ICE", 0, fs, fs, RED);
+    if (NutBlast_DEBUG_IgnoreSDP)
+        DrawText("-SDP", 0, fs, fs, RED);
     else
-        DrawText("+ICE", 0, fs, fs, BLACK);
+        DrawText("+SDP", 0, fs, fs, BLACK);
 
     int y = GetScreenHeight() - fs * 2;
-    DrawText("H to host, J to join, K to reset, P to kys, O to cut off ICE", 0, y, fs, BLACK);
+    DrawText("H to host, J to join, K to reset, P to kys, O to sever peers", 0, y, fs, BLACK);
 
     y += fs;
     DrawText("T to chat (reliable), L to kick everyone, M to ignore incoming SDP", 0, y, fs, BLACK);
@@ -294,7 +294,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (IsKeyPressed(KEY_M))
-            NutBlast_DEBUG_IgnoreICE = !NutBlast_DEBUG_IgnoreICE;
+            NutBlast_DEBUG_IgnoreSDP = !NutBlast_DEBUG_IgnoreSDP;
 
         move_our_rect();
         send_our_position();
