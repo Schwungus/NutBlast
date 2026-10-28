@@ -106,8 +106,8 @@ static void draw_players() {
 }
 
 static void draw_gui() {
-    const int fs = 20;
-    int i = 0;
+    const int fs = 20, pad = 5;
+    int y = pad;
 
     for (const NutBlast_PlayerID* ptr = NutBlast_ListPlayers(); *ptr; ptr++) {
         const NutBlast_PlayerID id = *ptr;
@@ -116,25 +116,25 @@ static void draw_gui() {
         if (name) {
             const char* relayed = NutBlast_IsPlayerConnectionRelayed(id) ? "[R] " : "";
             const char* fmt = TextFormat("%s%s (%dms)", relayed, name, NutBlast_PlayerPing(id));
-            DrawText(fmt, GetScreenWidth() - MeasureText(fmt, fs) - 5, fs * i, fs, BLACK);
+            DrawText(fmt, GetScreenWidth() - MeasureText(fmt, fs) - pad, y, fs, BLACK);
         }
 
-        i++;
+        y += fs;
     }
 
     if (existing_lobby)
-        DrawText("Lobby found!", 0, 0, fs, GREEN);
+        DrawText("Lobby found!", pad, pad, fs, GREEN);
 
     if (NutBlast_DEBUG_IgnoreSDP)
-        DrawText("-SDP", 0, fs, fs, RED);
+        DrawText("-SDP", pad, pad + fs, fs, RED);
     else
-        DrawText("+SDP", 0, fs, fs, BLACK);
+        DrawText("+SDP", pad, pad + fs, fs, BLACK);
 
-    int y = GetScreenHeight() - fs * 2;
-    DrawText("H to host, J to join, K to reset, P to kys, O to sever peers", 0, y, fs, BLACK);
+    y = GetScreenHeight() - fs * 2 - pad;
+    DrawText("H to host, J to join, K to reset, P to kys, O to sever peers", pad, y, fs, BLACK);
 
     y += fs;
-    DrawText("T to chat (reliable), L to kick everyone, M to ignore incoming SDP", 0, y, fs, BLACK);
+    DrawText("T to chat (reliable), L to kick everyone, M to ignore incoming SDP", pad, y, fs, BLACK);
 }
 
 static void move_our_rect() {
