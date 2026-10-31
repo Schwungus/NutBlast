@@ -256,9 +256,10 @@ int main(int argc, char* argv[]) {
     SetExitKey(EMS ? KEY_NULL : KEY_ESCAPE);
     SetRandomSeed(NutBlast_TimeNS());
 
+    const char* name = TextFormat("%c%04d", GetRandomValue('A', 'Z'), GetRandomValue(0, 9999));
     NutBlast_SetLobbyField(NUTBLAST_FIELD_LOBBY_NAME, "NutBlast Test");
     NutBlast_SetLobbyField("motd", motds[GetRandomValue(0, sizeof(motds) / sizeof(*motds) - 1)]);
-    NutBlast_SetPlayerField(NUTBLAST_FIELD_PLAYER_NAME, names[GetRandomValue(0, sizeof(names) / sizeof(*names) - 1)]);
+    NutBlast_SetPlayerField(NUTBLAST_FIELD_PLAYER_NAME, name);
     reset();
 
     NutBlast_OnArrived(restart);

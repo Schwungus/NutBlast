@@ -27,6 +27,7 @@
 #include <cstring>
 #include <deque>
 #include <format>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -56,18 +57,18 @@ extern "C" {
 
 namespace NutBlast {
     template <typename... Args> class Callback {
-        void (*fn)(Args...) = nullptr;
+        std::function<void(Args...)> fn = nullptr;
 
       public:
         Callback() = default;
 
-        Callback& operator=(void (*fn)(Args...)) {
+        Callback& operator=(const decltype(fn)& fn) {
             this->fn = fn;
             return *this;
         }
 
         void operator()(const Args&... args) {
-            if (fn)
+            if (fn != nullptr)
                 fn(args...);
         }
     };
@@ -192,7 +193,7 @@ namespace NutBlast {
         bool err = false;
         std::string code, msg;
 
-        ByeReason(const std::string& code, const std::string& msg) : code(code), msg(msg) {}
+        ByeReason(std::string code, std::string msg) : code(std::move(code)), msg(std::move(msg)) {}
 
         ByeReason(const nlohmann::json& obj)
             : err(obj.at("type") == "violation"), code(obj.at("code")), msg(obj.at("msg")) {}
@@ -619,7 +620,7 @@ namespace NutBlast {
                 const auto& player = players.at(pid);
                 auto& meta = player->meta;
 
-                const std::string key = obj.at("key"), new_value = obj.at("value");
+                const std::string &key = obj.at("key"), &new_value = obj.at("value");
                 std::optional<std::string> old_value;
 
                 if (meta.contains(key))
@@ -645,7 +646,7 @@ namespace NutBlast {
                     return;
 
                 auto& meta = players.at(pid)->meta;
-                const std::string key = obj.at("key");
+                const std::string& key = obj.at("key");
 
                 if (!meta.contains(key))
                     return;
@@ -660,7 +661,7 @@ namespace NutBlast {
             }},
         {"SetLobbyMeta",
             [](const auto& obj) {
-                const std::string key = obj.at("key"), new_value = obj.at("value");
+                const std::string &key = obj.at("key"), &new_value = obj.at("value");
                 std::optional<std::string> old_value;
 
                 if (lobby_meta.contains(key))
@@ -679,7 +680,7 @@ namespace NutBlast {
             }},
         {"EraseLobbyMeta",
             [](const auto& obj) {
-                const std::string key = obj.at("key");
+                const std::string& key = obj.at("key");
 
                 if (!lobby_meta.contains(key))
                     return;
@@ -823,6 +824,7 @@ extern "C" bool NutBlast_IsListed() {
 
 extern "C" void NutBlast_Disconnect() {
     *NutBlast::time_to_die.lock() = false;
+    *NutBlast::permission_to_cook.lock() = false;
 
     if (NutBlast::websocket) {
         NutBlast::websocket->onOpen(nullptr);
@@ -1027,7 +1029,7 @@ extern "C" void NutBlast_Update() {
                     // only the newest player should disconnect. had to introduce this check because BOTH players kept
                     // disconnecting each time :wilted_flower:
                     if (NutBlast::our_birth >= player->birth) {
-                        const std::string code = NUTBLAST_ERROR_ICE_FAILED;
+                        const auto code = NUTBLAST_ERROR_ICE_FAILED;
                         const auto msg = std::format("Could not establish a P2P connection with player {}", id);
 
                         NutBlast::send({
@@ -1352,7 +1354,7 @@ void NutBlast::Player::renegotiate() {
         if (self.expired())
             return;
 
-        std::string type;
+        const char* type = nullptr;
 
         if (desc.typeString() == "offer")
             type = "PassOffer";
