@@ -9,6 +9,17 @@ use crate::{
 };
 
 #[derive(Debug, Deserialize)]
+pub struct CreateLobbyOptions {
+    pub gid: GameId,
+    pub capacity: Capacity,
+    pub listed: bool,
+    #[serde(rename = "player_meta")]
+    pub player_metadata: Metadata,
+    #[serde(rename = "lobby_meta")]
+    pub lobby_metadata: Metadata,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMessage {
     Ping,
@@ -17,17 +28,16 @@ pub enum ClientMessage {
         limit: usize,
     },
     Host {
-        gid: GameId,
-        capacity: Capacity,
-        listed: bool,
-        #[serde(rename = "player_meta")]
-        player_metadata: Metadata,
-        #[serde(rename = "lobby_meta")]
-        lobby_metadata: Metadata,
+        #[serde(flatten)]
+        options: CreateLobbyOptions,
+    },
+    IDGAF {
+        #[serde(flatten)]
+        options: CreateLobbyOptions,
     },
     Join {
-        #[serde(flatten)]
-        lid: LobbyId,
+        #[serde(flatten, rename = "lid")]
+        lobby_id: LobbyId,
         #[serde(rename = "player_meta")]
         player_metadata: Metadata,
     },
@@ -153,6 +163,13 @@ pub enum ServerMessage {
 pub enum Kick {
     Natural { code: String, msg: String },
     Violation { code: String, msg: String },
+    InternalError,
+}
+
+impl From<tokio::sync::oneshot::error::RecvError> for Kick {
+    fn from(_: tokio::sync::oneshot::error::RecvError) -> Self {
+        Self::InternalError
+    }
 }
 
 impl Kick {

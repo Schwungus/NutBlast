@@ -131,7 +131,7 @@ static void draw_gui() {
         DrawText("+SDP", pad, pad + fs, fs, BLACK);
 
     y = GetScreenHeight() - fs * 2 - pad;
-    DrawText("H to host, J to join, K to reset, P to kys, O to sever peers", pad, y, fs, BLACK);
+    DrawText("H to host, J to join, I to idgaf, K to reset, P to kys, O to sever peers", pad, y, fs, BLACK);
 
     y += fs;
     DrawText("T to chat (reliable), L to kick everyone, M to ignore incoming SDP", pad, y, fs, BLACK);
@@ -283,6 +283,10 @@ int main(int argc, char* argv[]) {
         } else if (IsKeyPressed(KEY_J)) {
             NutBlast_Disconnect();
             NutBlast_Join(existing_lobby);
+            existing_lobby = 0;
+        } else if (IsKeyPressed(KEY_I)) {
+            NutBlast_Disconnect();
+            NutBlast_IDGAF((NutBlast_HostOptions){.max_players = 2});
             existing_lobby = 0;
         } else if (IsKeyPressed(KEY_K)) {
             NutBlast_Disconnect();

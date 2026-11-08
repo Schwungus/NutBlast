@@ -119,70 +119,61 @@ impl Session {
         match msg {
             ClientMessage::Ping if let Some(pid) = self.pid => {
                 let (tx, rx) = oneshot::channel();
-
                 self.execute(BlasterOperation::AssemblePong { pid, tx });
-
-                if let Ok(msg) = rx.await {
-                    self.send(&msg).await;
-                }
+                self.send(&rx.await?).await;
             }
             ClientMessage::List { gid, limit } if self.pid.is_none() => {
                 let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::ListLobbies {
-                    ip: self.real_ip,
+                    initiator: self.real_ip,
                     gid: gid.clone(),
                     limit,
                     tx,
                 });
 
-                if let Ok(list) = rx.await {
-                    self.send(&ServerMessage::List { list: list? }).await;
-                }
-
+                self.send(&ServerMessage::List { list: rx.await?? }).await;
                 self.stop = true;
             }
-            ClientMessage::Host {
-                gid,
-                capacity: Capacity(capacity),
-                listed,
-                player_metadata,
-                lobby_metadata,
-            } if self.pid.is_none() => {
+            ClientMessage::IDGAF { options } if self.pid.is_none() => {
+                let (tx, rx) = oneshot::channel();
+
+                self.execute(BlasterOperation::LobbyIDGAF {
+                    sender: self.msg_sender.clone(),
+                    initiator: self.real_ip,
+                    options,
+                    tx,
+                });
+
+                self.pid = Some(rx.await??);
+            }
+            ClientMessage::Host { options } if self.pid.is_none() => {
                 let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::HostLobby {
                     sender: self.msg_sender.clone(),
                     initiator: self.real_ip,
-                    gid,
-                    lobby_metadata,
-                    capacity,
-                    listed,
-                    player_metadata,
+                    options,
                     tx,
                 });
 
-                if let Ok(pid) = rx.await {
-                    self.pid = Some(pid?);
-                }
+                self.pid = Some(rx.await??);
             }
             ClientMessage::Join {
-                lid,
+                lobby_id,
                 player_metadata,
             } if self.pid.is_none() => {
                 let (tx, rx) = oneshot::channel();
 
                 self.execute(BlasterOperation::JoinLobby {
                     sender: self.msg_sender.clone(),
-                    ip: self.real_ip,
-                    lid: lid.clone(),
+                    initiator: self.real_ip,
+                    lobby_id: lobby_id.clone(),
                     player_metadata,
                     tx,
                 });
 
-                if let Ok(pid) = rx.await {
-                    self.pid = Some(pid?);
-                }
+                self.pid = Some(rx.await??);
             }
             ClientMessage::Leave { code, msg } => {
                 if let Some(pid) = self.pid {
@@ -324,7 +315,10 @@ impl Session {
 
         while !self.stop {
             if let Err(reason) = self.handle_next_websocket_message().await {
-                self.send(&ServerMessage::Disconnected { reason }).await;
+                if !matches!(reason, Kick::InternalError) {
+                    self.send(&ServerMessage::Disconnected { reason }).await;
+                }
+
                 break;
             }
         }

@@ -7,7 +7,7 @@ use tokio::sync::oneshot;
 use crate::{
     protocol::{
         basic::{BasicId, GameId, LobbyId, Metadata},
-        payloads::{Kick, LobbyListing, ServerMessage},
+        payloads::{CreateLobbyOptions, Kick, LobbyListing, ServerMessage},
     },
     tokens::TokenBucket,
 };
@@ -62,7 +62,7 @@ impl Lobby {
 
 #[derive(Clone)]
 struct Player {
-    lid: LobbyId,
+    lobby_id: LobbyId,
     metadata: Metadata,
     sender: TokioSender,
     birth: u128,
@@ -229,24 +229,26 @@ pub enum BlasterOperation {
         msg: ServerMessage,
     },
     ListLobbies {
-        ip: IpAddr,
+        initiator: IpAddr,
         gid: GameId,
         limit: usize,
         tx: oneshot::Sender<Result<Vec<LobbyListing>, Kick>>,
     },
+    LobbyIDGAF {
+        initiator: IpAddr,
+        options: CreateLobbyOptions,
+        sender: TokioSender,
+        tx: oneshot::Sender<Result<BasicId, Kick>>,
+    },
     HostLobby {
         initiator: IpAddr,
-        gid: GameId,
-        lobby_metadata: Metadata,
-        capacity: usize,
-        listed: bool,
-        player_metadata: Metadata,
+        options: CreateLobbyOptions,
         sender: TokioSender,
         tx: oneshot::Sender<Result<BasicId, Kick>>,
     },
     JoinLobby {
-        ip: IpAddr,
-        lid: LobbyId,
+        initiator: IpAddr,
+        lobby_id: LobbyId,
         player_metadata: Metadata,
         sender: TokioSender,
         tx: oneshot::Sender<Result<BasicId, Kick>>,

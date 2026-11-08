@@ -269,7 +269,10 @@ void NutBlast_Join(NutBlast_LobbyID id);
 void NutBlast_Host(NutBlast_HostOptions opts);
 
 /// Requests a lobby list from the NutBlaster. Fires `NutBlast_OnLobbiesFound` after receiving a result.
-void NutBlast_FindLobbies(size_t);
+void NutBlast_FindLobbies(size_t max);
+
+/// Joins the first available public lobby. If none exists, attempts to host one instead.
+void NutBlast_IDGAF(NutBlast_HostOptions opts);
 
 /// Disconnects you from the lobby if you are in one, and resets the networking state.
 void NutBlast_Disconnect();
