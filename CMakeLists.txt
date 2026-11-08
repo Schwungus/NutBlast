@@ -29,6 +29,7 @@ add_library(NutBlast ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast.cpp ${CMAKE_CURREN
 target_include_directories(NutBlast PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(NutBlast PRIVATE c_std_11 cxx_std_23)
 target_compile_definitions(NutBlast PUBLIC NUTBLAST_DEV_LOCALHOST=$<BOOL:${NUTBLAST_DEV_LOCALHOST}>)
+set_property(TARGET NutBlast PROPERTY COMPILE_WARNING_AS_ERROR ON)
 
 FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -107,9 +108,11 @@ if(NUTBLAST_BUILD_TEST)
 
     add_executable(NutBlast-test ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-test.c)
     target_link_libraries(NutBlast-test PRIVATE NutBlast raylib S_tructures)
+    set_property(TARGET NutBlast-test PROPERTY COMPILE_WARNING_AS_ERROR ON)
 
     add_executable(NutBlast-lobbyist ${CMAKE_CURRENT_SOURCE_DIR}/src/NutBlast-lobbyist.c)
     target_link_libraries(NutBlast-lobbyist PRIVATE NutBlast)
+    set_property(TARGET NutBlast-lobbyist PROPERTY COMPILE_WARNING_AS_ERROR ON)
 
     if(EMSCRIPTEN)
         target_link_options(NutBlast-test PRIVATE
