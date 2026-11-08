@@ -35,12 +35,10 @@ async fn main() -> eyre::Result<()> {
     let trust_xff = config.trust_reverse_proxy_xff.unwrap_or(false);
 
     if trust_xff {
-        warn!("blindly trusting the X-Forwarded-For header from reverse-proxy!!!");
+        warn!("blindly trusting the X-Forwarded-For header from the HTTP server!");
     } else {
-        warn!("ignoring the X-Forwarded-For HTTP header");
-        warn!(
-            "if NutBlaster is behind a reverse-proxy such as nginx, it will see every client's IP as the proxy's LAN address!"
-        );
+        warn!("behind an HTTP server, all players share its LAN address!");
+        warn!("set \"trust_reverse_proxy_xff\": true in config if using caddy/nginx");
     }
 
     let listener = TcpListener::bind(&addr).await?;
