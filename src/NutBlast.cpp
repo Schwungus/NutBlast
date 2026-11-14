@@ -732,10 +732,11 @@ namespace NutBlast {
         {"Left",
             [](const auto& obj) {
                 const NutBlast_PlayerID id = obj.at("pid");
+                const ByeReason reason = obj.at("reason");
 
                 if (players.contains(id)) {
-                    info("ID={} left", id);
-                    on_player_left(id, ByeReason(obj.at("reason")));
+                    info("ID={} left: '{}' {}", id, reason.code, reason.msg);
+                    on_player_left(id, reason);
                     players.erase(id);
                 }
             }},
