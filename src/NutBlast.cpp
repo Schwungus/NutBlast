@@ -206,7 +206,7 @@ namespace NutBlast {
     const ByeReason ByeReason::OK(NUTBLAST_ERROR_OK, "Graceful disconnection");
 
     struct Player : std::enable_shared_from_this<Player> {
-        Once fire_join;
+        Once fire_join, fire_ready;
 
         const NutBlast_PlayerID pid;
         const std::uint64_t birth;
@@ -504,29 +504,29 @@ namespace NutBlast {
         if (NutBlast_DEBUG_IgnoreSDP)
             return;
 
-        const NutBlast_PlayerID pid = obj.at("from");
+        const NutBlast_PlayerID id = obj.at("from");
         const auto& type = obj.at("type") == "Offer" ? "offer" : "answer";
 
-        if (!incoming_offers.contains(pid))
-            incoming_offers.insert({pid, {}});
+        if (!incoming_offers.contains(id))
+            incoming_offers.insert({id, {}});
 
-        incoming_offers.at(pid).emplace_back(obj.at("sdp"), type);
+        incoming_offers.at(id).emplace_back(obj.at("sdp"), type);
     }
 
     void handle_candidate(const nlohmann::json& obj) {
         if (NutBlast_DEBUG_IgnoreSDP)
             return;
 
-        const NutBlast_PlayerID pid = obj.at("from");
+        const NutBlast_PlayerID id = obj.at("from");
 
-        if (!incoming_candidates.contains(pid))
-            incoming_candidates.insert({pid, {}});
+        if (!incoming_candidates.contains(id))
+            incoming_candidates.insert({id, {}});
 
         try {
-            auto& queue = incoming_candidates.at(pid);
+            auto& queue = incoming_candidates.at(id);
             queue.emplace_back(obj.at("candidate"), obj.at("mid"));
         } catch (const std::invalid_argument&) {
-            incoming_candidates.erase(pid);
+            incoming_candidates.erase(id);
         }
     }
 
@@ -630,12 +630,12 @@ namespace NutBlast {
             }},
         {"SetPlayerMeta",
             [](const auto& obj) {
-                const NutBlast_PlayerID pid = obj.at("pid");
+                const NutBlast_PlayerID id = obj.at("pid");
 
-                if (!NutBlast_IsPlayerInLobby(pid) || pid == NutBlast_GetPlayerID())
+                if (!NutBlast_IsPlayerInLobby(id) || id == NutBlast_GetPlayerID())
                     return;
 
-                const auto& player = players.at(pid);
+                const auto& player = players.at(id);
                 auto& meta = player->meta;
 
                 const std::string &key = obj.at("key"), &new_value = obj.at("value");
@@ -653,17 +653,17 @@ namespace NutBlast {
                     diff.new_value = new_value.c_str();
 
                     if (player->fire_join.fired())
-                        on_player_meta_changed(pid, diff);
+                        on_player_meta_changed(id, diff);
                 }
             }},
         {"ErasePlayerMeta",
             [](const auto& obj) {
-                const NutBlast_PlayerID pid = obj.at("pid");
+                const NutBlast_PlayerID id = obj.at("pid");
 
-                if (!NutBlast_IsPlayerInLobby(pid) || pid == NutBlast_GetPlayerID())
+                if (!NutBlast_IsPlayerInLobby(id) || id == NutBlast_GetPlayerID())
                     return;
 
-                auto& meta = players.at(pid)->meta;
+                auto& meta = players.at(id)->meta;
                 const std::string& key = obj.at("key");
 
                 if (!meta.contains(key))
@@ -674,7 +674,7 @@ namespace NutBlast {
                 diff.old_value = meta.at(key).c_str();
                 diff.new_value = nullptr;
 
-                on_player_meta_changed(pid, diff);
+                on_player_meta_changed(id, diff);
                 meta.erase(key);
             }},
         {"SetLobbyMeta",
@@ -726,14 +726,17 @@ namespace NutBlast {
                 const auto player = std::make_shared<Player>(id, obj.at("meta"), obj.at("birth"));
                 players.insert({id, player});
                 player->renegotiate();
+
+                info("ID={} joined; negotiating P2P", id);
             }},
         {"Left",
             [](const auto& obj) {
-                const NutBlast_PlayerID pid = obj.at("pid");
+                const NutBlast_PlayerID id = obj.at("pid");
 
-                if (players.contains(pid)) {
-                    on_player_left(pid, ByeReason(obj.at("reason")));
-                    players.erase(pid);
+                if (players.contains(id)) {
+                    info("ID={} left", id);
+                    on_player_left(id, ByeReason(obj.at("reason")));
+                    players.erase(id);
                 }
             }},
         {"Offer", handle_offer_or_answer},
@@ -747,12 +750,12 @@ namespace NutBlast {
                 const std::unordered_set<NutBlast_PlayerID> remaining_players = obj.at("players");
 
                 std::erase_if(players, [&remaining_players](const auto& pair) {
-                    const auto pid = pair.first;
+                    const auto id = pair.first;
 
-                    if (remaining_players.contains(pid))
+                    if (remaining_players.contains(id))
                         return false;
 
-                    on_player_left(pid, ByeReason::OK);
+                    on_player_left(id, ByeReason::OK);
                     return true;
                 });
             }},
@@ -1043,6 +1046,12 @@ extern "C" void NutBlast_Update() {
                 }
 
                 NutBlast::on_player_joined(id);
+            }
+
+            // TODO: add an event handler for player readiness?
+            if (player->is_ready() && player->fire_ready) {
+                const char* proto = NutBlast_IsPlayerConnectionRelayed(id) ? "TURN" : "STUN";
+                NutBlast::info("ID={} connection established! ({})", id, proto);
             }
 
             player->drain_incoming_offers_and_candidates();
@@ -1462,7 +1471,7 @@ void NutBlast::Player::renegotiate() {
 
         ping_dc->onMessage(on_ping);
     } else {
-        pc->onDataChannel([on_msg, on_ping, self = weak_from_this()](const auto& dc) {
+        pc->onDataChannel([on_msg, on_ping, id, self = weak_from_this()](const auto& dc) {
             if (self.expired())
                 return;
 
