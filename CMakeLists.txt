@@ -101,7 +101,7 @@ if(NUTBLAST_BUILD_TEST)
 
     FetchContent_Declare(S_tructures
         GIT_REPOSITORY https://github.com/Schwungus/S_tructures.git
-        GIT_TAG 484e78265ec3e58cf57bfe7aa09b53d48b60300f
+        GIT_TAG 76e7bc5b6c0604149d3a4cad01af3a8f1c8bb777
         EXCLUDE_FROM_ALL)
 
     FetchContent_MakeAvailable(raylib S_tructures)
