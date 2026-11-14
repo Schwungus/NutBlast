@@ -399,17 +399,18 @@ namespace NutBlast {
         }
     }
 
-    bool join() {
+    void join(Mode mode) {
         if (NutBlast_IsConnecting()) {
             error("You're already connected!");
-            return false;
+            return;
         }
 
         if (!init) {
             error("You forgot to call `NutBlast_Init()`");
-            return false;
+            return;
         }
 
+        NutBlast::mode = mode;
         last_error = std::nullopt;
         our_pid = master = 0;
 
@@ -433,7 +434,7 @@ namespace NutBlast {
 #endif
         );
 
-        websocket->onOpen([]() {
+        websocket->onOpen([mode]() {
             switch (mode) {
             case Mode::List:
                 send({
@@ -481,8 +482,6 @@ namespace NutBlast {
         });
 
         websocket->open(server_address);
-
-        return true;
     }
 
 #ifdef __EMSCRIPTEN__
@@ -845,98 +844,98 @@ extern "C" bool NutBlast_IsListed() {
 }
 
 extern "C" void NutBlast_Disconnect() {
-    *NutBlast::time_to_die.lock() = false;
-    *NutBlast::permission_to_cook.lock() = false;
+    using namespace NutBlast;
 
-    if (NutBlast::websocket) {
-        NutBlast::websocket->onOpen(nullptr);
-        NutBlast::websocket->onClosed(nullptr);
-        NutBlast::websocket->onMessage(nullptr);
+    *time_to_die.lock() = false;
+    *permission_to_cook.lock() = false;
+
+    if (websocket) {
+        websocket->onOpen(nullptr);
+        websocket->onClosed(nullptr);
+        websocket->onMessage(nullptr);
 
         try {
-            NutBlast::websocket->close();
+            websocket->close();
         } catch (const std::runtime_error& err) {
             (void)err;
         }
     }
 
-    NutBlast::ws_in.lock()->clear();
-    NutBlast::ws_out.lock()->clear();
-    NutBlast::players.clear();
+    ws_in.lock()->clear();
+    ws_out.lock()->clear();
+    players.clear();
 
-    NutBlast::incoming_candidates.clear();
-    NutBlast::incoming_offers.clear();
+    incoming_candidates.clear();
+    incoming_offers.clear();
 
-    NutBlast::websocket = nullptr;
-    NutBlast::fire_ready.reset();
-    NutBlast::fire_arrived.reset();
+    websocket = nullptr;
+    fire_ready.reset();
+    fire_arrived.reset();
 
-    const auto reason = NutBlast::disconnection_reason;
-    NutBlast::disconnection_reason = NutBlast::ByeReason::OK;
+    const auto reason = disconnection_reason;
+    disconnection_reason = ByeReason::OK;
 
-    NutBlast::info("NutBlaster out! {} ({})", reason.msg, reason.code);
-    NutBlast::on_disconnected(reason); // TODO: maybe NOT fire this in the lobby-listing mode?
+    info("NutBlaster out! {} ({})", reason.msg, reason.code);
+    on_disconnected(reason); // TODO: maybe NOT fire this in the lobby-listing mode?
 
-    NutBlast::our_birth = 0;
-    NutBlast::listing_limit = 0;
-    NutBlast::max_players = 0;
+    our_birth = 0;
+    listing_limit = 0;
+    max_players = 0;
 
-    NutBlast::our_pid = 0;
-    NutBlast::master = 0;
-    NutBlast::our_lid = 0;
+    our_pid = 0;
+    master = 0;
+    our_lid = 0;
 
-    NutBlast::last_error = std::nullopt;
+    last_error = std::nullopt;
 }
 
 extern "C" void NutBlast_FindLobbies(size_t limit) {
-    if (NutBlast_IsConnecting()) {
-        NutBlast::error("You're already connected!");
-    } else if (!NutBlast::init) {
-        NutBlast::error("You forgot to call `NutBlast_Init()`");
-    } else {
-        NutBlast::mode = NutBlast::Mode::List;
-        NutBlast::listing_limit = limit;
+    using namespace NutBlast;
 
-        NutBlast::info("Connecting to {}", NutBlast::server_address);
-        NutBlast::join();
+    if (NutBlast_IsConnecting()) {
+        error("You're already connected!");
+    } else {
+        info("Querying lobby list");
+        listing_limit = limit;
+        join(Mode::List);
     }
 }
 
 extern "C" void NutBlast_Join(NutBlast_LobbyID id) {
-    if (!id) {
-        NutBlast::error("No lobby ID specified!");
-    } else {
-        NutBlast::mode = NutBlast::Mode::Join;
-        NutBlast::our_lid = id;
+    using namespace NutBlast;
 
-        NutBlast::info("Trying to join '{}'", id);
-        NutBlast::join();
+    if (!id) {
+        error("No lobby ID specified!");
+    } else {
+        info("Trying to join '{}'", id);
+        our_lid = id;
+        join(Mode::Join);
     }
 }
 
 extern "C" void NutBlast_Host(NutBlast_HostOptions opts) {
-    if (opts.max_players && (opts.max_players < 2 || opts.max_players > NUTBLAST_MAX_PLAYERS)) {
-        NutBlast::error("Max player count specified but not in the range of 2-{}", NUTBLAST_MAX_PLAYERS);
-    } else {
-        NutBlast::mode = NutBlast::Mode::Host;
-        NutBlast::lobby_listed = !opts.unlisted;
-        NutBlast::max_players = opts.max_players ? opts.max_players : NUTBLAST_MAX_PLAYERS;
+    using namespace NutBlast;
 
-        NutBlast::info("Trying to host");
-        NutBlast::join();
+    if (opts.max_players && (opts.max_players < 2 || opts.max_players > NUTBLAST_MAX_PLAYERS)) {
+        error("Max player count specified but not in the range of 2-{}", NUTBLAST_MAX_PLAYERS);
+    } else {
+        info("Trying to host");
+        lobby_listed = !opts.unlisted;
+        max_players = opts.max_players ? opts.max_players : NUTBLAST_MAX_PLAYERS;
+        join(Mode::Host);
     }
 }
 
 extern "C" void NutBlast_IDGAF(NutBlast_HostOptions opts) {
-    if (opts.max_players && (opts.max_players < 2 || opts.max_players > NUTBLAST_MAX_PLAYERS)) {
-        NutBlast::error("Max player count specified but not in the range of 2-{}", NUTBLAST_MAX_PLAYERS);
-    } else {
-        NutBlast::mode = NutBlast::Mode::IDGAF;
-        NutBlast::lobby_listed = !opts.unlisted;
-        NutBlast::max_players = opts.max_players ? opts.max_players : NUTBLAST_MAX_PLAYERS;
+    using namespace NutBlast;
 
-        NutBlast::info("IDGAF mode");
-        NutBlast::join();
+    if (opts.max_players && (opts.max_players < 2 || opts.max_players > NUTBLAST_MAX_PLAYERS)) {
+        error("Max player count specified but not in the range of 2-{}", NUTBLAST_MAX_PLAYERS);
+    } else {
+        info("IDGAF mode");
+        lobby_listed = !opts.unlisted;
+        max_players = opts.max_players ? opts.max_players : NUTBLAST_MAX_PLAYERS;
+        join(Mode::IDGAF);
     }
 }
 
