@@ -777,35 +777,37 @@ extern "C" const char* NutBlast_LogLevelToString(NutBlast_LogLevel level) {
 }
 
 extern "C" void NutBlast_Init(NutBlast_InitOptions opts) {
-    if (NutBlast::init) {
-        NutBlast::error("Don't call `NutBlast_Init()` twice!");
+    using namespace NutBlast;
+
+    if (init) {
+        error("Don't call `NutBlast_Init()` twice!");
         return;
     }
 
     if (!opts.game_id) {
-        NutBlast::error("`game_id` must be set!");
+        error("`game_id` must be set!");
         return;
     }
 
-    if (opts.max_channels > NutBlast::MAX_CHANNELS) {
-        NutBlast::error("Expected up to {} channels, got {}", NutBlast::MAX_CHANNELS, opts.max_channels);
+    if (opts.max_channels > MAX_CHANNELS) {
+        error("Expected up to {} channels, got {}", MAX_CHANNELS, opts.max_channels);
         return;
     }
 
-    NutBlast::init = true;
+    init = true;
 
     rtc::Preload();
 
-    NutBlast::info(".-------------------------------------------------------------.");
-    NutBlast::info("| For troubleshooting multiplayer connectivity, please visit: |");
-    NutBlast::info("|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
-    NutBlast::info("'-------------------------------------------------------------'");
+    info(".-------------------------------------------------------------.");
+    info("| For troubleshooting multiplayer connectivity, please visit: |");
+    info("|    https://github.com/Schwungus/NutBlast#troubleshooting    |");
+    info("'-------------------------------------------------------------'");
 
-    if (NutBlast::server_address.empty())
-        NutBlast::server_address = NUTBLAST_DEFAULT_SERVER;
+    if (server_address.empty())
+        server_address = NUTBLAST_DEFAULT_SERVER;
 
     NutBlast_SetGameID(opts.game_id);
-    NutBlast::max_channels = opts.max_channels ? opts.max_channels : 1;
+    max_channels = opts.max_channels ? opts.max_channels : 1;
 }
 
 extern "C" void NutBlast_SetGameID(const char* gid) {
@@ -1013,72 +1015,72 @@ extern "C" void NutBlast_Flush() {
 }
 
 extern "C" void NutBlast_Update() {
-    for (const auto& obj : NutBlast::copy_and_clear(*NutBlast::ws_in.lock())) {
+    using namespace NutBlast;
+
+    for (const auto& obj : copy_and_clear(*ws_in.lock())) {
         try {
             const std::string& type = obj.at("type");
-            const auto handler = NutBlast::response_handlers.find(type);
+            const auto handler = response_handlers.find(type);
 
-            if (handler != NutBlast::response_handlers.end())
+            if (handler != response_handlers.end())
                 handler->second(obj);
         } catch (const nlohmann::json::out_of_range& e) {
-            NutBlast::error("Communication error caused by a version mismatch between the NutBlast client library and "
-                            "the server: {}",
-                e.what());
+            error("Version mismatch between the NutBlast client library and the server: {}", e.what());
         }
     }
 
-    if (*NutBlast::time_to_die.lock()) {
+    if (*time_to_die.lock()) {
         NutBlast_Disconnect();
         return;
     }
 
-    if (*NutBlast::permission_to_cook.lock()) {
-        if (NutBlast::fire_arrived)
-            NutBlast::on_arrived();
+    if (*permission_to_cook.lock()) {
+        if (fire_arrived)
+            on_arrived();
 
-        for (auto& [id, player] : NutBlast::players) {
+        for (auto& [id, player] : players) {
             if (player->fire_join) {
                 for (const auto& [key, value] : player->meta) {
                     NutBlast_FieldDiff diff = {0};
                     diff.name = key.c_str();
                     diff.old_value = nullptr;
                     diff.new_value = value.c_str();
-                    NutBlast::on_player_meta_changed(id, diff);
+                    on_player_meta_changed(id, diff);
                 }
 
-                NutBlast::on_player_joined(id);
+                on_player_joined(id);
             }
 
             // TODO: add an event handler for player readiness?
             if (player->is_ready() && player->fire_ready) {
                 const char* proto = NutBlast_IsPlayerConnectionRelayed(id) ? "TURN" : "STUN";
-                NutBlast::info("ID={} connection established! ({})", id, proto);
+                info("ID={} connection established! ({})", id, proto);
             }
 
             player->drain_incoming_offers_and_candidates();
 
             if (NutBlast_TimeNS() >= player->sdp_timeout) {
-                if (++player->renegotiation_attempts > NutBlast::MAX_RENEGOTIATION_ATTEMPTS) {
+                if (++player->renegotiation_attempts > MAX_RENEGOTIATION_ATTEMPTS) {
                     // only the newest player should disconnect. had to introduce this check because BOTH players kept
                     // disconnecting each time :wilted_flower:
-                    if (NutBlast::our_birth >= player->birth) {
+                    if (our_birth >= player->birth) {
                         const auto code = NUTBLAST_ERROR_ICE_FAILED;
                         const auto msg = std::format("Could not establish a P2P connection with player {}", id);
 
-                        NutBlast::send({
+                        send({
                             {"type", "Leave"},
                             {"code", code},
                             {"msg", msg},
                         });
 
-                        NutBlast::disconnection_reason = NutBlast::ByeReason(code, msg);
+                        disconnection_reason = ByeReason(code, msg);
                         NutBlast_Disconnect();
 
                         return;
                     }
                 } else {
-                    NutBlast::info("Renegotiating with {} ({}/{})", player->pid, player->renegotiation_attempts,
-                        NutBlast::MAX_RENEGOTIATION_ATTEMPTS);
+                    info("Renegotiating with {} ({}/{})", player->pid, player->renegotiation_attempts,
+                        MAX_RENEGOTIATION_ATTEMPTS);
 
                     if (player->is_offerer())
                         player->renegotiate();
@@ -1089,9 +1091,9 @@ extern "C" void NutBlast_Update() {
         }
     }
 
-    if (NutBlast_IsReady() && NutBlast::fire_ready) {
-        NutBlast::info("NutBlast connected and ready!");
-        NutBlast::on_ready();
+    if (NutBlast_IsReady() && fire_ready) {
+        info("NutBlast connected and ready!");
+        on_ready();
     }
 
     NutBlast_Flush();
