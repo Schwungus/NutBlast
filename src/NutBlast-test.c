@@ -270,12 +270,6 @@ int main(int argc, char* argv[]) {
     NutBlast_OnPlayerLeft(on_player_left);
     NutBlast_OnLobbiesFound(on_lobbies_found);
 
-    static NutBlast_LobbyID lid = 0;
-    ((char*)(&lid))[0] = 't';
-    ((char*)(&lid))[1] = 'e';
-    ((char*)(&lid))[2] = 's';
-    ((char*)(&lid))[3] = 't';
-
     double next_search = GetTime();
 
     while (!WindowShouldClose()) {
