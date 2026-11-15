@@ -18,6 +18,7 @@ The client is [verified to compile under the latest versions of MSVC, GCC, and E
 ## Games powered by NutBlast
 
 - [**Klawiatura**](https://github.com/toggins/Klawiatura) (aka **Mario Together**) - Mario Forever with rollback netcode!
+- [**Verlet Swing**](https://verlet.games.nonk.dev) - an experimental rope-swinging racing game with a recent addition of online multiplayer.
 - Send a PR to add your game to this list!
 
 ## Troubleshooting
