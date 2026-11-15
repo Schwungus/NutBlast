@@ -69,11 +69,11 @@ static NutBlast_LobbyID existing_lobby = 0;
 extern bool NutBlast_DEBUG_IgnoreSDP;
 extern void NutBlast_DEBUG_CloseConnection(NutBlast_PlayerID);
 
-static void reset() {
+static void reset(void) {
     FreeTinyMap(&players);
 }
 
-static void restart() {
+static void restart(void) {
     reset();
 
     Player us = {
@@ -98,14 +98,14 @@ static void on_player_left(NutBlast_PlayerID id, NutBlast_Reason reason) {
     TinyMapErase(&players, id);
 }
 
-static void draw_players() {
+static void draw_players(void) {
     TINY_MAP_FOREACH (&players, bucket) {
         const Player* p = bucket.data;
         DrawRectangle(p->x - psize / 2, p->y - psize / 2, psize, psize, p->color);
     }
 }
 
-static void draw_gui() {
+static void draw_gui(void) {
     const int fs = 20, pad = 5;
     int y = pad;
 
@@ -137,7 +137,7 @@ static void draw_gui() {
     DrawText("T to chat (reliable), L to kick everyone, M to ignore incoming SDP", pad, y, fs, BLACK);
 }
 
-static void move_our_rect() {
+static void move_our_rect(void) {
     Player* p = (Player*)TinyMapGet(&players, NutBlast_GetPlayerID());
 
     if (!p)
@@ -148,7 +148,7 @@ static void move_our_rect() {
     p->y += (IsKeyDown(KEY_DOWN) - IsKeyDown(KEY_UP)) * vel;
 }
 
-static void send_our_position() {
+static void send_our_position(void) {
     const Player* p = (const Player*)TinyMapGet(&players, NutBlast_GetPlayerID());
 
     if (!p)
@@ -167,7 +167,7 @@ static void send_our_position() {
     }
 }
 
-static void maybe_chat() {
+static void maybe_chat(void) {
     if (!IsKeyPressed(KEY_T))
         return;
 
@@ -181,7 +181,7 @@ static void maybe_chat() {
     }
 }
 
-static void maybe_kick() {
+static void maybe_kick(void) {
     if (!IsKeyPressed(KEY_L))
         return;
 
@@ -193,13 +193,13 @@ static void maybe_kick() {
     }
 }
 
-static void maybe_spam() {
+static void maybe_spam(void) {
     if (IsKeyPressed(KEY_P))
         for (int i = 0; i < 100; i++)
             NutBlast_SetPlayerField("ninja", "tone5");
 }
 
-static void recv_stuff() {
+static void recv_stuff(void) {
     NutBlast_Message msg = {0};
 
     while (NutBlast_NextMessage(CHAN_POS, &msg)) {

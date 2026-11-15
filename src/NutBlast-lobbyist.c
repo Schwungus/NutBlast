@@ -30,7 +30,7 @@ static const int fps = 10;
 static const size_t lobbies_count = 10;
 static int timer = 0;
 
-static void update() {
+static void update(void) {
     NutBlast_Update();
 
     if (timer++ >= 5 * fps) {

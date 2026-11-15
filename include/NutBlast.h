@@ -112,7 +112,7 @@ void NutBlast_SetLogLevel(NutBlast_LogLevel);
 /// pointer if that call did not produce an error.
 ///
 /// Under the hood, just gives you the latest "error"-level log message.
-const char* NutBlast_GetLastError();
+const char* NutBlast_GetLastError(void);
 
 /// A message from another player.
 typedef struct {
@@ -178,34 +178,34 @@ typedef struct {
 void NutBlast_Init(NutBlast_InitOptions);
 
 /// Cleans up the resources that were allocated by NutBlast. Call this at the end of your program.
-void NutBlast_Cleanup();
+void NutBlast_Cleanup(void);
 
 /// Returns true if you just called `NutBlast_Host`, `NutBlast_Join`, or `NutBlast_FindLobbies` and need to
 /// `NutBlast_Disconnect` before trying again.
-bool NutBlast_IsConnecting();
+bool NutBlast_IsConnecting(void);
 
 /// Returns true if you are connected to a NutBlaster.
 ///
 /// The next stage is `NutBlast_IsReady()`.
-bool NutBlast_IsOnline();
+bool NutBlast_IsOnline(void);
 
 /// Returns true if you are connected to a NutBlaster AND ready to communicate with all current players in the lobby.
 ///
 /// Note that when a new player is entering the lobby, this will go false until a connection is established.
-bool NutBlast_IsReady();
+bool NutBlast_IsReady(void);
 
 /// Returns the average round-trip time (in milliseconds) to the NutBlaster.
-int NutBlast_ServerPing();
+int NutBlast_ServerPing(void);
 
 /// Returns the average round-trip time (in milliseconds) to the specified player.
 int NutBlast_PlayerPing(NutBlast_PlayerID);
 
 /// Registers a callback to fire as soon as you are confirmed to be a part of the lobby. P2P negotiation begins in the
 /// background right after this point.
-void NutBlast_OnArrived(void (*)());
+void NutBlast_OnArrived(void (*)(void));
 
 /// Registers a callback to fire as soon as `NutBlast_IsReady()` signals you are ready for the first time.
-void NutBlast_OnReady(void (*)());
+void NutBlast_OnReady(void (*)(void));
 
 /// Registers a callback to fire when you are disconnected from the NutBlaster.
 void NutBlast_OnDisconnected(void (*)(NutBlast_Reason));
@@ -244,14 +244,14 @@ void NutBlast_Send(NutBlast_SendOptions);
 /// Call this every frame to send, receive, and process data from the NutBlaster and the players.
 ///
 /// Callbacks registered using the `NutBlast_On*` functions are usually called at this exact point.
-void NutBlast_Update();
+void NutBlast_Update(void);
 
 /// Call this to flush the output queue.
 ///
 /// This is useful in the case you process the result of `NutBlast_Update()` (i.e. the data you received from other
 /// players) and send out a response immediately after. Without `NutBlast_Flush()`, you would have to wait a whole extra
 /// tick for the next `NutBlast_Update()` call to flush those packets.
-void NutBlast_Flush();
+void NutBlast_Flush(void);
 
 /// Sets the NutBlaster game ID in case it's changed after the call to `NutBlast_Init`.
 void NutBlast_SetGameID(const char*);
@@ -275,7 +275,7 @@ void NutBlast_FindLobbies(size_t max);
 void NutBlast_IDGAF(NutBlast_HostOptions opts);
 
 /// Disconnects you from the lobby if you are in one, and resets the networking state.
-void NutBlast_Disconnect();
+void NutBlast_Disconnect(void);
 
 /// Kicks the specified player if you are the lobby's master. Silently ignored otherwise.
 void NutBlast_Kick(NutBlast_PlayerID);
@@ -284,25 +284,25 @@ void NutBlast_Kick(NutBlast_PlayerID);
 void NutBlast_SetListed(bool);
 
 /// Returns true if you are in a publicly listed lobby, and false otherwise.
-bool NutBlast_IsListed();
+bool NutBlast_IsListed(void);
 
 /// Returns the amount of players that are in the lobby, including yourself.
-int NutBlast_GetPlayerCount();
+int NutBlast_GetPlayerCount(void);
 
 /// Returns the maximum player count the current lobby can take, or 0 if you aren't in a lobby.
-int NutBlast_GetMaxPlayers();
+int NutBlast_GetMaxPlayers(void);
 
 /// Returns your player's ID.
-NutBlast_PlayerID NutBlast_GetPlayerID();
+NutBlast_PlayerID NutBlast_GetPlayerID(void);
 
 /// Returns the lobby's ID.
-NutBlast_LobbyID NutBlast_GetLobbyID();
+NutBlast_LobbyID NutBlast_GetLobbyID(void);
 
 /// Returns the lobby's master's ID.
-NutBlast_PlayerID NutBlast_GetMasterID();
+NutBlast_PlayerID NutBlast_GetMasterID(void);
 
 /// Returns a 0-terminated array of IDs of every reachable player in the lobby, including yourself.
-const NutBlast_PlayerID* NutBlast_ListPlayers();
+const NutBlast_PlayerID* NutBlast_ListPlayers(void);
 
 /// Returns true if the specified player is reported to be present in the lobby by the NutBlaster.
 bool NutBlast_IsPlayerInLobby(NutBlast_PlayerID);
@@ -326,13 +326,13 @@ const char* NutBlast_GetLobbyField(const char* name);
 void NutBlast_SetLobbyField(const char* name, const char* value);
 
 /// Purges lobby & player metadata if it concerns you that metadata is kept between sessions.
-void NutBlast_PurgeMetadata();
+void NutBlast_PurgeMetadata(void);
 
 /// Sets the specified player as the new master if you are the lobby's master. Silently ignored otherwise.
 void NutBlast_SetMaster(NutBlast_PlayerID);
 
 /// Internal timing utility.
-uint64_t NutBlast_TimeNS();
+uint64_t NutBlast_TimeNS(void);
 
 /// Internal cross-platform `Sleep` implementation.
 void NutBlast_SleepMS(int);
