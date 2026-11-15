@@ -755,6 +755,7 @@ namespace NutBlast {
                     if (remaining_players.contains(id))
                         return false;
 
+                    info("ID={} was severed by the server", id);
                     on_player_left(id, ByeReason::OK);
                     return true;
                 });
