@@ -66,7 +66,7 @@ impl Session {
 
         tokio::select! {
             _ = tokio::time::sleep(IDLE_TIMEOUT) => {
-                self.stop = self.pid.is_none();
+                Err(Kick::InternalError) // TODO: an actual kick reason mayhaps?
             }
             Some(msg) = self.ws_receiver.next() => {
                 match msg {
@@ -74,22 +74,19 @@ impl Session {
                         self.payloads_budget.try_take(1)?;
                         self.bandwidth_budget.try_take(msg.len())?;
                         self.process_websocket_message(msg).await?;
+
+                        Ok(())
                     }
                     Err(e) => {
-                        self.stop = true;
-
                         if !matches!(e, TungError::ConnectionClosed) {
                             error!("{}: {}", self.real_ip, e);
                         }
+
+                        Err(Kick::InternalError)
                     }
                 }
             }
-            Some(msg) = self.msg_receiver.recv() => {
-                self.send(&msg).await;
-            }
         }
-
-        Ok(())
     }
 
     async fn process_websocket_message(&mut self, msg: Message) -> Result<(), Kick> {
@@ -315,11 +312,15 @@ impl Session {
 
         while !self.stop {
             if let Err(reason) = self.handle_next_websocket_message().await {
+                self.stop = true;
+
                 if !matches!(reason, Kick::InternalError) {
                     self.send(&ServerMessage::Disconnected { reason }).await;
                 }
+            }
 
-                break;
+            while let Ok(msg) = self.msg_receiver.try_recv() {
+                self.send(&msg).await;
             }
         }
 
