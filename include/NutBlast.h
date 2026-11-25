@@ -331,8 +331,10 @@ void NutBlast_PurgeMetadata(void);
 /// Sets the specified player as the new master if you are the lobby's master. Silently ignored otherwise.
 void NutBlast_SetMaster(NutBlast_PlayerID);
 
+typedef int64_t NutBlast_Nanos;
+
 /// Internal timing utility.
-uint64_t NutBlast_TimeNS(void);
+NutBlast_Nanos NutBlast_TimeNS(void);
 
 /// Internal cross-platform `Sleep` implementation.
 void NutBlast_SleepMS(int);

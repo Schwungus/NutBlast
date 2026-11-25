@@ -100,11 +100,11 @@ namespace NutBlast {
     using Metadata = std::unordered_map<std::string, std::string>;
 
     namespace ns {
-        constexpr const std::uint64_t second = 1000000000, milli = second / 1000;
+        constexpr const NutBlast_Nanos second = 1000000000, milli = second / 1000;
     };
 
     namespace interval {
-        constexpr const std::uint64_t ping = ns::second, sdp_timeout = 7 * ns::second;
+        constexpr const NutBlast_Nanos ping = ns::second, sdp_timeout = 7 * ns::second;
     };
 
     template <typename T> class Locked {
@@ -144,7 +144,7 @@ namespace NutBlast {
     }
 
     class Pinger {
-        std::uint64_t last_ping = 0, last_roundtrip = 0;
+        NutBlast_Nanos last_ping = 0, last_roundtrip = 0;
 
       public:
         int millis() const {
@@ -209,7 +209,7 @@ namespace NutBlast {
         Once fire_join, fire_ready;
 
         const NutBlast_PlayerID pid;
-        const std::uint64_t birth;
+        const NutBlast_Nanos birth;
 
         Pinger pinger;
         Metadata meta;
@@ -217,10 +217,11 @@ namespace NutBlast {
         std::shared_ptr<rtc::PeerConnection> pc = nullptr;
         std::shared_ptr<rtc::DataChannel> reliable_dc = nullptr, unreliable_dc = nullptr, ping_dc = nullptr;
 
-        std::uint64_t sdp_timeout = 0;
+        NutBlast_Nanos sdp_timeout = 0;
         int renegotiation_attempts = 0;
 
-        Player(NutBlast_PlayerID pid, const Metadata& meta, std::uint64_t birth) : pid(pid), meta(meta), birth(birth) {}
+        Player(NutBlast_PlayerID pid, const Metadata& meta, NutBlast_Nanos birth)
+            : pid(pid), meta(meta), birth(birth) {}
         ~Player();
 
         void renegotiate();
@@ -257,14 +258,14 @@ namespace NutBlast {
     };
 
     class Ticker {
-        const std::uint64_t interval;
-        std::uint64_t last_tick = 0;
+        const NutBlast_Nanos interval;
+        NutBlast_Nanos last_tick = 0;
 
       public:
-        Ticker(std::uint64_t interval) : interval(interval) {}
+        Ticker(NutBlast_Nanos interval) : interval(interval) {}
 
         explicit operator bool() {
-            const std::uint64_t now = NutBlast_TimeNS();
+            const auto now = NutBlast_TimeNS();
 
             if (!last_tick || now - last_tick >= interval) {
                 last_tick = now;
@@ -302,7 +303,7 @@ namespace NutBlast {
     bool lobby_listed = true;
     Locked<bool> permission_to_cook = false, time_to_die = false;
 
-    std::uint64_t our_birth = 0;
+    NutBlast_Nanos our_birth = 0;
     std::size_t listing_limit = 0;
 
     std::unordered_map<NutBlast_PlayerID, std::shared_ptr<Player>> players;
@@ -1099,7 +1100,7 @@ extern "C" void NutBlast_Update() {
     NutBlast_Flush();
 }
 
-extern "C" uint64_t NutBlast_TimeNS() {
+extern "C" NutBlast_Nanos NutBlast_TimeNS() {
     const auto elapsed = std::chrono::high_resolution_clock::now().time_since_epoch();
     return std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
 }
